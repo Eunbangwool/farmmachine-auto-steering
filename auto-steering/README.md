@@ -14,6 +14,8 @@ Kubota MR1157 + Apollo 10 Pro + CHCNAV PA-3/F9P RTK 기반 자율조향.
 | `src/can_tools.py` | **CAN 버스 역공학**(앵글센서/모터 ID 탐색) | CAN |
 | `src/sitl_sim.py` | **폐루프 시뮬**(현실 서보+작업기부하) **+ 안전 시나리오 검증** | 불필요 |
 | `src/tuning.py` | SITL 위 **프로파일 게인 자동탐색**(heavy 진동 잡기) | 불필요 |
+| `src/field_collect.py` | **현장 데이터 자동수집 오케스트레이터**(수집→config→리포트) | 혼합 |
+| `MEASUREMENT.md` | **실측값 목록 + 측정법 + 자동수집 매핑** | — |
 
 모든 모듈은 하드웨어 없이 자체 테스트가 돈다:
 ```bash

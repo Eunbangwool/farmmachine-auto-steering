@@ -18,11 +18,12 @@ candump 호환 텍스트로 로그 저장/로드:  "<t> <id_hex> <data_hex>"
 from __future__ import annotations
 import time
 import math
+import struct
 import logging
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 
-from autosteer_core import CanInterface
+from autosteer_core import CanInterface, CanSpec
 
 log = logging.getLogger("can_tools")
 
@@ -260,6 +261,104 @@ class CanLogger:
         return out
 
 
+# ═══════════════════════════════════════════════════════════════
+#  모터 스텝 응답 계측 — 실모터의 servo (max_rate, tau) 추정
+#  → sitl_sim.ServoCanInterface 파라미터로 꽂아 tuning.py 재탐색
+# ═══════════════════════════════════════════════════════════════
+
+@dataclass
+class ServoResponse:
+    max_rate_deg_s: float       # 전륜 조향 최대 각속도
+    tau_s: float                # 1차 지연 시정수
+    n_samples: int
+    trace: List[Tuple[float, float]]      # (t, angle_deg)
+    note: str = ""
+
+    def as_servo_params(self) -> dict:
+        """sitl_sim.ServoCanInterface / build_system 에 바로 쓰는 형태."""
+        return {"servo_rate_deg_s": round(self.max_rate_deg_s, 1),
+                "servo_tau": round(self.tau_s, 3)}
+
+
+class MotorResponseProbe:
+    """
+    모터에 조향각 스텝을 주고 앵글센서 응답을 기록해 servo 특성을 추정.
+    - 큰 스텝 → 각속도 한계(max_rate) 측정
+    - 작은 스텝 → 1차 지연(tau, 63.2% 도달시간) 측정
+    실모터(ApolloCanInterface)와 시뮬(ServoCanInterface) 양쪽에서 동일 동작.
+
+    ⚠ 안전: 반드시 바퀴를 들거나(잭업) 빈 농지 정지 상태에서. 사람 접근 금지.
+    """
+    def __init__(self, can: CanInterface, ctrl_dt: Optional[float] = None,
+                 live: bool = False):
+        self.can = can
+        self.dt = ctrl_dt or CanSpec.MOTOR_CMD_PERIOD
+        self.live = live            # True 면 실모터: 송신 간 dt 만큼 대기
+
+    def _send_target(self, target_deg: float):
+        data = bytearray(8)
+        data[CanSpec.MOTOR_BYTE_MODE] = CanSpec.MOTOR_MODE_ANGLE
+        raw = max(-32768, min(32767, int(target_deg * CanSpec.MOTOR_ANGLE_SCALE)))
+        struct.pack_into(">h", data, CanSpec.MOTOR_BYTE_CMD_HI, raw)
+        self.can.send(CanSpec.MOTOR_CMD_ID, bytes(data))
+
+    def _read_angle(self) -> Optional[float]:
+        last = None
+        msg = self.can.recv()
+        while msg:
+            cid, d = msg
+            if cid == CanSpec.SENSOR_ANGLE_ID and len(d) >= 2:
+                raw = int.from_bytes(
+                    d[CanSpec.SENSOR_BYTE_HI:CanSpec.SENSOR_BYTE_LO + 1],
+                    "big", signed=CanSpec.SENSOR_SIGNED)
+                last = raw / CanSpec.SENSOR_ANGLE_SCALE - CanSpec.SENSOR_ANGLE_OFFSET
+            msg = self.can.recv()
+        return last
+
+    def _drive_to(self, target_deg: float, ticks: int):
+        for _ in range(ticks):
+            self._send_target(target_deg)
+            self._read_angle()
+            if self.live:
+                time.sleep(self.dt)
+
+    def step_response(self, target_deg: float, duration: float) -> List[Tuple[float, float]]:
+        trace, t = [], 0.0
+        for _ in range(max(2, int(duration / self.dt))):
+            self._send_target(target_deg)
+            ang = self._read_angle()
+            if ang is None:
+                ang = trace[-1][1] if trace else 0.0
+            trace.append((t, ang))
+            t += self.dt
+            if self.live:
+                time.sleep(self.dt)
+        return trace
+
+    def measure(self, slew_step: float = 20.0, tau_step: float = 2.0,
+                duration: float = 2.0) -> ServoResponse:
+        self._drive_to(0.0, 25)                          # 영점
+        big = self.step_response(slew_step, duration)    # 큰 스텝 → 각속도
+        max_rate = max(abs(big[i][1] - big[i - 1][1]) / self.dt
+                       for i in range(1, len(big)))
+        self._drive_to(0.0, 50)                          # 재영점
+        small = self.step_response(tau_step, duration)   # 작은 스텝 → tau
+        tau = self._estimate_tau(small)
+        note = "" if max_rate > 1 else "응답 없음 — CAN ID/배선/모터 활성화 확인"
+        return ServoResponse(max_rate, tau, len(big) + len(small), big + small, note)
+
+    @staticmethod
+    def _estimate_tau(trace: List[Tuple[float, float]]) -> float:
+        final = trace[-1][1]
+        if abs(final) < 1e-6:
+            return 0.0
+        thr = 0.632 * final
+        for t, a in trace:
+            if (final > 0 and a >= thr) or (final < 0 and a <= thr):
+                return max(t, 1e-3)
+        return trace[-1][0]
+
+
 # ── 자체 테스트: 합성 버스(앵글센서 + 모터 + 하트비트) 역추적 ─────────
 if __name__ == "__main__":
     import random
@@ -311,3 +410,19 @@ if __name__ == "__main__":
     print(f"\n  ✓ 앵글센서 ID 0x{best.can_id:X}, byte[{best.hi},{best.lo}] BE 자동 식별")
     print("  → CanSpec.SENSOR_ANGLE_ID / SENSOR_BYTE_HI/LO 채울 값 확보")
     print("  → 모터 ID 는 '내가 명령 보낼 때만 변하는 ID' 로 같은 방식 식별")
+
+    # ── 모터 스텝 응답 계측 (알려진 서보를 정확히 복원하는지 검증) ──────
+    print("\n" + "=" * 78)
+    print("모터 스텝 응답 계측 — servo(max_rate, tau) 추정 → tuning 입력")
+    print("=" * 78)
+    from sitl_sim import ServoCanInterface          # 실모터 대역(시뮬)
+    TRUE_RATE, TRUE_TAU = 35.0, 0.08
+    servo = ServoCanInterface(max_rate_deg_s=TRUE_RATE, tau=TRUE_TAU)
+    probe = MotorResponseProbe(servo)
+    resp = probe.measure(slew_step=20.0, tau_step=2.0, duration=2.0)
+    print(f"  계측: max_rate={resp.max_rate_deg_s:.1f}°/s (실제 {TRUE_RATE})  "
+          f"tau={resp.tau_s:.3f}s (실제 {TRUE_TAU})")
+    print(f"  → ServoCanInterface 파라미터: {resp.as_servo_params()}")
+    assert abs(resp.max_rate_deg_s - TRUE_RATE) < 5.0, resp.max_rate_deg_s
+    assert abs(resp.tau_s - TRUE_TAU) < 0.05, resp.tau_s
+    print("  ✓ 스텝응답으로 실모터 servo 특성 복원 → tuning.py 재탐색에 투입 가능")

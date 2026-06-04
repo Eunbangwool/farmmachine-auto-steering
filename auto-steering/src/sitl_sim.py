@@ -126,9 +126,13 @@ class ServoCanInterface(CanInterface):
         max_step = self.max_rate * self.dt                       # 각속도 한계
         step = max(-max_step, min(max_step, step))
         self._angle += step
-        raw_fb = int(self._angle * CanSpec.SENSOR_ANGLE_SCALE)
-        fb = raw_fb.to_bytes(2, "big", signed=CanSpec.SENSOR_SIGNED)
-        self._recv_q.append((CanSpec.SENSOR_ANGLE_ID, fb + bytes(6)))
+        raw_fb = max(-32768, min(32767, int(self._angle * CanSpec.SENSOR_ANGLE_SCALE)))
+        b = raw_fb.to_bytes(2, "big", signed=CanSpec.SENSOR_SIGNED)
+        # 피드백을 CanSpec 이 지정한 바이트 오프셋에 배치(역추적 결과와 일관)
+        frame = bytearray(8)
+        frame[CanSpec.SENSOR_BYTE_HI] = b[0]
+        frame[CanSpec.SENSOR_BYTE_LO] = b[1]
+        self._recv_q.append((CanSpec.SENSOR_ANGLE_ID, bytes(frame)))
 
     def recv(self) -> Optional[tuple]:
         return self._recv_q.pop(0) if self._recv_q else None
