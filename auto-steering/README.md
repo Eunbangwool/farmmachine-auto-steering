@@ -12,7 +12,8 @@ Kubota MR1157 + Apollo 10 Pro + CHCNAV PA-3/F9P RTK 기반 자율조향.
 | `src/field_config.py` | TractorParams/CanSpec **JSON 외부화** (실측·CAN문서 주입) | 불필요 |
 | `src/calibration.py` | 주행데이터로 **wheelbase·안테나 오프셋 자동 추정** | 불필요 |
 | `src/can_tools.py` | **CAN 버스 역공학**(앵글센서/모터 ID 탐색) | CAN |
-| `src/sitl_sim.py` | **폐루프 시뮬 + 안전 시나리오 검증** | 불필요 |
+| `src/sitl_sim.py` | **폐루프 시뮬**(현실 서보+작업기부하) **+ 안전 시나리오 검증** | 불필요 |
+| `src/tuning.py` | SITL 위 **프로파일 게인 자동탐색**(heavy 진동 잡기) | 불필요 |
 
 모든 모듈은 하드웨어 없이 자체 테스트가 돈다:
 ```bash
@@ -56,11 +57,14 @@ params, n = load_config("tractor.json")   # CanSpec 런타임 반영
 ### #7 저속 안전 검증
 현장 1km/h 실차 전에 **SITL 로 폐루프 + 안전 6종 사전검증**:
 ```bash
-python sitl_sim.py
+python sitl_sim.py     # 폐루프 추종 + 안전 6종(데드맨/E-stop/RTK저하/끊김/개입/과속)
+python tuning.py       # heavy 프로파일 게인 자동탐색 (진동 → 안착)
 ```
-데드맨/비상정지/RTK품질/RTK끊김/운전자개입/과속 → 모두 정상 해제 확인.
-※ SITL 결과 `implement/heavy` 프로파일이 단순 모터모델과 폐루프에서 진동 →
-  **현장 전 heavy 게인 재튜닝 필요**(이 시뮬이 잡아낸 사전 경고).
+SITL 은 현실적 플랜트(rate-limit 서보 + 작업기부하 yaw 지연 + 횡저항 외란)를
+쓴다. 이 모델에서 AgNav 사진값 `heavy(k_cross=100)` 는 서보지연과 맞물려 진동 →
+`tuning.py` 가 안착하는 게인(모델기준 ~9cm)을 자동 도출.
+**단, 모델 추천치다.** 실모터 응답을 `can_tools` 로 계측해 `ServoCanInterface`
+의 `max_rate_deg_s/tau` 에 반영한 뒤 `tuning.py` 를 다시 돌려야 현장 heavy 게인이 된다.
 
 ## GNSS 스트림 점검 (PA-3 115200 / F9P 38400)
 ```python

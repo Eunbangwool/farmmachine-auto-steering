@@ -212,8 +212,9 @@ Apollo 10 Pro는 CAN 내장 (IP65, ADB 환경). SDK 문서 확인 필요.
 - `field_config.py`: TractorParams/CanSpec ↔ JSON. `write_template`/`load_config`로 코드 수정 없이 실측·CAN값 주입
 - `calibration.py`: `WheelbaseEstimator`/`LeverArmEstimator` — 자전거모델 회귀로 wheelbase·안테나오프셋 자동 추정(저속 사인주행)
 - `can_tools.py`: `CanBusAnalyzer`(ID별 주기/변동성), `correlate_with_signal`(외부 조향신호 상관→앵글센서 ID/바이트/부호), `CanLogger`(candump 호환)
-- `sitl_sim.py`: `BicycleModel`+`Simulator` 폐루프, `run_safety_scenarios`(데드맨/E-stop/RTK저하/RTK끊김/개입/과속 전부 PASS)
-- ⚠ SITL 발견: `implement/heavy`가 단순 모터모델 폐루프에서 진동 → **현장 전 heavy 게인 재튜닝 필요**
+- `sitl_sim.py`: 폐루프 시뮬. `BicycleModel`(yaw_tau=작업기부하 지연, dist_amp=횡저항 외란), `ServoCanInterface`(rate-limit+1차지연 현실 서보), `run_safety_scenarios`(6종 전부 PASS)
+- `tuning.py`: SITL 위 게인 자동탐색. `evaluate/cost/tune_profile` — heavy 진동을 잡는 게인 도출(예: 모델기준 baseline 45cm✗진동 → 추천 9cm안착)
+- ⚠ SITL 발견 + 튜닝 결론: 모델(서보 35°/s·80ms)에선 AgNav 사진값 k_cross=100 이 서보지연과 맞물려 진동. 예측리드 부족으로 '저게인'이 최적. **실모터 응답을 can_tools 로 계측→ServoCanInterface(rate/tau)에 반영→tuning 재탐색**해야 현장 heavy 게인 확정
 - `auto-steering/README.md`: 현장 1일차 절차, `requirements.txt`
 
 **남은 핵심 작업 (하드웨어/현장 의존)**: #1 실측값 입력, #2 실제 CAN ID/바이트맵 수집, #7 실차 안전검증.

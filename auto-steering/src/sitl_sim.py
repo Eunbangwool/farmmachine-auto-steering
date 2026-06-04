@@ -26,7 +26,7 @@ from typing import List, Optional
 
 from autosteer_core import (
     AutoSteerSystem, MockCanInterface, TractorParams, KUBOTA_MR1157,
-    ABLineStrategy, SafetyState, SafetyMonitor,
+    ABLineStrategy, SafetyState, SafetyMonitor, CanInterface, CanSpec,
 )
 
 R_EARTH = 6_371_000.0
@@ -37,21 +37,43 @@ def _wrap(a: float) -> float:
 
 
 class BicycleModel:
-    """후륜축 기준 자전거 모델. 상태: 차축 (x,y), heading, yaw_rate."""
+    """
+    후륜축 기준 자전거 모델. 상태: 차축 (x,y), heading, yaw_rate.
+
+    yaw_tau: 작업기 부하에 의한 heading 응답 지연(1차) 시정수(s).
+      0       = 부하 없음(즉답, 순수 기구학) — 기존 동작과 동일
+      0.2~0.3 = 로터리/방제 등 가벼운 작업
+      0.5~0.8 = 쟁기/균평 등 과부하(작업기 관성·횡저항이 yaw 변화를 늦춤)
+    실제로 heavy 모드가 크로스게인을 올려도 안정적인 이유 = 이 부하 감쇠.
+    """
     def __init__(self, params: TractorParams,
-                 x: float = 0.0, y: float = 0.0, heading: float = math.pi / 2):
+                 x: float = 0.0, y: float = 0.0, heading: float = math.pi / 2,
+                 yaw_tau: float = 0.0, dist_amp: float = 0.0):
         self.p = params
         self.x = x
         self.y = y
         self.heading = heading
         self.yaw_rate = 0.0
+        self.yaw_tau = yaw_tau
+        self.dist_amp = dist_amp        # 작업기 횡저항(side draft) 외란 진폭 (rad/s)
+        self._yaw = 0.0
+        self._k = 0
 
     def step(self, speed: float, steer_rad: float, dt: float):
         steer = max(-self.p.max_steer_rad, min(self.p.max_steer_rad, steer_rad))
-        self.yaw_rate = speed * math.tan(steer) / self.p.wheelbase
+        yaw_cmd = speed * math.tan(steer) / self.p.wheelbase
+        a = dt / (self.yaw_tau + dt)          # yaw_tau=0 → a=1 (즉답)
+        self._yaw += a * (yaw_cmd - self._yaw)
+        self.yaw_rate = self._yaw
+        # 작업기 외란: 흙저항이 차량을 경로 밖으로 끄는 저주파 + 잡음
+        self._k += 1
+        dist = 0.0
+        if self.dist_amp:
+            dist = (self.dist_amp * math.sin(self._k * 0.04)
+                    + random.gauss(0, self.dist_amp * 0.4))
         self.x += speed * math.cos(self.heading) * dt
         self.y += speed * math.sin(self.heading) * dt
-        self.heading = _wrap(self.heading + self.yaw_rate * dt)
+        self.heading = _wrap(self.heading + (self.yaw_rate + dist) * dt)
 
     def antenna_xy(self) -> tuple:
         """차축 → GPS 안테나 위치 (params.rear_axle_pos 의 역변환)."""
@@ -71,6 +93,47 @@ class GeoConverter:
         return lat, lon
 
 
+class ServoCanInterface(CanInterface):
+    """
+    현실적 조향 서보 모델 (MockCanInterface 대체).
+    MockCAN 은 매 명령마다 0.25 비율로 즉시 수렴 → 비현실적.
+    실제 모터는 (1) 각속도 한계(rate limit)와 (2) 1차 지연을 가진다.
+
+      max_rate_deg_s : 전륜 조향 최대 각속도 (모터RPM/조향비에서 유도, 기본 35°/s)
+      tau            : 서보 1차 지연 시정수 (s)
+    CanSpec 인코딩은 MockCanInterface 와 동일 → SteeringActuator 그대로 동작.
+    """
+    def __init__(self, max_rate_deg_s: float = 35.0, tau: float = 0.08,
+                 ctrl_dt: Optional[float] = None):
+        self._angle = 0.0          # 현재 조향각 (deg)
+        self._recv_q: List[tuple] = []
+        self.max_rate = max_rate_deg_s
+        self.tau = tau
+        self.dt = ctrl_dt or CanSpec.MOTOR_CMD_PERIOD
+
+    def start(self): pass
+    def stop(self):  pass
+
+    def send(self, can_id: int, data: bytes):
+        if can_id != CanSpec.MOTOR_CMD_ID:
+            return
+        raw = int.from_bytes(
+            data[CanSpec.MOTOR_BYTE_CMD_HI:CanSpec.MOTOR_BYTE_CMD_LO + 1],
+            "big", signed=CanSpec.SENSOR_SIGNED)
+        target = raw / CanSpec.MOTOR_ANGLE_SCALE          # deg
+        err = target - self._angle
+        step = err * min(1.0, self.dt / (self.tau + self.dt))   # 1차 지연
+        max_step = self.max_rate * self.dt                       # 각속도 한계
+        step = max(-max_step, min(max_step, step))
+        self._angle += step
+        raw_fb = int(self._angle * CanSpec.SENSOR_ANGLE_SCALE)
+        fb = raw_fb.to_bytes(2, "big", signed=CanSpec.SENSOR_SIGNED)
+        self._recv_q.append((CanSpec.SENSOR_ANGLE_ID, fb + bytes(6)))
+
+    def recv(self) -> Optional[tuple]:
+        return self._recv_q.pop(0) if self._recv_q else None
+
+
 @dataclass
 class SimResult:
     steps: int
@@ -78,6 +141,9 @@ class SimResult:
     xte_max_cm: float
     final_state: str
     engaged_end: bool
+    steer_reversals: int = 0
+    reversal_rate: float = 0.0      # 조향 방향전환/초 (진동 지표)
+    settled: bool = True            # 후반부 안착 + 미발산
 
 
 class Simulator:
@@ -85,17 +151,19 @@ class Simulator:
     def __init__(self, sys_: AutoSteerSystem, params: TractorParams,
                  lat0: float = 37.0, lon0: float = 127.0,
                  target_speed: float = 1.2, rtk_quality: int = 4,
-                 gnss_source: str = "pa3", noise: float = 0.003):
+                 gnss_source: str = "pa3", noise: float = 0.003,
+                 yaw_tau: float = 0.0, dist_amp: float = 0.0):
         self.sys = sys_
         self.params = params
         self.geo = GeoConverter(lat0, lon0)
-        self.model = BicycleModel(params)
+        self.model = BicycleModel(params, yaw_tau=yaw_tau, dist_amp=dist_amp)
         self.v = target_speed
         self.q = rtk_quality
         self.src = gnss_source
         self.noise = noise
         self.feed_rtk = True          # False 면 RTK 미수신(끊김) 시뮬
         self._xte: List[float] = []
+        self._targets: List[float] = []
 
     def step(self, dt: float) -> dict:
         # 1) 모델 → GPS(안테나) → lat/lon → on_rtk
@@ -119,6 +187,7 @@ class Simulator:
         if res["engaged"]:
             self.model.step(self.v, measured, dt)
             self._xte.append(abs(res["xte_cm"]))
+            self._targets.append(res["target_angle_deg"])
         return res
 
     def run(self, steps: int = 400, dt: float = 0.02) -> SimResult:
@@ -127,12 +196,29 @@ class Simulator:
             last = self.step(dt)
             if not last["engaged"]:
                 break
-        rms = (sum(x * x for x in self._xte) / max(1, len(self._xte))) ** 0.5
-        return SimResult(steps=len(self._xte),
-                         xte_rms_cm=rms,
-                         xte_max_cm=max(self._xte) if self._xte else 0.0,
-                         final_state=last["safety"],
-                         engaged_end=last["engaged"])
+        xte = self._xte
+        rms = (sum(x * x for x in xte) / max(1, len(xte))) ** 0.5
+        xmax = max(xte) if xte else 0.0
+
+        # 진동 지표: 목표 조향각 변화율의 부호전환 횟수 / 초
+        reversals = 0
+        diffs = [self._targets[i] - self._targets[i - 1]
+                 for i in range(1, len(self._targets))]
+        for i in range(1, len(diffs)):
+            if diffs[i] * diffs[i - 1] < 0 and abs(diffs[i]) > 0.05:
+                reversals += 1
+        duration = max(1e-6, len(xte) * dt)
+        rev_rate = reversals / duration
+
+        # 안착: 후반 25% XTE RMS 작고 발산 없음
+        tail = xte[3 * len(xte) // 4:] if len(xte) >= 8 else xte
+        tail_rms = (sum(x * x for x in tail) / max(1, len(tail))) ** 0.5
+        settled = (tail_rms < 20.0) and (xmax < 300.0)
+
+        return SimResult(steps=len(xte), xte_rms_cm=rms, xte_max_cm=xmax,
+                         final_state=last["safety"], engaged_end=last["engaged"],
+                         steer_reversals=reversals, reversal_rate=rev_rate,
+                         settled=settled)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -140,9 +226,19 @@ class Simulator:
 # ═══════════════════════════════════════════════════════════════
 
 def build_system(params: Optional[TractorParams] = None,
-                 algo: str = "implement", profile: str = "heavy") -> AutoSteerSystem:
+                 algo: str = "implement", profile="heavy",
+                 realistic: bool = False,
+                 servo_rate_deg_s: float = 35.0,
+                 servo_tau: float = 0.08) -> AutoSteerSystem:
+    """
+    profile: "normal"/"heavy"/"sand" 또는 TuningProfile 인스턴스.
+    realistic=True 면 ServoCanInterface(rate-limit+지연) 사용(추종/튜닝용),
+    False 면 MockCanInterface(빠름, 안전 시나리오용).
+    """
     params = params or KUBOTA_MR1157
-    can = MockCanInterface(); can.start()
+    can = (ServoCanInterface(servo_rate_deg_s, servo_tau)
+           if realistic else MockCanInterface())
+    can.start()
     sys_ = AutoSteerSystem(can, params=params, algo=algo)
     sys_.set_profile(profile)
     sys_.safety.update_deadman(True)
@@ -225,17 +321,20 @@ if __name__ == "__main__":
     print("SITL 시뮬레이터 — 폐루프 경로추종 + 안전 시나리오 사전검증")
     print("=" * 74)
 
-    # 1) 폐루프 경로추종 (알고리즘/프로파일별)
-    print("\n▶ 1. 폐루프 경로추종 (AB라인 60m, 1.2 m/s)")
-    print(f"  {'알고리즘/프로파일':<26}  {'XTE RMS':>9}  {'XTE MAX':>9}  {'종료상태':>10}")
+    # 1) 폐루프 경로추종 (현실적 서보 + 작업기 부하 yaw 지연)
+    print("\n▶ 1. 폐루프 경로추종 (AB라인 60m, 1.2 m/s, 현실 서보+작업기부하)")
+    print(f"  {'알고리즘/프로파일':<24}  {'XTE RMS':>8}  {'XTE MAX':>8}  "
+          f"{'진동/s':>6}  {'안착':>4}")
     print("  " + "-" * 60)
+    yaw_map = {"normal": 0.2, "heavy": 0.6, "sand": 0.25}
     for algo, prof in [("pure_pursuit", "normal"), ("stanley", "normal"),
                        ("implement", "heavy"), ("implement", "sand")]:
-        sys_ = build_system(KUBOTA_MR1157, algo=algo, profile=prof)
-        sim = Simulator(sys_, KUBOTA_MR1157, target_speed=1.2)
+        sys_ = build_system(KUBOTA_MR1157, algo=algo, profile=prof, realistic=True)
+        sim = Simulator(sys_, KUBOTA_MR1157, target_speed=1.2, yaw_tau=yaw_map[prof])
         r = sim.run(steps=600)
-        print(f"  {algo+'/'+prof:<26}  {r.xte_rms_cm:>7.1f}cm  "
-              f"{r.xte_max_cm:>7.1f}cm  {r.final_state:>10}")
+        print(f"  {algo+'/'+prof:<24}  {r.xte_rms_cm:>6.1f}cm  "
+              f"{r.xte_max_cm:>6.1f}cm  {r.reversal_rate:>5.1f}  "
+              f"{'OK' if r.settled else '✗진동':>4}")
 
     # 2) 안전 시나리오 검증
     print("\n▶ 2. 안전 계층 시나리오 (위험 주입 → 해제 사유 검증)")
