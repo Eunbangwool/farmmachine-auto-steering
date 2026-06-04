@@ -238,6 +238,221 @@ class ChcnavPa3SerialClient(F9pUsbClient):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  GNSS 스트림 정찰(sniff) — 포맷/보레이트/메시지 분석
+#  실장비 'UART tool' 대체: 무엇이 어떤 포맷으로 나오는지 직접 확인
+# ═══════════════════════════════════════════════════════════════
+
+UBX_SYNC  = b"\xb5\x62"      # UBX 바이너리 동기 헤더 (µb)
+RTCM3_PRE = 0xD3            # RTCM3 프리앰블
+
+
+def detect_format(head: bytes) -> str:
+    """버퍼 맨 앞으로 프레임 포맷 추정: 'nmea'/'ubx'/'rtcm3'/'unknown'."""
+    if not head:
+        return "unknown"
+    if head[0] == 0x24:                       # '$'
+        return "nmea"
+    if head[:2] == UBX_SYNC:
+        return "ubx"
+    if head[0] == RTCM3_PRE:
+        return "rtcm3"
+    return "unknown"
+
+
+class SniffReport:
+    """
+    GNSS 원시 스트림 분석기. NMEA/UBX/RTCM3 혼재 스트림을 프레이밍해
+    포맷·메시지·RTK 품질 통계를 낸다. feed_bytes 로 하드웨어 없이 테스트 가능.
+    """
+    MAX_BUF = 8192
+
+    def __init__(self):
+        self.total_bytes  = 0
+        self.formats      = set()
+        self.nmea_by_type = {}
+        self.talkers      = {}
+        self.nmea_ok      = 0
+        self.nmea_bad     = 0
+        self.ubx_frames   = 0
+        self.rtcm3_frames = 0
+        self.dropped      = 0
+        self.gga_count    = 0
+        self.gga_qualities = set()
+        self.last_fix     = None
+        self._buf = bytearray()
+
+    def feed_bytes(self, data: bytes):
+        self.total_bytes += len(data)
+        self._buf.extend(data)
+        self._parse()
+
+    def _parse(self):
+        buf = self._buf
+        while buf:
+            fmt = detect_format(bytes(buf[:2]))
+            if fmt == "nmea":
+                nl = buf.find(b"\n")
+                if nl < 0:                       # 미완성 문장 → 더 기다림
+                    if len(buf) > self.MAX_BUF:
+                        self.dropped += len(buf); buf.clear()
+                    break
+                line = bytes(buf[:nl + 1]); del buf[:nl + 1]
+                self._on_nmea(line)
+            elif fmt == "ubx":
+                if len(buf) < 6:
+                    break
+                length = buf[4] | (buf[5] << 8)  # payload len (LE)
+                frame_len = 6 + length + 2       # hdr+cls+id+len + payload + ck
+                if len(buf) < frame_len:
+                    if frame_len > self.MAX_BUF:
+                        del buf[0]; self.dropped += 1
+                    break
+                del buf[:frame_len]
+                self.ubx_frames += 1; self.formats.add("ubx")
+            elif fmt == "rtcm3":
+                if len(buf) < 3:
+                    break
+                length = ((buf[1] & 0x03) << 8) | buf[2]
+                frame_len = 3 + length + 3       # hdr+len + payload + CRC24
+                if len(buf) < frame_len:
+                    if frame_len > self.MAX_BUF:
+                        del buf[0]; self.dropped += 1
+                    break
+                del buf[:frame_len]
+                self.rtcm3_frames += 1; self.formats.add("rtcm3")
+            else:
+                del buf[0]; self.dropped += 1    # resync: 한 바이트 버림
+
+    def _on_nmea(self, raw: bytes):
+        line = raw.decode("ascii", errors="ignore").strip()
+        if not line.startswith("$") or len(line) < 6:
+            return
+        self.formats.add("nmea")
+        tag = line[1:6]                          # 예: GNGGA
+        talker, mtype = tag[:2], tag[2:5]
+        self.talkers[talker]   = self.talkers.get(talker, 0) + 1
+        self.nmea_by_type[mtype] = self.nmea_by_type.get(mtype, 0) + 1
+        if _nmea_checksum_ok(line):
+            self.nmea_ok += 1
+        else:
+            self.nmea_bad += 1
+        if mtype == "GGA":
+            fix = parse_gga(line)
+            if fix:
+                self.gga_count += 1
+                self.gga_qualities.add(fix[2])
+                self.last_fix = fix
+
+    def summary(self) -> dict:
+        return {
+            "total_bytes": self.total_bytes,
+            "formats": sorted(self.formats),
+            "nmea_by_type": dict(self.nmea_by_type),
+            "talkers": dict(self.talkers),
+            "nmea_ok": self.nmea_ok, "nmea_bad": self.nmea_bad,
+            "ubx_frames": self.ubx_frames, "rtcm3_frames": self.rtcm3_frames,
+            "gga_count": self.gga_count,
+            "gga_qualities": sorted(self.gga_qualities),
+            "last_fix": self.last_fix, "dropped": self.dropped,
+        }
+
+    def format_report(self) -> str:
+        s = self.summary()
+        L = [f"수신 {s['total_bytes']}B | 포맷: {', '.join(s['formats']) or '없음'}"]
+        if s["nmea_by_type"]:
+            L.append("NMEA 문장: " + ", ".join(
+                f"{k}×{v}" for k, v in sorted(s['nmea_by_type'].items())))
+            L.append("NMEA talker: " + ", ".join(
+                f"{k}×{v}" for k, v in s['talkers'].items()))
+            L.append(f"NMEA 체크섬: OK {s['nmea_ok']} / 오류 {s['nmea_bad']}")
+        if s["gga_count"]:
+            q = s["gga_qualities"]
+            rtk = "✅ RTK Fixed/Float" if (4 in q or 5 in q) else "⚠ RTK 아님(보정신호 확인)"
+            L.append(f"GGA {s['gga_count']}건, 품질코드 {q} → {rtk}")
+            if s["last_fix"]:
+                la, lo, qq = s["last_fix"]
+                L.append(f"마지막 위치: {la:.7f}, {lo:.7f} (q={qq})")
+        if s["ubx_frames"]:
+            L.append(f"⚠ UBX 바이너리 {s['ubx_frames']}프레임 — NMEA 전환 또는 UBX 파서 필요")
+        if s["rtcm3_frames"]:
+            L.append(f"RTCM3 {s['rtcm3_frames']}프레임 (보정신호 스트림)")
+        rec = self._recommend(s)
+        if rec:
+            L.append(f"권고: {rec}")
+        return "\n".join("  " + x for x in L)
+
+    @staticmethod
+    def _recommend(s: dict) -> str:
+        if s["ubx_frames"] and s["nmea_ok"] == 0:
+            return "UBX 전용 출력 → 수신기 설정에서 NMEA(GGA) 활성화 (그러면 parse_gga 사용 가능)"
+        if s["nmea_ok"] and s["nmea_bad"] > s["nmea_ok"]:
+            return "체크섬 오류 과다 → 보레이트 불일치 의심 (detect_baudrate 사용)"
+        if s["nmea_ok"] and s["gga_count"] == 0:
+            return "NMEA는 나오나 GGA 없음 → 수신기에서 GGA 문장 활성화"
+        if 4 in s["gga_qualities"] or 5 in s["gga_qualities"]:
+            return "정상 — GGA + RTK fix 확인. on_rtk 연결 가능"
+        return ""
+
+
+class GnssSniffer:
+    """
+    실장비 시리얼 포트를 열어 원시 바이트를 SniffReport 로 분석.
+    포트/포맷/보레이트를 모를 때 가장 먼저 돌려보는 정찰 도구.
+        rep = GnssSniffer("/dev/ttyS1", 115200, echo=True).run(5.0)
+        print(rep.format_report())
+    """
+    def __init__(self, port: str = "/dev/ttyACM0",
+                 baudrate: int = 115200, echo: bool = False):
+        self.port = port
+        self.baudrate = baudrate
+        self.echo = echo
+
+    def run(self, duration: float = 5.0) -> SniffReport:
+        import time
+        report = SniffReport()
+        try:
+            import serial
+        except ImportError:
+            log.error("pyserial 미설치 — 'pip install pyserial'")
+            return report
+        try:
+            ser = serial.Serial(self.port, self.baudrate, timeout=0.2)
+        except Exception as e:
+            log.error(f"포트 열기 실패({self.port}@{self.baudrate}): {e}")
+            return report
+        t0 = time.time()
+        try:
+            while time.time() - t0 < duration:
+                data = ser.read(256)
+                if data:
+                    report.feed_bytes(data)
+                    if self.echo:
+                        print(data.decode("ascii", "replace"), end="")
+        finally:
+            ser.close()
+        return report
+
+
+def detect_baudrate(port: str = "/dev/ttyACM0",
+                    candidates=(115200, 38400, 9600, 460800, 57600, 230400),
+                    window: float = 2.0):
+    """
+    후보 보레이트를 순회하며 가장 유효한 스트림을 찾는다.
+    점수 = NMEA 체크섬 OK×2 + UBX + RTCM3 프레임 수.
+    반환: (best_baud, SniffReport) 또는 (None, None).
+    """
+    best = (None, None, 0)
+    for baud in candidates:
+        rep = GnssSniffer(port, baud).run(window)
+        score = rep.nmea_ok * 2 + rep.ubx_frames + rep.rtcm3_frames
+        log.info(f"baud {baud}: 점수 {score} "
+                 f"(NMEA_ok={rep.nmea_ok}, UBX={rep.ubx_frames}, RTCM3={rep.rtcm3_frames})")
+        if score > best[2]:
+            best = (baud, rep, score)
+    return (best[0], best[1]) if best[2] > 0 else (None, None)
+
+
+# ═══════════════════════════════════════════════════════════════
 #  단독 테스트 (하드웨어 없이 GGA 파싱 + 콜백 경로 검증)
 # ═══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
@@ -281,4 +496,39 @@ if __name__ == "__main__":
     print("  ✓ 도분→십진도 변환 정확")
     print("  ✓ 비GGA/빈좌표 문장 무시")
     print("  ✓ RTK 품질 4/5 식별")
-    print("\n다음 단계: AutoSteerSystem.on_rtk 를 on_rtk 콜백으로 연결하면 끝.")
+    print("\n다음 단계: AutoSteerSystem.rtk_callback('f9p'/'pa3') 로 연결하면 끝.")
+
+    # ── 스트림 정찰(sniff): NMEA + UBX + RTCM3 혼재 스트림 분석 ──────
+    print("\n" + "=" * 70)
+    print("GNSS 스트림 정찰(sniff) — NMEA/UBX/RTCM3 혼재 분석 (하드웨어 불필요)")
+    print("=" * 70)
+
+    # 합성 스트림: GGA 3건(q=1/5/4) + RMC + UBX 1프레임 + RTCM3 1프레임
+    ubx_frame   = b"\xb5\x62\x01\x07\x00\x00\x00\x00"          # NAV-PVT(len0) + dummy ck
+    rtcm3_frame = b"\xd3\x00\x02\xab\xcd\x00\x00\x00"          # len2 + payload2 + CRC3
+    stream = (
+        (samples[0] + "\r\n").encode()
+        + (samples[1] + "\r\n").encode()
+        + ubx_frame
+        + (samples[2] + "\r\n").encode()
+        + (samples[3] + "\r\n").encode()      # RMC
+        + rtcm3_frame
+    )
+
+    report = SniffReport()
+    # 일부러 두 조각으로 쪼개 넣어 프레임 경계 버퍼링까지 검증
+    report.feed_bytes(stream[:50])
+    report.feed_bytes(stream[50:])
+    print(report.format_report())
+
+    s = report.summary()
+    assert "nmea" in s["formats"] and "ubx" in s["formats"] and "rtcm3" in s["formats"]
+    assert s["gga_count"] == 3, s
+    assert s["ubx_frames"] == 1 and s["rtcm3_frames"] == 1, s
+    assert 4 in s["gga_qualities"] and 5 in s["gga_qualities"]
+    assert s["nmea_bad"] == 0, "체크섬 모두 통과해야 함"
+    print("\n  ✓ 포맷 자동 감지(NMEA/UBX/RTCM3)")
+    print("  ✓ 프레임 경계 분할 수신 버퍼링")
+    print("  ✓ GGA 추출 + RTK 품질 + UBX/RTCM3 카운트")
+    print("\n실장비 사용: GnssSniffer('/dev/ttyS1',115200,echo=True).run(5) "
+          "또는 detect_baudrate('/dev/ttyS1')")
