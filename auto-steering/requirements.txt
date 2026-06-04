@@ -1,0 +1,6 @@
+# auto-steering 실행 의존성
+numpy>=1.21          # autosteer_core EKF (StateEstimator)
+pyserial>=3.5        # f9p_client 시리얼 수신 (실장비에서만 필요)
+
+# 선택: 실차 CAN (ApolloCanInterface). 없으면 raw socket 폴백 사용
+# python-can>=4.0

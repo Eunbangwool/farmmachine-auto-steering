@@ -200,16 +200,24 @@ Apollo 10 Pro는 CAN 내장 (IP65, ADB 환경). SDK 문서 확인 필요.
 
 ## 다음 작업 우선순위
 
-1. **★ 실측**: wheelbase, antenna_to_axle (줄자 5분) — 물리 측정 필요 (미완)
-2. **★ CanSpec 채우기**: 모터 프로그램 문서에서 CAN ID + 바이트 구조 — 모터 문서 필요 (미완)
+1. **★ 실측**: wheelbase, antenna_to_axle — 물리 측정 (미완). ✅ 사전준비: `calibration.py`로 저속 주행 자동 추정 + `field_config.py`로 JSON 주입
+2. **★ CanSpec 채우기**: 모터 CAN ID + 바이트 구조 — 모터 문서 (미완). ✅ 사전준비: `can_tools.py`로 버스 역추적(앵글/모터 ID 탐색), `field_config.py`로 JSON 주입
 3. ✅ **ApolloCanInterface 구현**: SocketCAN(python-can/raw socket). ★ Apollo 전용 SDK면 start/send/recv 내부만 교체
-4. ✅ **RTK 연결**: `f9p_client.F9pUsbClient` → `on_rtk()` 콜백 (GGA 파싱, 품질 4/5 식별)
+4. ✅ **RTK 연결**: `f9p_client.F9pUsbClient`/`ChcnavPa3SerialClient` → `on_rtk()` (GGA 파싱, 품질 4/5, sniff/UBX/보레이트탐색)
 5. ✅ **IMU 캘리브레이션**: `ImuCalibrator` (평지 30초 평균 → ImuOffset)
 6. ✅ **3-모드 프로파일**: `TuningProfile` + `PROFILE_NORMAL/HEAVY/SAND` + `set_profile()`
-7. **저속 안전 검증**: 빈 농지 1km/h, 데드맨 + 비상정지 확인 — 현장 검증 필요 (미완)
+7. **저속 안전 검증**: 빈 농지 1km/h, 데드맨 + 비상정지 — 현장 (미완). ✅ 사전준비: `sitl_sim.py` 폐루프 + 안전 6종 시나리오 검증
 
-**남은 핵심 작업 (하드웨어/현장 의존)**: #1 실측, #2 실제 CAN ID/바이트맵, #7 현장 안전검증.
-ApolloCanInterface/F9P는 실장비에서 `can0`/시리얼 포트만 맞추면 동작.
+### 사전 준비 도구 (실측/문서/현장 전에 전부 구현됨)
+- `field_config.py`: TractorParams/CanSpec ↔ JSON. `write_template`/`load_config`로 코드 수정 없이 실측·CAN값 주입
+- `calibration.py`: `WheelbaseEstimator`/`LeverArmEstimator` — 자전거모델 회귀로 wheelbase·안테나오프셋 자동 추정(저속 사인주행)
+- `can_tools.py`: `CanBusAnalyzer`(ID별 주기/변동성), `correlate_with_signal`(외부 조향신호 상관→앵글센서 ID/바이트/부호), `CanLogger`(candump 호환)
+- `sitl_sim.py`: `BicycleModel`+`Simulator` 폐루프, `run_safety_scenarios`(데드맨/E-stop/RTK저하/RTK끊김/개입/과속 전부 PASS)
+- ⚠ SITL 발견: `implement/heavy`가 단순 모터모델 폐루프에서 진동 → **현장 전 heavy 게인 재튜닝 필요**
+- `auto-steering/README.md`: 현장 1일차 절차, `requirements.txt`
+
+**남은 핵심 작업 (하드웨어/현장 의존)**: #1 실측값 입력, #2 실제 CAN ID/바이트맵 수집, #7 실차 안전검증.
+도구는 다 준비됨 — 현장에선 수집→JSON 주입→SITL 재검증→1km/h 실주행 순.
 
 ---
 
