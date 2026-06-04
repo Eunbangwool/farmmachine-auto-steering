@@ -120,12 +120,14 @@ class F9pUsbClient:
                  baudrate: int = 38400,
                  on_rtk: Optional[Callable[[float, float, int], None]] = None,
                  on_fix_change: Optional[Callable[[int], None]] = None,
-                 read_timeout: float = 1.0):
+                 read_timeout: float = 1.0,
+                 source: str = "f9p"):
         self.port = port
         self.baudrate = baudrate
         self.on_rtk = on_rtk
         self.on_fix_change = on_fix_change      # 품질 변화 시 알림(옵션)
         self.read_timeout = read_timeout
+        self.source = source                    # GnssArbiter 소스 라벨
 
         self._ser = None
         self._thread: Optional[threading.Thread] = None
@@ -210,6 +212,29 @@ class F9pUsbClient:
     def has_rtk(self) -> bool:
         """현재 RTK Fixed/Float 인지 (SafetyMonitor 허용 품질)."""
         return self._last_quality in (RTK_FIX_FIXED, RTK_FIX_FLOAT)
+
+
+class ChcnavPa3SerialClient(F9pUsbClient):
+    """
+    CHCNAV PA-3 스마트 안테나의 NMEA(RS232) 출력 클라이언트.
+
+    PA-3도 NMEA-0183을 출력하므로 parse_gga / F9pUsbClient 로직을 그대로 재사용.
+    차이는 baud(공장 기본 115200)와 소스 라벨('pa3')뿐. PA-3는 INS 융합
+    위치/heading을 내보내므로 GnssArbiter에서 'pa3'(주)로 F9P보다 우선한다.
+
+    스펙(autosteer_core.CHCNAV_PA3): CAN 500k / RS232 ≤115200 / NMEA 10Hz / IMU 100Hz.
+    포트는 PA-3가 물린 시리얼(예: COM1 UART0 → /dev/ttyS0, COM2 UART1 → /dev/ttyS1)에 맞춰 지정.
+    ★ CAN 출력(위치+자세)을 쓰려면 CHCNAV OEM CAN 프로토콜 문서 필요(별도).
+    """
+    def __init__(self,
+                 port: str = "/dev/ttyS1",
+                 baudrate: int = 115200,
+                 on_rtk: Optional[Callable[[float, float, int], None]] = None,
+                 on_fix_change: Optional[Callable[[int], None]] = None,
+                 read_timeout: float = 1.0):
+        super().__init__(port=port, baudrate=baudrate, on_rtk=on_rtk,
+                         on_fix_change=on_fix_change, read_timeout=read_timeout,
+                         source="pa3")
 
 
 # ═══════════════════════════════════════════════════════════════

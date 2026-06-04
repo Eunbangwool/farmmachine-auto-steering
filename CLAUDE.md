@@ -49,8 +49,9 @@ farmmachine-auto-steering/
 - `CustomStrategy`: 임의 웨이포인트
 
 ### Layer 2: 상태 추정
-- `StateEstimator`: 확장 칼만 필터 (RTK 10Hz + IMU 100Hz 융합)
+- `StateEstimator`: 확장 칼만 필터 (RTK 10Hz + IMU 100Hz 융합). `tune_for_receiver(spec)`로 INS heading 정확도 기반 R 튜닝
 - `TractorParams` 자동 적용: update_rtk에서 파라미터 2(높이)+3(레버암) 보정, update_imu에서 파라미터 5(IMU 오프셋) 보정
+- `GnssArbiter`: ✅ GNSS 소스 이중화 — **PA-3(주) + F9P(백업)** 우선순위/페일오버. `on_rtk(...,source=)`로 제출, active 소스 한 곳만 EKF 반영(이중카운팅 방지), PA-3 끊기면 F9P 자동 전환·복구 시 복귀
 
 ### Layer 3: 경로 추종 (3가지 알고리즘)
 ```
@@ -112,6 +113,25 @@ class CanSpec:
 - 핸들 데드존: 20
 - 스티어링 데드존 오프셋: 0
 - 제어 모드: Mode2 (P=25, D=80, 최대RPM=20, 연성=100)
+
+---
+
+## GNSS 수신기 & 소스 이중화 (결정: PA-3 주 + F9P 백업)
+
+### CHCNAV PA-3 스마트 안테나 (NX510 설치 안테나, 데이터시트)
+- **GNSS+IMU 통합 수신기** (스마트 안테나). 위치+INS heading/자세를 직접 출력
+- 인터페이스: **CAN 2포트 @500kb/s**, **RS232 2포트 ≤115200bps**, NMEA-0183
+- 내장 IMU 100Hz: heading <0.3°, roll/pitch <0.1°, 속도 0.03 m/s
+- 차분 **RTCM3.2/3.3** (rtk-lora-bridge LoRa NTRIP 포맷과 일치), 출력 ≤10Hz / 내부 50Hz
+- 핀맵: COM1(M23 수) UART0_TX/RX(1,2)·CAN1(8,9)·CAN0(10,11)·NAVIGATE_IN(6, 외부 항법스위치)·12V검출(4) / COM2(M23 암) UART1_TX/RX(2,3)
+- "OEM CAN/serial 프로토콜 커스터마이즈 제공" → **CanSpec CAN ID/바이트맵 입수 경로**
+- → `CanSpec.CAN_BITRATE=500_000` 이 데이터시트로 확인됨 (모터가 같은 버스면 #2 비트레이트 확정)
+
+### 소스 이중화 (코드: `GnssReceiverSpec`, `CHCNAV_PA3`/`UBLOX_F9P`, `GnssArbiter`)
+- **결정**: PA-3를 주(primary), 본인 F9P를 백업으로 **둘 다** 사용 (이중화/비교)
+- PA-3 NMEA = `ChcnavPa3SerialClient`(115200, source="pa3"), F9P = `F9pUsbClient`(38400, source="f9p")
+- `AutoSteerSystem.rtk_callback("pa3"/"f9p")`로 각 클라이언트 연결 → `GnssArbiter`가 중재
+- PA-3는 INS 융합 heading 출력 → IMU 캘리브(#5) 부담↓. ★ PA-3 CAN 출력 사용 시 CHCNAV OEM CAN 프로토콜 문서 필요
 
 ---
 

@@ -486,7 +486,8 @@ class CanSpec:
     """
 
     # ── 버스 설정 ─────────────────────────────────────
-    CAN_BITRATE = 500_000           # ★ 250000 / 500000 / 1000000
+    CAN_BITRATE = 500_000           # CHCNAV PA-3 버스 = 500kb/s (데이터시트 확인).
+                                    # 모터/앵글이 같은 버스면 확정 ★ 아니면 모터 문서 확인
 
     # ── 모터 명령 (태블릿 → 모터) ────────────────────
     MOTOR_CMD_ID       = 0x201      # ★ 모터 명령 CAN ID
@@ -520,6 +521,48 @@ class CanSpec:
     SENSOR_ANGLE_SCALE = 10.0       # ★ CAN값→각도 변환 (예: 10 → 0.1도 단위)
     SENSOR_ANGLE_OFFSET= 0.0        # ★ 영점 오프셋 (캘리브레이션 후 설정)
     SENSOR_SIGNED      = True       # ★ 부호 있는 정수인지 (보통 True)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  GNSS 수신기 스펙 — EKF 튜닝 + 버스/시리얼 설정 참조
+#  (CHCNAV PA-3 데이터시트 / u-blox F9P)
+# ═══════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class GnssReceiverSpec:
+    """
+    GNSS 수신기 하드웨어 스펙. EKF 측정노이즈(R) 튜닝 + CAN/시리얼 설정 참조용.
+    """
+    name:              str
+    can_bitrate:       int      # bps (0 = CAN 미지원)
+    serial_baud:       int      # bps (NMEA-0183 출력)
+    nmea_rate_hz:      float    # 위치 출력 주기
+    imu_rate_hz:       float    # IMU 출력 주기 (0 = 내장 IMU 없음)
+    heading_acc_deg:   float    # INS heading 정확도 (≈1σ, 0 = INS 없음)
+    rollpitch_acc_deg: float
+    vel_acc_mps:       float
+    rtcm:              str      # 지원 차분 포맷
+
+
+# CHCNAV PA-3 스마트 안테나 (NX510 설치 안테나, 데이터시트 확인값)
+#   - CAN 2포트 @500kb/s, RS232 2포트 ≤115200bps, NMEA-0183
+#   - 내장 IMU 100Hz: heading<0.3°, roll/pitch<0.1°, 속도 0.03m/s
+#   - 차분 RTCM3.2/3.3, 출력 ≤10Hz / 내부 50Hz
+#   - "OEM CAN/serial 프로토콜 커스터마이즈 제공" → CanSpec 입수 경로
+CHCNAV_PA3 = GnssReceiverSpec(
+    name="CHCNAV PA-3", can_bitrate=500_000, serial_baud=115_200,
+    nmea_rate_hz=10.0, imu_rate_hz=100.0,
+    heading_acc_deg=0.3, rollpitch_acc_deg=0.1, vel_acc_mps=0.03,
+    rtcm="RTCM3.2/3.3",
+)
+
+# 본인 u-blox ZED-F9P (RTK 보드, 내장 IMU 없음 → 별도 IMU 융합 필요)
+UBLOX_F9P = GnssReceiverSpec(
+    name="u-blox ZED-F9P", can_bitrate=0, serial_baud=38_400,
+    nmea_rate_hz=10.0, imu_rate_hz=0.0,
+    heading_acc_deg=0.0, rollpitch_acc_deg=0.0, vel_acc_mps=0.05,
+    rtcm="RTCM3.x",
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -765,6 +808,17 @@ class StateEstimator:
         return VehicleState(x=self.x[0], y=self.x[1],
                             heading=self.x[2], speed=self.x[3],
                             angular_vel=self.x[4])
+
+    def tune_for_receiver(self, spec: 'GnssReceiverSpec'):
+        """
+        INS 수신기(PA-3 등)의 heading 정확도로 EKF heading 측정노이즈 R 설정.
+        PA-3 heading<0.3° → R_hdg=(0.3°)². F9P처럼 INS 없으면(0°) 변경 안 함.
+        """
+        if spec.heading_acc_deg > 0:
+            sigma = math.radians(spec.heading_acc_deg)
+            self.R_hdg = self.np.array([[sigma * sigma]])
+            log.info(f"EKF heading R = ({spec.heading_acc_deg}°)² "
+                     f"[{spec.name} INS 기준]")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1379,6 +1433,80 @@ class SafetyMonitor:
 
 
 # ═══════════════════════════════════════════════════════════════
+#  GNSS 소스 중재 — PA-3(주) + F9P(백업) 이중화
+# ═══════════════════════════════════════════════════════════════
+
+class GnssArbiter:
+    """
+    다중 GNSS 소스 중재기 (이중화/페일오버).
+
+    정책:
+      1순위) priority 순서대로 "사용 가능"(fresh + 품질 4/5) 한 소스를 active
+      2순위) 모두 사용 불가면, fresh 한 최우선 소스를 active 로
+             (품질은 그대로 전달 → SafetyMonitor 가 RTK_LOW 로 거부)
+      3순위) 둘 다 stale 이면 active=None (SafetyMonitor 가 RTK_LOST 처리)
+
+    submit() 은 들어온 소스가 현재 active 일 때만 fix 를 반환 →
+    EKF 는 active 소스 한 곳에서만 갱신되어 이중 카운팅이 없다.
+    PA-3 가 끊기면 다음 F9P submit 에서 자동 페일오버, 복구되면 다시 PA-3.
+
+    예 (PA-3 주 / F9P 백업):
+        arb = GnssArbiter(priority=("pa3", "f9p"))
+    """
+    def __init__(self, priority=("pa3", "f9p"),
+                 stale_timeout: float = 1.0,
+                 good_quality=(4, 5)):
+        self.priority = list(priority)
+        self.stale_timeout = stale_timeout
+        self.good_quality = set(good_quality)
+        self._last: dict = {}              # source -> (lat, lon, quality, t)
+        self.active: Optional[str] = None
+
+    @property
+    def primary(self) -> str:
+        return self.priority[0]
+
+    def _fresh(self, src: str, now: float) -> bool:
+        d = self._last.get(src)
+        return d is not None and (now - d[3]) <= self.stale_timeout
+
+    def _usable(self, src: str, now: float) -> bool:
+        d = self._last.get(src)
+        return self._fresh(src, now) and d[2] in self.good_quality
+
+    def _select(self, now: float) -> Optional[str]:
+        for s in self.priority:                 # 1순위: fresh + 품질 양호
+            if self._usable(s, now):
+                return s
+        for s in self.priority:                 # 2순위: fresh (품질 무관)
+            if self._fresh(s, now):
+                return s
+        return None                             # 모두 stale
+
+    def submit(self, source: str, lat: float, lon: float,
+               quality: int) -> Optional[tuple]:
+        """소스 갱신. 이 소스가 active 면 (lat,lon,quality,source) 반환, 아니면 None."""
+        now = time.time()
+        if source not in self.priority:         # 미등록 소스 → 최하 우선
+            self.priority.append(source)
+        self._last[source] = (lat, lon, quality, now)
+        new_active = self._select(now)
+        if new_active != self.active:
+            log.info(f"GNSS 소스 전환: {self.active} → {new_active}")
+            self.active = new_active
+        if source == self.active:
+            return (lat, lon, quality, source)
+        return None
+
+    def status(self) -> dict:
+        now = time.time()
+        return {s: {"fresh": self._fresh(s, now),
+                    "quality": self._last.get(s, (0, 0, 0, 0))[2],
+                    "active": s == self.active}
+                for s in self.priority}
+
+
+# ═══════════════════════════════════════════════════════════════
 #  메인 시스템 통합
 # ═══════════════════════════════════════════════════════════════
 
@@ -1423,6 +1551,10 @@ class AutoSteerSystem:
         self._prev_angle   = 0.0
         self._prev_angle_t = time.time()
         self.on_disengage: Optional[Callable[[str], None]] = None
+
+        # GNSS 이중화: PA-3(주) + F9P(백업)
+        self.gnss = GnssArbiter(priority=("pa3", "f9p"))
+        self._active_gnss: Optional[str] = None
 
         self.set_algorithm(algo, self.params.wheelbase)
 
@@ -1482,10 +1614,32 @@ class AutoSteerSystem:
         log.info(f"경로 설정: {len(self.path)} 웨이포인트")
 
     # ── 센서 입력 콜백 ──────────────────────────────
-    def on_rtk(self, lat: float, lon: float, quality: int):
-        """파라미터 2, 3 보정은 StateEstimator 내부에서 자동 적용."""
-        self.estimator.update_rtk(lat, lon, quality)
-        self.safety.update_rtk(quality)
+    def on_rtk(self, lat: float, lon: float, quality: int,
+               source: Optional[str] = None):
+        """
+        GNSS fix 수신 + 다중 소스(PA-3/F9P) 이중화 중재.
+          - source=None → 기본(주) 소스로 간주
+          - GnssArbiter 가 active 소스 한 곳만 EKF/안전에 반영 (페일오버 자동)
+        파라미터 2, 3 보정은 StateEstimator 내부에서 자동 적용.
+        """
+        src = source or self.gnss.primary
+        sel = self.gnss.submit(src, lat, lon, quality)
+        if sel is None:                       # active 소스가 아니면 무시
+            return
+        s_lat, s_lon, s_quality, s_src = sel
+        self._active_gnss = s_src
+        self.estimator.update_rtk(s_lat, s_lon, s_quality)
+        self.safety.update_rtk(s_quality)
+
+    def rtk_callback(self, source: str):
+        """
+        외부 GNSS 클라이언트(F9pUsbClient / ChcnavPa3SerialClient)를
+        특정 source 라벨로 on_rtk 에 연결하는 3-인자 콜백 생성.
+            pa3 = ChcnavPa3SerialClient(on_rtk=sys.rtk_callback("pa3"))
+            f9p = F9pUsbClient(on_rtk=sys.rtk_callback("f9p"))
+        """
+        return lambda lat, lon, quality: self.on_rtk(lat, lon, quality,
+                                                     source=source)
 
     def on_imu(self, raw_heading: float, ang_vel: float,
                fwd_accel: float, dt: float,
@@ -1589,6 +1743,7 @@ class AutoSteerSystem:
             "engaged": self._engaged,
             "safety": safety.name,
             "profile": self._profile.name,
+            "active_gnss": self._active_gnss,
             "slope_correction": self.params.slope_correction,
             "target_angle_deg": math.degrees(target),
             "measured_angle_deg": math.degrees(measured),
