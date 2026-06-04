@@ -65,8 +65,10 @@ ImplementReferenced  — 쟁기/균평 등 작업기 부하 큰 작업 ★
 
 ### Layer 4: CAN 모터 제어
 - `SteeringActuator`: 위치 P → 각속도 PI + 마찰 FF 이중 루프
-- `ApolloCanInterface`: ★ 미구현 스텁 (Apollo CAN SDK로 구현 필요)
+- `ApolloCanInterface`: ✅ SocketCAN 구현 (python-can 우선 → raw socket 폴백, 하드웨어 없으면 available=False)
 - `MockCanInterface`: 테스트용 (즉시 사용 가능)
+- `ImuCalibrator`: 평지 30초 평균 → `ImuOffset` 생성 (파라미터 5 캘리브레이션)
+- `f9p_client.py / F9pUsbClient`: F9P NMEA(GGA) 파싱 → `on_rtk(lat,lon,quality)` 콜백
 
 ---
 
@@ -178,13 +180,16 @@ Apollo 10 Pro는 CAN 내장 (IP65, ADB 환경). SDK 문서 확인 필요.
 
 ## 다음 작업 우선순위
 
-1. **★ 실측**: wheelbase, antenna_to_axle (줄자 5분)
-2. **★ CanSpec 채우기**: 모터 프로그램 문서에서 CAN ID + 바이트 구조
-3. **★ ApolloCanInterface 구현**: Apollo SDK로 start/send/recv
-4. **RTK 연결**: F9pUsbClient → on_rtk() 콜백 (rtk-leveling 모듈 참고)
-5. **IMU 캘리브레이션**: 평지에서 30초 측정 → ImuOffset 채우기
-6. **3-모드 프로파일**: ControlProfile 클래스 추가
-7. **저속 안전 검증**: 빈 농지 1km/h, 데드맨 + 비상정지 확인
+1. **★ 실측**: wheelbase, antenna_to_axle (줄자 5분) — 물리 측정 필요 (미완)
+2. **★ CanSpec 채우기**: 모터 프로그램 문서에서 CAN ID + 바이트 구조 — 모터 문서 필요 (미완)
+3. ✅ **ApolloCanInterface 구현**: SocketCAN(python-can/raw socket). ★ Apollo 전용 SDK면 start/send/recv 내부만 교체
+4. ✅ **RTK 연결**: `f9p_client.F9pUsbClient` → `on_rtk()` 콜백 (GGA 파싱, 품질 4/5 식별)
+5. ✅ **IMU 캘리브레이션**: `ImuCalibrator` (평지 30초 평균 → ImuOffset)
+6. ✅ **3-모드 프로파일**: `TuningProfile` + `PROFILE_NORMAL/HEAVY/SAND` + `set_profile()`
+7. **저속 안전 검증**: 빈 농지 1km/h, 데드맨 + 비상정지 확인 — 현장 검증 필요 (미완)
+
+**남은 핵심 작업 (하드웨어/현장 의존)**: #1 실측, #2 실제 CAN ID/바이트맵, #7 현장 안전검증.
+ApolloCanInterface/F9P는 실장비에서 `can0`/시리얼 포트만 맞추면 동작.
 
 ---
 

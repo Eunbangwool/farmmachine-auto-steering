@@ -194,6 +194,89 @@ class ImuOffset:
         return _wrap(raw_yaw - self.yaw)
 
 
+class ImuCalibrator:
+    """
+    파라미터 5(IMU 오프셋) 캘리브레이션 도우미.
+
+    절차 (CLAUDE.md 우선순위 5 — "평지에서 30초 측정 → ImuOffset 채우기"):
+      1) 트랙터를 수평 평지에 정차
+      2) start() 호출 후, 100Hz IMU 루프에서 raw 값을 add_sample() 로 누적
+      3) ready 가 True 가 되면 finish() 로 평균 오프셋(ImuOffset) 생성
+      4) 결과를 params.imu_offset 에 대입하고 KUBOTA_MR1157 기본값/설정 저장
+
+    roll/pitch: 평지 정차 평균값 = 센서 장착 기울기 오프셋.
+    yaw: 절대 방위(북) 기준이 없으면 보정 불가 → 기본 0.
+         heading_ref_rad(예: RTK 듀얼안테나/이동평균 heading)를 주면
+         원형 평균으로 yaw 오프셋 산출.
+
+    사용 예:
+        cal = ImuCalibrator()          # 기본 30초 / 3000샘플(100Hz)
+        cal.start()
+        while not cal.ready:
+            cal.add_sample(raw_roll, raw_pitch, raw_yaw)   # IMU 루프에서
+        params.imu_offset = cal.finish()
+    """
+    def __init__(self, min_samples: int = 3000, min_duration: float = 30.0):
+        self.min_samples  = min_samples
+        self.min_duration = min_duration
+        self._roll:  List[float] = []
+        self._pitch: List[float] = []
+        self._yaw:   List[float] = []
+        self._t0: Optional[float] = None
+
+    def start(self):
+        """샘플 버퍼 초기화 + 타이머 시작."""
+        self._roll.clear(); self._pitch.clear(); self._yaw.clear()
+        self._t0 = time.time()
+        log.info(f"IMU 캘리브레이션 시작 — 평지 정차 유지 "
+                 f"({self.min_duration:.0f}s / {self.min_samples}샘플)")
+
+    def add_sample(self, raw_roll: float, raw_pitch: float,
+                   raw_yaw: float = 0.0):
+        if self._t0 is None:
+            self.start()
+        self._roll.append(raw_roll)
+        self._pitch.append(raw_pitch)
+        self._yaw.append(raw_yaw)
+
+    @property
+    def elapsed(self) -> float:
+        return 0.0 if self._t0 is None else time.time() - self._t0
+
+    @property
+    def progress(self) -> float:
+        """0.0~1.0 진행률 (샘플/시간 중 느린 쪽)."""
+        if self._t0 is None:
+            return 0.0
+        return min(1.0, min(len(self._roll) / max(1, self.min_samples),
+                            self.elapsed / max(1e-6, self.min_duration)))
+
+    @property
+    def ready(self) -> bool:
+        return (self._t0 is not None
+                and len(self._roll) >= self.min_samples
+                and self.elapsed >= self.min_duration)
+
+    def finish(self, heading_ref_rad: Optional[float] = None) -> 'ImuOffset':
+        """누적 샘플 평균 → ImuOffset 생성. min 미달이어도 강제 계산 가능."""
+        if not self._roll:
+            raise RuntimeError("IMU 캘리브레이션 샘플 없음 — add_sample() 먼저 호출")
+        mean = lambda xs: sum(xs) / len(xs)
+        roll  = mean(self._roll)
+        pitch = mean(self._pitch)
+        if heading_ref_rad is None:
+            yaw = 0.0
+        else:
+            # 원형 평균(circular mean) 후 기준 방위와의 차
+            sy = mean([math.sin(a) for a in self._yaw])
+            cy = mean([math.cos(a) for a in self._yaw])
+            yaw = _wrap(math.atan2(sy, cy) - heading_ref_rad)
+        log.info(f"IMU 캘리브레이션 완료: roll={roll:+.4f} pitch={pitch:+.4f} "
+                 f"yaw={yaw:+.4f} rad (샘플 {len(self._roll)}개, "
+                 f"{self.elapsed:.1f}s)")
+        return ImuOffset(roll=roll, pitch=pitch, yaw=yaw)
+
+
 # 기본 파라미터 인스턴스 (Kubota MR1157 — 사진 기반 + 일부 추정)
 # ★ 파라미터 1(휠베이스), 3(안테나↔차축) 은 반드시 실측 후 교체
 KUBOTA_MR1157 = TractorParams(
@@ -884,33 +967,117 @@ class CanInterface(ABC):
 
 class ApolloCanInterface(CanInterface):
     """
-    Apollo 10 Pro 내장 CAN 인터페이스.
-    실제 구현은 Apollo CAN SDK / android-can 라이브러리 활용.
-    ★ 본인 Apollo SDK 문서에 맞게 구현 필요.
+    Apollo 10 Pro 내장 CAN 인터페이스 — Linux SocketCAN 기반 구현.
+
+    Apollo 10 Pro는 Android(리눅스 커널) + 내장 CAN 포트(can0)를 제공한다.
+    SocketCAN이 활성화된 환경에서는 표준 CAN_RAW 소켓으로 송수신 가능.
+
+    ── 사용 전 준비 (Apollo ADB 셸 또는 부팅 스크립트) ──────────────
+        ip link set can0 type can bitrate 500000
+        ip link set up can0
+        (★ bitrate는 CanSpec.CAN_BITRATE 와 일치시킬 것)
+
+    구현 순서:
+      1) python-can 가 설치돼 있으면 우선 사용 (가장 견고)
+      2) 없으면 순수 socket(PF_CAN, CAN_RAW) 폴백
+      3) 둘 다 실패(하드웨어/권한 없음)하면 available=False 로 두고
+         예외를 던지지 않음 → PC 테스트에서는 MockCanInterface 사용 권장
+
+    ★ Apollo 전용 CAN 드라이버가 SocketCAN이 아닌 별도 SDK라면,
+      start/send/recv 내부만 해당 SDK 호출로 교체하면 된다.
     """
+    # SocketCAN 프레임 포맷: <can_id(uint32) dlc(uint8) pad(3) data(8B)> = 16바이트
+    _FRAME_FMT  = "=IB3x8s"
+    _FRAME_SIZE = struct.calcsize(_FRAME_FMT)
+
     def __init__(self, channel: str = "can0",
-                 bitrate: int = CanSpec.CAN_BITRATE):
+                 bitrate: int = CanSpec.CAN_BITRATE,
+                 use_python_can: bool = True):
         self.channel = channel
         self.bitrate = bitrate
-        self._sock = None
-        log.info(f"Apollo CAN: {channel} @ {bitrate} bps (★미구현, 교체 필요)")
+        self.use_python_can = use_python_can
+        self._sock = None          # 순수 socket 폴백
+        self._bus  = None          # python-can Bus
+        self._available = False
+        log.info(f"Apollo CAN: {channel} @ {bitrate} bps (SocketCAN)")
+
+    @property
+    def available(self) -> bool:
+        """CAN 버스가 실제로 열렸는지. False면 송수신 무시."""
+        return self._available
 
     def start(self):
-        # ★ Apollo CAN SDK 초기화
-        # 예: self._sock = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
-        #     self._sock.bind((self.channel,))
-        log.warning("ApolloCanInterface.start(): ★ 실제 SDK로 교체 필요")
+        # 1) python-can 우선
+        if self.use_python_can:
+            try:
+                import can as pycan
+                self._bus = pycan.interface.Bus(
+                    channel=self.channel, bustype="socketcan")
+                self._available = True
+                log.info(f"ApolloCAN: python-can 으로 {self.channel} 열림")
+                return
+            except Exception as e:
+                log.warning(f"ApolloCAN: python-can 사용 불가 ({e}) → socket 폴백")
+
+        # 2) 순수 SocketCAN 폴백
+        try:
+            import socket
+            s = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
+            s.bind((self.channel,))
+            s.setblocking(False)            # recv non-blocking
+            self._sock = s
+            self._available = True
+            log.info(f"ApolloCAN: raw socket 으로 {self.channel} 열림")
+        except Exception as e:
+            self._available = False
+            log.error(f"ApolloCAN.start() 실패: {e} "
+                      f"— 하드웨어/SocketCAN 확인 (PC 테스트는 MockCanInterface 사용)")
 
     def stop(self):
-        if self._sock:
-            self._sock.close()
+        if self._bus is not None:
+            try: self._bus.shutdown()
+            except Exception: pass
+            self._bus = None
+        if self._sock is not None:
+            try: self._sock.close()
+            except Exception: pass
+            self._sock = None
+        self._available = False
 
     def send(self, can_id: int, data: bytes):
-        # ★ 실제 CAN 프레임 전송
+        if not self._available:
+            return
+        data = bytes(data)[:8]
+        if self._bus is not None:
+            import can as pycan
+            self._bus.send(pycan.Message(
+                arbitration_id=can_id, data=data, is_extended_id=False))
+        elif self._sock is not None:
+            frame = struct.pack(self._FRAME_FMT, can_id,
+                                len(data), data.ljust(8, b"\x00"))
+            try:
+                self._sock.send(frame)
+            except OSError as e:
+                log.debug(f"ApolloCAN TX 실패: {e}")
         log.debug(f"CAN TX id=0x{can_id:03X} data={data.hex()}")
 
     def recv(self) -> Optional[tuple]:
-        # ★ 실제 CAN 프레임 수신
+        """non-blocking 수신. (can_id, data) 또는 None."""
+        if not self._available:
+            return None
+        if self._bus is not None:
+            msg = self._bus.recv(timeout=0.0)
+            return (msg.arbitration_id, bytes(msg.data)) if msg else None
+        if self._sock is not None:
+            try:
+                frame = self._sock.recv(self._FRAME_SIZE)
+            except (BlockingIOError, OSError):
+                return None
+            if len(frame) < self._FRAME_SIZE:
+                return None
+            can_id, dlc, payload = struct.unpack(self._FRAME_FMT, frame)
+            can_id &= 0x1FFFFFFF      # EFF/RTR/ERR 플래그 비트 제거
+            return (can_id, payload[:dlc])
         return None
 
 class MockCanInterface(CanInterface):
