@@ -212,4 +212,3 @@ cd auto-steering/src
 pip install numpy
 python autosteer_core.py   # MockCAN으로 즉시 테스트 가능
 ```
-
