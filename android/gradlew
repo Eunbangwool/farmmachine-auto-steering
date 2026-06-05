@@ -1,0 +1,10 @@
+#!/bin/sh
+# Gradle Wrapper
+GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+GRADLE_WRAPPER_JAR="$GRADLE_USER_HOME/wrapper/dists/gradle-8.4-bin/*/gradle-8.4/bin/gradle"
+
+if ! command -v gradle &>/dev/null; then
+    # GitHub Actions에서는 gradle이 설치되어 있음
+    echo "ERROR: gradle not found" >&2; exit 1
+fi
+exec gradle "$@"
