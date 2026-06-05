@@ -20,13 +20,6 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
-    // 자율조향 Python 소스 = 상위 auto-steering/src (복사 없이 직접 참조)
-    sourceSets {
-        getByName("main") {
-            python { srcDir("../auto-steering/src") }
-        }
-    }
-
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -50,6 +43,13 @@ chaquopy {
         // EKF(numpy) 필요. pyserial 은 USB-serial 브릿지 붙일 때 사용.
         pip { install("numpy") }
         // Chaquopy 진입점은 앱에서 Python.getModule("app_main") 으로 직접 호출.
+    }
+    // 자율조향 Python 소스 = 상위 auto-steering/src (복사 없이 직접 참조).
+    // Kotlin DSL 에선 android.sourceSets 가 아니라 chaquopy.sourceSets 로 지정.
+    sourceSets {
+        getByName("main") {
+            srcDir("../auto-steering/src")
+        }
     }
 }
 
