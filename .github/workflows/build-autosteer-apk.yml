@@ -19,6 +19,8 @@ jobs:
   build:
     name: assembleDebug (Chaquopy)
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # Releases 발행에 필요
     steps:
       - uses: actions/checkout@v4
 
@@ -43,9 +45,26 @@ jobs:
       - name: 빌드 (assembleDebug)
         run: ./gradlew :app:assembleDebug --stacktrace
 
-      - name: APK 업로드
+      - name: APK 업로드 (Actions 아티팩트)
         uses: actions/upload-artifact@v4
         with:
           name: farmmachine-autosteer-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      # 디버그 APK 를 Releases 에 롤링 프리릴리스로 발행 (태블릿에서 바로 다운로드/설치)
+      - name: Releases 발행 (롤링 디버그)
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: autosteer-debug
+          name: AutoSteer Debug (rolling)
+          prerelease: true
+          make_latest: false
+          body: |
+            자동 빌드 디버그 APK (디버그 키 서명). 태블릿에 직접 설치용 — 매 빌드마다 갱신됩니다.
+
+            - commit: ${{ github.sha }}
+            - run: #${{ github.run_number }}
+            - branch: `${{ github.ref_name }}`
+          files: app/build/outputs/apk/debug/*.apk
