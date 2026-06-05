@@ -67,6 +67,7 @@ ImplementReferenced  — 쟁기/균평 등 작업기 부하 큰 작업 ★
 ### Layer 4: CAN 모터 제어
 - `SteeringActuator`: 위치 P → 각속도 PI + 마찰 FF 이중 루프
 - `ApolloCanInterface`: ✅ SocketCAN 구현 (python-can 우선 → raw socket 폴백, 하드웨어 없으면 available=False)
+- `apollo_can.ApolloCanBus`: ✅ 백엔드 교체형(**bridge★/socketcan/slcan/mock**) + 연결감시·자동재연결. Apollo는 **Kotlin 브릿지**(localhost TCP 13B 레코드)가 주 경로. 조향+레벨러 같은 버스 공유. 계약: `APOLLO_CAN.md`
 - `MockCanInterface`: 테스트용 (즉시 사용 가능)
 - `ImuCalibrator`: 평지 30초 평균 → `ImuOffset` 생성 (파라미터 5 캘리브레이션)
 - `f9p_client.py / F9pUsbClient`: F9P NMEA(GGA) 파싱 → `on_rtk(lat,lon,quality)` 콜백
@@ -202,7 +203,7 @@ Apollo 10 Pro는 CAN 내장 (IP65, ADB 환경). SDK 문서 확인 필요.
 
 1. **★ 실측**: wheelbase, antenna_to_axle — 물리 측정 (미완). ✅ 사전준비: `calibration.py`로 저속 주행 자동 추정 + `field_config.py`로 JSON 주입
 2. **★ CanSpec 채우기**: 모터 CAN ID + 바이트 구조 — 모터 문서 (미완). ✅ 사전준비: `can_tools.py`로 버스 역추적(앵글/모터 ID 탐색), `field_config.py`로 JSON 주입
-3. ✅ **ApolloCanInterface 구현**: SocketCAN(python-can/raw socket). ★ Apollo 전용 SDK면 start/send/recv 내부만 교체
+3. ✅ **ApolloCanInterface 구현**: SocketCAN + `apollo_can.ApolloCanBus`(bridge/socketcan/slcan/mock, 자동재연결). 결정: **Kotlin 브릿지** 주 경로(`APOLLO_CAN.md`). ★ 남은 건 Kotlin CAN 서비스에 벤더 SDK open/send/recv 채우기 + 실제 CAN ID
 4. ✅ **RTK 연결**: `f9p_client.F9pUsbClient`/`ChcnavPa3SerialClient` → `on_rtk()` (GGA 파싱, 품질 4/5, sniff/UBX/보레이트탐색)
 5. ✅ **IMU 캘리브레이션**: `ImuCalibrator` (평지 30초 평균 → ImuOffset)
 6. ✅ **3-모드 프로파일**: `TuningProfile` + `PROFILE_NORMAL/HEAVY/SAND` + `set_profile()`
