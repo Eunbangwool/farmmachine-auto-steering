@@ -388,55 +388,215 @@ DEFAULT_MOTOR_PROTECTION = MotorProtectionParams()
 
 
 # ═══════════════════════════════════════════════════════════════
-#  ★ CAN 규격 — 본인 모터 프로그램 문서로 채울 것
+#  KY170C CAN 규격 — Keya KY170DD01005-08G V2.4 매뉴얼 확정
 # ═══════════════════════════════════════════════════════════════
 
 class CanSpec:
     """
-    ★ 이 섹션의 값들을 본인 모터 프로그램 문서로 교체하세요.
+    Keya KY170DD01005-08G 전동 조향 모터 CAN 프로토콜 (매뉴얼 V2.4 확정)
 
-    확인해야 할 항목:
-      1) 통신 속도: 250kbps / 500kbps / 1Mbps
-      2) 모터 활성화 시퀀스 (전원 ON 후 보내야 하는 핸드셰이크)
-      3) 모터 명령 CAN ID + 데이터 바이트 구조
-      4) 앵글센서 CAN ID + 각도값 인코딩
+    ┌─────────────────────────────────────────────────────────┐
+    │  핀맵 (7핀 항공 플러그)                                  │
+    │  Pin1=IN+(12V)  Pin2=IN-(GND)  Pin3=TX  Pin4=RX         │
+    │  Pin5=GND       Pin6=CAN-H     Pin7=CAN-L               │
+    ├─────────────────────────────────────────────────────────┤
+    │  CAN 설정                                                │
+    │  비트레이트: 250kbps (parameter 0021=2, 공장 기본값)    │
+    │  ID 타입:   Extended 29-bit                              │
+    │  바이트 순서: low word big-endian first                  │
+    │             (heartbeat는 big-endian)                     │
+    ├─────────────────────────────────────────────────────────┤
+    │  CAN ID (motor_id=1 기준, parameter 0018)               │
+    │  TX(명령):   0x06000001                                  │
+    │  RX(응답):   0x05800001                                  │
+    │  Heartbeat:  0x07000001 (20ms 주기, parameter 0034)     │
+    ├─────────────────────────────────────────────────────────┤
+    │  AGMO 설정 (parameter 기반)                             │
+    │  0018=1  (motor_id=1)                                   │
+    │  0019=2  (CAN 제어)                                     │
+    │  0020=1  (속도 제어)                                    │
+    │  0021=2  (250kbps)                                      │
+    └─────────────────────────────────────────────────────────┘
+
+    속도 제어 흐름:
+      1) Enable  → TX: 23 0D 20 01 00 00 00 00
+      2) Speed   → TX: 23 00 20 01 [value] (< 1000ms 간격 유지)
+      3) Disable → TX: 23 0C 20 01 00 00 00 00
+
+    Watchdog: 1000ms — 속도 명령을 1초 이상 전송하지 않으면 모터 정지.
     """
 
-    # ── 버스 설정 ─────────────────────────────────────
-    CAN_BITRATE = 500_000           # ★ 250000 / 500000 / 1000000
+    # ── 버스 설정 ──────────────────────────────────────────
+    CAN_BITRATE   = 250_000         # 250kbps (매뉴얼 확정)
+    MOTOR_ID      = 1               # parameter 0018 기본값
+    RATED_RPM     = 80              # parameter 0002 (80 RPM)
+    CMD_PERIOD    = 0.020           # 50Hz 명령 주기 (20ms)
+    WATCHDOG_MS   = 1000            # 속도 명령 워치독 (매뉴얼 확정)
 
-    # ── 모터 명령 (태블릿 → 모터) ────────────────────
-    MOTOR_CMD_ID       = 0x201      # ★ 모터 명령 CAN ID
-    MOTOR_CMD_PERIOD   = 0.020      # 명령 주기 50Hz (변경 가능)
+    # ── CAN ID (29-bit Extended) ───────────────────────────
+    # 모터 ID에 따라 변동: TX=0x06000000|id, RX=0x05800000|id, HB=0x07000000|id
+    @staticmethod
+    def tx_id(motor_id: int = 1) -> int:
+        return 0x06000000 | motor_id
 
-    # 데이터 바이트 레이아웃 ★
-    # 현재 가정: [0]=모드, [1][2]=목표각(int16, 0.1deg), [3]=속도제한, [4]=체크섬
-    # 실제 문서와 다를 수 있음 — 반드시 교체
-    MOTOR_BYTE_MODE       = 0       # ★ 제어 모드 바이트 인덱스
-    MOTOR_BYTE_CMD_HI     = 1       # ★ 목표값 상위 바이트
-    MOTOR_BYTE_CMD_LO     = 2       # ★ 목표값 하위 바이트
-    MOTOR_BYTE_SPEED_LIM  = 3       # ★ 속도 제한 바이트
-    MOTOR_BYTE_CHECKSUM   = 4       # ★ 체크섬 바이트 (-1이면 없음)
+    @staticmethod
+    def rx_id(motor_id: int = 1) -> int:
+        return 0x05800000 | motor_id
 
-    MOTOR_MODE_DISABLE    = 0x00    # ★ 모터 비활성화 모드값
-    MOTOR_MODE_ANGLE      = 0x01    # ★ 각도 제어 모드값
-    MOTOR_MODE_TORQUE     = 0x02    # ★ 토크 제어 모드값 (없으면 ANGLE만 사용)
-    MOTOR_ANGLE_SCALE     = 10.0    # ★ 각도→CAN값 변환 (예: 10 → 0.1도 단위)
-    MOTOR_MAX_SPEED       = 50      # ★ 속도 제한 기본값 (문서 단위로)
+    @staticmethod
+    def heartbeat_id(motor_id: int = 1) -> int:
+        return 0x07000000 | motor_id
 
-    # 활성화 시퀀스 ★ (없으면 빈 리스트)
+    MOTOR_CMD_ID       = 0x06000001   # TX ID (motor_id=1)
+    MOTOR_RESPONSE_ID  = 0x05800001   # RX ID (motor_id=1)
+    MOTOR_HEARTBEAT_ID = 0x07000001   # 하트비트 ID (motor_id=1)
+
+    # ── 고정 명령 바이트 시퀀스 ───────────────────────────
+    CMD_ENABLE  = bytes([0x23, 0x0D, 0x20, 0x01, 0x00, 0x00, 0x00, 0x00])
+    CMD_DISABLE = bytes([0x23, 0x0C, 0x20, 0x01, 0x00, 0x00, 0x00, 0x00])
+    CMD_SPEED_HDR     = bytes([0x23, 0x00, 0x20, 0x01])  # 속도 명령 헤더 (+ 4바이트 값)
+    CMD_POSITION_HDR  = bytes([0x23, 0x02, 0x20, 0x01])  # 위치 명령 헤더 (+ 4바이트 값)
+
+    # 활성화 시퀀스 (Enable 후 Speed 명령 시작)
     MOTOR_ACTIVATE_SEQ: List[tuple] = [
-        # (CAN_ID, bytes) 형식
-        # (0x200, bytes([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])),
+        (0x06000001, bytes([0x23, 0x0D, 0x20, 0x01, 0x00, 0x00, 0x00, 0x00])),  # Enable
     ]
 
-    # ── 앵글센서 피드백 (앵글센서 → 태블릿) ─────────
-    SENSOR_ANGLE_ID    = 0x301      # ★ 앵글센서 CAN ID
-    SENSOR_BYTE_HI     = 0          # ★ 각도 상위 바이트
-    SENSOR_BYTE_LO     = 1          # ★ 각도 하위 바이트
-    SENSOR_ANGLE_SCALE = 10.0       # ★ CAN값→각도 변환 (예: 10 → 0.1도 단위)
-    SENSOR_ANGLE_OFFSET= 0.0        # ★ 영점 오프셋 (캘리브레이션 후 설정)
-    SENSOR_SIGNED      = True       # ★ 부호 있는 정수인지 (보통 True)
+    # ── 값 인코딩 ──────────────────────────────────────────
+    # KY170C 포맷: low word (big-endian) + high word (big-endian)
+    # 32-bit 값 0x12345678 → bytes [0x12][0x34][0x56][0x78]
+    # (low 16-bit big-endian first, then high 16-bit big-endian)
+    @staticmethod
+    def encode_value(value: int) -> bytes:
+        """
+        KY170C 32비트 값 인코딩.
+        low word big-endian first, then high word big-endian.
+        예) value=1000(0x000003E8) → [0x03][0xE8][0x00][0x00]
+            value=-1000(0xFFFFFC18) → [0xFC][0x18][0xFF][0xFF]
+        """
+        v = value & 0xFFFFFFFF
+        low_word  = v & 0xFFFF
+        high_word = (v >> 16) & 0xFFFF
+        return bytes([
+            (low_word  >> 8) & 0xFF,   # DATA_L high
+            low_word         & 0xFF,   # DATA_L low
+            (high_word >> 8) & 0xFF,   # DATA_H high
+            high_word        & 0xFF,   # DATA_H low
+        ])
+
+    @staticmethod
+    def cmd_speed(speed_permille: int) -> bytes:
+        """
+        속도 명령 생성.
+        speed_permille: -1000 ~ +1000 (rated_rpm의 ‰)
+          +1000 = +80RPM (정방향)
+          -1000 = -80RPM (역방향)
+          +500  = +40RPM
+        워치독: 1000ms 이내 재전송 필수.
+        """
+        v = max(-1000, min(1000, speed_permille))
+        return CanSpec.CMD_SPEED_HDR + CanSpec.encode_value(v)
+
+    @staticmethod
+    def cmd_position(counts: int) -> bytes:
+        """
+        위치 명령 생성 (10000 counts/circle).
+        counts: 양수=반시계, 음수=시계 (예: 10000=1회전)
+        """
+        return CanSpec.CMD_POSITION_HDR + CanSpec.encode_value(counts)
+
+    @staticmethod
+    def rpm_to_permille(rpm: float, rated_rpm: float = 80.0) -> int:
+        """RPM → 속도 명령값 변환."""
+        return int(max(-1000, min(1000, rpm / rated_rpm * 1000)))
+
+    # ── 하트비트 파싱 (모터 → 태블릿) ────────────────────
+    # ID: 0x07000001, 주기: 20ms, 8바이트, big-endian
+    # [0][1] = 누적 각도 (360단위/회전, 0~65535에서 리셋)
+    # [2][3] = 속도 RPM (부호있는 16비트)
+    # [4][5] = 전류 (부호있는 16비트)
+    # [6][7] = 오류 코드 (Data0=하위, Data1=상위)
+    @staticmethod
+    def parse_heartbeat(data: bytes) -> dict:
+        """
+        하트비트 파싱.
+        반환:
+          angle_raw: 누적 각도 카운트 (0~65535, 리셋됨)
+          angle_deg: 각도 (도, 360/circle 기준)
+          speed_rpm: 속도 (RPM, 부호있음)
+          current:   전류 (raw, 부호있음)
+          error_d0:  오류 바이트0 (모터 상태 플래그)
+          error_d1:  오류 바이트1 (드라이버 상태 플래그)
+          faults:    오류 목록 (문자열 리스트)
+        """
+        if len(data) < 8:
+            return {}
+        angle_raw = (data[0] << 8) | data[1]
+        speed_rpm = int.from_bytes(data[2:4], 'big', signed=True)
+        current   = int.from_bytes(data[4:6], 'big', signed=True)
+        d0, d1    = data[6], data[7]
+        # 각도: 0x168=360 → 0x168/360.0*360 = 0x168도? 아니면 직접 360단위?
+        # 매뉴얼: "360°/circle" → 값이 360일 때 1바퀴
+        angle_deg = angle_raw * (360.0 / 360.0)  # 단순 매핑 (현장 검증 필요)
+        faults = CanSpec._parse_fault(d0, d1)
+        return {
+            'angle_raw':  angle_raw,
+            'angle_deg':  angle_deg,
+            'speed_rpm':  speed_rpm,
+            'current':    current,
+            'error_d0':   d0,
+            'error_d1':   d1,
+            'faults':     faults,
+        }
+
+    @staticmethod
+    def _parse_fault(d0: int, d1: int) -> list:
+        """오류 코드 → 오류 목록 변환 (매뉴얼 p.23 기준)."""
+        faults = []
+        # Data0 (모터/통신 오류)
+        if d0 & 0x01: faults.append("Less phase")
+        if d0 & 0x02: faults.append("Motor stall")
+        if d0 & 0x04: faults.append("Hall failure")
+        if d0 & 0x10: faults.append("232 disconnected")
+        if d0 & 0x20: faults.append("CAN disconnected")
+        if d0 & 0x40: faults.append("Current sensing error")
+        if d0 & 0x80: faults.append("Motor stalled 2s")
+        # Data1 (드라이버 보호)
+        if d1 & 0x01: faults.append("Disabled")
+        if d1 & 0x02: faults.append("Overvoltage")
+        if d1 & 0x08: faults.append("Hardware protection")
+        if d1 & 0x10: faults.append("EEPROM error")
+        if d1 & 0x20: faults.append("Undervoltage")
+        if d1 & 0x40: faults.append("N/A")
+        if d1 & 0x80: faults.append("Mode failure")
+        return faults
+
+    # ── 앵글센서 피드백 (CHCNAV 앵글센서 별도, 모터 인코더와 구분) ──
+    # AGMO는 모터 속도 제어 + 별도 WAS(Wheel Angle Sensor)로 실제 조향각 측정
+    # WAS CAN ID는 ttyWK 캡처로 확인 필요 (현장 RTK Fix 후)
+    SENSOR_ANGLE_ID    = 0x301      # ★ WAS CAN ID (현장 캡처로 확인 필요)
+    SENSOR_BYTE_HI     = 0
+    SENSOR_BYTE_LO     = 1
+    SENSOR_ANGLE_SCALE = 10.0       # ★ 현장 확인 필요
+    SENSOR_ANGLE_OFFSET= 0.0
+    SENSOR_SIGNED      = True
+
+    # ── 속도 제어 파라미터 (AGMO 기반 추정) ──────────────
+    # 자율조향 시 일반적 속도 범위: ±200~400 permille (±16~32 RPM)
+    STEER_SPEED_MAX    = 400        # 최대 조향 속도 (‰, 32RPM)
+    STEER_SPEED_MIN    = 50         # 최소 유효 속도 (‰, 4RPM, 정지 데드밴드)
+
+    # MockCanInterface 호환용 레거시 상수 (하위 호환)
+    MOTOR_CMD_ID       = 0x06000001
+    MOTOR_BYTE_MODE    = 0
+    MOTOR_BYTE_CMD_HI  = 4
+    MOTOR_BYTE_CMD_LO  = 5
+    MOTOR_BYTE_SPEED_LIM = -1
+    MOTOR_BYTE_CHECKSUM  = -1
+    MOTOR_MODE_DISABLE   = 0x00
+    MOTOR_MODE_ANGLE     = 0x01
+    MOTOR_ANGLE_SCALE    = 1.0
+    MOTOR_MAX_SPEED      = 400
 
 
 # ═══════════════════════════════════════════════════════════════
