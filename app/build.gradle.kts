@@ -20,6 +20,17 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
+    // 고정 debug 키스토어로 서명 → CI 빌드마다 서명이 동일 → 덮어쓰기 설치 가능.
+    // (기본값은 러너마다 새로 생성되는 ~/.android/debug.keystore 라 서명 충돌 발생)
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
