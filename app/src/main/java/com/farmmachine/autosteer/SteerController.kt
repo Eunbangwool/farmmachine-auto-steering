@@ -17,6 +17,11 @@ object SteerController {
     fun setDeadman(pressed: Boolean) = safe { api().callAttr("set_deadman", pressed) }
     fun setProfile(name: String) = safe { api().callAttr("set_profile", name) }
 
+    fun setAbLine(ax: Double, ay: Double, bx: Double, by: Double,
+                  width: Double, passes: Int, speed: Double) = safe {
+        api().callAttr("set_ab_line", ax, ay, bx, by, width, passes, speed)
+    }
+
     fun setDemoAbLine() = safe {
         // 데모용 AB 라인 (현장에선 field_config/tractor.json + 실제 경로로 대체)
         api().callAttr("set_ab_line", 0.0, 0.0, 0.0, 40.0, 3.0, 4, 1.2)

@@ -238,9 +238,12 @@ Apollo 10 Pro는 CAN 내장 (IP65, ADB 환경). SDK 문서 확인 필요.
 
 ```
 auto-steering/src/autosteer_core.py  — 메인 알고리즘 (Python, ~1200줄)
-auto-steering/src/autosteer_ui.html  — 태블릿 운영 UI (HTML/JS)
-auto-steering/sim/path_following_sim.html  — 경로 설계 시뮬레이터
+app/src/main/assets/autosteer_ui.html — ★ 태블릿 운영 UI (HTML/JS). WebView 로 로드,
+    window.AndroidSteer(JsBridge)로 Python 연결. 운영 UI HTML 은 여기에 둔다(교체 지점).
+app/src/main/java/com/farmmachine/autosteer/{MainActivity,JsBridge,SteerController}.kt
 ```
+> ⚠ 과거 CLAUDE.md 가 `auto-steering/src/autosteer_ui.html`·`sim/path_following_sim.html`
+> 을 핵심 파일로 적었으나 실제 커밋된 적 없음. 운영 UI 는 WebView+assets 로 재정의됨.
 
 ---
 

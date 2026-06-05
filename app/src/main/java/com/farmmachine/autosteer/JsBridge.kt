@@ -1,0 +1,37 @@
+package com.farmmachine.autosteer
+
+import android.webkit.JavascriptInterface
+
+/**
+ * WebView(HTML 운영 UI) ↔ Python(app_main) 브리지.
+ * HTML/JS 에서 `window.AndroidSteer.<메서드>()` 로 호출한다.
+ *
+ * 계약(JS API):
+ *   AndroidSteer.statusJson(): String   // 상태 JSON (engaged, safety, profile,
+ *                                        //   xte_cm, target_angle_deg, measured_angle_deg,
+ *                                        //   speed_mps, can_state, can_available, can_tx/rx …)
+ *   AndroidSteer.engage(): Boolean
+ *   AndroidSteer.disengage()
+ *   AndroidSteer.estop()
+ *   AndroidSteer.setProfile(name)        // "normal" | "heavy" | "sand"
+ *   AndroidSteer.setDeadman(pressed)     // true: 누름 / false: 뗌
+ *   AndroidSteer.setAbLine(ax,ay,bx,by,width,passes,speed)
+ *   AndroidSteer.setDemoAbLine()
+ *
+ * JS 쪽은 setInterval 로 statusJson() 을 ~100ms 폴링해 화면을 갱신하면 된다.
+ */
+class JsBridge {
+    @JavascriptInterface fun statusJson(): String = SteerController.statusJson()
+    @JavascriptInterface fun engage(): Boolean = SteerController.engage()
+    @JavascriptInterface fun disengage() = SteerController.disengage()
+    @JavascriptInterface fun estop() = SteerController.estop()
+    @JavascriptInterface fun setProfile(name: String) = SteerController.setProfile(name)
+    @JavascriptInterface fun setDeadman(pressed: Boolean) = SteerController.setDeadman(pressed)
+
+    @JavascriptInterface
+    fun setAbLine(ax: Double, ay: Double, bx: Double, by: Double,
+                  width: Double, passes: Int, speed: Double) =
+        SteerController.setAbLine(ax, ay, bx, by, width, passes, speed)
+
+    @JavascriptInterface fun setDemoAbLine() = SteerController.setDemoAbLine()
+}

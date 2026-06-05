@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<!--
+  팜머신 자율조향 — 운영 UI (placeholder)
+  ============================================
+  ★ 이 파일을 "채팅에서 생성한 운영 UI HTML" 로 교체하세요.
+    경로: app/src/main/assets/autosteer_ui.html
+
+  Android 앱은 이 HTML 을 WebView 로 띄우고, window.AndroidSteer 로 Python 코어를 연결합니다.
+
+  JS 브리지 계약 (window.AndroidSteer):
+    statusJson(): string  // 상태 JSON. 키: engaged(bool), safety(str), profile(str),
+                          //   xte_cm, target_angle_deg, measured_angle_deg, speed_mps,
+                          //   can_state(str), can_available(bool), can_tx, can_rx
+    engage(): bool
+    disengage()
+    estop()
+    setProfile("normal"|"heavy"|"sand")
+    setDeadman(true|false)
+    setAbLine(ax,ay,bx,by,width,passes,speed)
+    setDemoAbLine()
+
+  폴링: setInterval 로 statusJson() 을 ~100ms 호출해 화면 갱신.
+  (브라우저에서 단독 테스트 시 AndroidSteer 가 없으므로 아래처럼 가드/모의 처리)
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>팜머신 자율조향</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  body { margin:0; font-family: system-ui, sans-serif; background:#0d1117; color:#e6edf3;
+         height:100vh; display:flex; flex-direction:column; }
+  header { padding:10px 16px; font-size:18px; font-weight:600; border-bottom:1px solid #222; }
+  .note { color:#9aa4af; font-size:12px; font-weight:400; }
+  main { flex:1; display:grid; grid-template-columns:1fr 320px; gap:12px; padding:12px; min-height:0; }
+  #viz { background:#0a0f16; border:1px solid #222; border-radius:8px; position:relative; }
+  canvas { width:100%; height:100%; display:block; }
+  .panel { display:flex; flex-direction:column; gap:10px; overflow:auto; }
+  .card { background:#161b22; border:1px solid #222; border-radius:8px; padding:12px; }
+  .row { display:flex; justify-content:space-between; padding:3px 0; font-size:14px; }
+  .row b { color:#9aa4af; font-weight:400; }
+  .badges { display:flex; gap:14px; margin-bottom:6px; }
+  .badge { text-align:center; flex:1; }
+  .badge small { display:block; color:#9aa4af; font-size:11px; }
+  .badge span { font-size:15px; font-weight:600; }
+  button { font-size:15px; padding:12px; border:0; border-radius:8px; color:#fff; background:#30363d; }
+  .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .go { background:#2e7d32; } .stop{ background:#c62828; }
+  #deadman { width:100%; padding:20px; font-size:18px; background:#1f6feb; }
+  #deadman.held { background:#2e7d32; }
+  .ok{color:#3fb950}.bad{color:#f85149}.dim{color:#9aa4af}
+</style>
+</head>
+<body>
+<header>팜머신 자율조향 <span class="note" id="mode">· placeholder (채팅 HTML로 교체)</span></header>
+<main>
+  <div id="viz"><canvas id="cv"></canvas></div>
+  <div class="panel">
+    <div class="card">
+      <div class="badges">
+        <div class="badge"><small>조향</small><span id="b_eng" class="dim">대기</span></div>
+        <div class="badge"><small>안전</small><span id="b_saf" class="dim">—</span></div>
+        <div class="badge"><small>CAN</small><span id="b_can" class="dim">—</span></div>
+      </div>
+      <div class="row"><b>프로파일</b><span id="v_prof">—</span></div>
+      <div class="row"><b>XTE (cm)</b><span id="v_xte">—</span></div>
+      <div class="row"><b>목표조향(°)</b><span id="v_tgt">—</span></div>
+      <div class="row"><b>측정조향(°)</b><span id="v_mea">—</span></div>
+      <div class="row"><b>속도(m/s)</b><span id="v_spd">—</span></div>
+      <div class="row"><b>CAN tx/rx</b><span id="v_can">—</span></div>
+    </div>
+    <div class="card grid3">
+      <button onclick="S.setProfile('normal')">일반</button>
+      <button onclick="S.setProfile('heavy')">과부하</button>
+      <button onclick="S.setProfile('sand')">모래</button>
+    </div>
+    <div class="card grid3">
+      <button class="go" onclick="S.engage()">자동 시작</button>
+      <button onclick="S.disengage()">해제</button>
+      <button class="stop" onclick="S.estop()">비상정지</button>
+    </div>
+    <button onclick="S.setDemoAbLine()">데모 AB 경로</button>
+    <button id="deadman">데드맨 (누르고 있는 동안 작동)</button>
+  </div>
+</main>
+<script>
+// AndroidSteer 가 없으면(브라우저 단독) 빈 동작으로 가드
+const S = window.AndroidSteer || {
+  statusJson:()=>'{}', engage:()=>false, disengage(){}, estop(){},
+  setProfile(){}, setDeadman(){}, setAbLine(){}, setDemoAbLine(){}
+};
+if (window.AndroidSteer) document.getElementById('mode').textContent = '· 데모(mock)';
+
+const dm = document.getElementById('deadman');
+const press = e => { e.preventDefault(); S.setDeadman(true); dm.classList.add('held'); };
+const release = e => { e.preventDefault(); S.setDeadman(false); dm.classList.remove('held'); };
+dm.addEventListener('touchstart', press);  dm.addEventListener('touchend', release);
+dm.addEventListener('mousedown', press);   dm.addEventListener('mouseup', release);
+dm.addEventListener('mouseleave', release);
+
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+function drawViz(st){
+  const w = cv.width = cv.clientWidth, h = cv.height = cv.clientHeight;
+  ctx.clearRect(0,0,w,h);
+  ctx.strokeStyle = '#1f6feb'; ctx.lineWidth = 2;            // 목표 경로(중앙선)
+  ctx.beginPath(); ctx.moveTo(w/2,0); ctx.lineTo(w/2,h); ctx.stroke();
+  const xte = Math.max(-2, Math.min(2, (st.xte_cm||0)/100));  // ±2m → 화면폭
+  const px = w/2 + xte*(w*0.22);
+  ctx.fillStyle = (Math.abs(st.xte_cm||0) < 5) ? '#3fb950' : '#f85149';
+  ctx.beginPath(); ctx.arc(px, h*0.7, 12, 0, 7); ctx.fill();  // 차량 위치
+  ctx.fillStyle = '#9aa4af'; ctx.font = '12px system-ui';
+  ctx.fillText('XTE ' + (st.xte_cm||0).toFixed(1) + ' cm', 10, 18);
+}
+function poll(){
+  let st = {}; try { st = JSON.parse(S.statusJson()||'{}'); } catch(e){}
+  const set=(id,v)=>document.getElementById(id).textContent=v;
+  const eng = !!st.engaged, saf = st.safety||'—', can = st.can_state||'—';
+  const be=document.getElementById('b_eng'); be.textContent=eng?'ENGAGED':'대기'; be.className=eng?'ok':'dim';
+  const bs=document.getElementById('b_saf'); bs.textContent=saf; bs.className=saf==='SAFE'?'ok':'bad';
+  const bc=document.getElementById('b_can'); bc.textContent=can; bc.className=st.can_available?'ok':'bad';
+  set('v_prof', st.profile||'—');
+  set('v_xte', (st.xte_cm!=null)?st.xte_cm.toFixed(1):'—');
+  set('v_tgt', (st.target_angle_deg!=null)?st.target_angle_deg.toFixed(1):'—');
+  set('v_mea', (st.measured_angle_deg!=null)?st.measured_angle_deg.toFixed(1):'—');
+  set('v_spd', (st.speed_mps!=null)?st.speed_mps.toFixed(2):'—');
+  set('v_can', (st.can_tx||0)+'/'+(st.can_rx||0));
+  drawViz(st);
+}
+setInterval(poll, 120); poll();
+</script>
+</body>
+</html>
