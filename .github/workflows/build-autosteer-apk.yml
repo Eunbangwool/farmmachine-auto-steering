@@ -1,0 +1,51 @@
+name: Build AutoSteer APK
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - 'app/**'
+      - 'auto-steering/src/**'
+      - '*.gradle.kts'
+      - 'gradle/**'
+      - '.github/workflows/build-autosteer-apk.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: assembleDebug (Chaquopy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # Chaquopy 빌드는 호스트 Python 3 필요
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Gradle 설정
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: gradlew 실행권한
+        run: chmod +x gradlew
+
+      - name: 빌드 (assembleDebug)
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: APK 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: farmmachine-autosteer-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

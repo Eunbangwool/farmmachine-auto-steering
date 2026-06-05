@@ -27,16 +27,17 @@
 ### Monorepo 구조
 ```
 farmmachine-auto-steering/
-├── auto-steering/          ← ★ 핵심 (이 문서의 대상)
-│   ├── src/
-│   │   ├── autosteer_core.py   # 메인 알고리즘 (4계층)
-│   │   └── autosteer_ui.html   # 태블릿 운영 UI
-│   └── sim/
-│       └── path_following_sim.html  # 경로 설계 시뮬레이터
-├── rtk-leveling/           ← 레벨러 + LoRa NTRIP (별도 레포 rtk-lora-bridge와 연동)
-├── leveefollow/            ← 라이다 헤드랜드 감지
-└── apk-analysis/
+├── auto-steering/          ← ★ 핵심 알고리즘 (Python)
+│   └── src/*.py            # autosteer_core, apollo_can, app_main, sitl_sim …
+├── app/                    ← ★ Android 앱 (Kotlin 셸 + Chaquopy 임베드 Python)
+│   └── src/main/java/com/farmmachine/autosteer/
+├── settings/build.gradle.kts, gradle/  ← Gradle 8.9 / AGP 8.6 / Chaquopy 16
+├── ANDROID_APP.md          ← 앱 아키텍처/빌드, APOLLO_CAN.md ← CAN 브릿지 계약
+├── rtk-leveling/ leveefollow/ apk-analysis/
 ```
+**앱 = farm-work-manager(농작이)와 별개.** `com.farmmachine.autosteer`.
+Kotlin(UI/서비스/CAN 브릿지) + Chaquopy 로 `auto-steering/src` Python 그대로 실행.
+진입점 `app_main.py`(CPython 검증됨). CI: `.github/workflows/build-autosteer-apk.yml`.
 
 ---
 
