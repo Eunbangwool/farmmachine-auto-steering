@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.FarmMachine" parent="android:Theme.Material.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">#060E08</item>
+        <item name="android:statusBarColor">#060E08</item>
+        <item name="android:navigationBarColor">#060E08</item>
+        <item name="android:windowKeepScreenOn">true</item>
+    </style>
+</resources>
