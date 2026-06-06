@@ -5,14 +5,17 @@ app_main.py
 
 Kotlin(앱) ↔ Python(알고리즘) 경계:
   Kotlin 은 Python.getModule("app_main") 으로 이 모듈의 모듈레벨 함수를 호출한다.
-  - boot(backend="bridge")  앱 시작 시 1회: ApolloCanBus + AutoSteerSystem 기동, 50Hz 루프 시작
+  - boot(backend="bridge")  앱 시작 시 1회: 50Hz 제어 루프 시작
   - set_ab_line / set_profile / set_deadman / engage / disengage / estop
-  - on_rtk / on_imu          (GNSS·IMU 브릿지가 들어오면 호출; 없으면 안전상 미관여)
+  - on_rtk / on_imu          (GNSS·IMU 브릿지가 들어오면 호출)
   - status_json()            UI 폴링용 상태 JSON
   - shutdown()
 
-CAN 은 apollo_can.ApolloCanBus(backend="bridge") → localhost TCP → Kotlin CAN 서비스.
-센서가 안 들어오면 SafetyMonitor 가 RTK_LOW/LOST 로 자동 비활성(안전) 상태 유지.
+백엔드 모드:
+  - "bridge" : 실기기. ApolloCanBus(localhost TCP) ↔ Kotlin CAN 서비스.
+               센서(on_rtk/on_imu)가 안 들어오면 SafetyMonitor 가 자동 비활성(안전).
+  - "mock"   : 데모. sitl_sim 으로 자전거모델 폐루프를 돌려 **진짜 알고리즘이**
+               가상 RTK/IMU 를 받아 AB라인을 추종 → UI 가 실제 제어값으로 살아 움직인다.
 
 CPython 에서도 backend="mock" 으로 그대로 구동/검증된다(아래 __main__).
 """
@@ -33,14 +36,24 @@ class Controller:
     def __init__(self, backend: str = "bridge",
                  host: str = "127.0.0.1", port: int = 47100,
                  hz: float = 50.0):
-        if backend == "bridge":
+        self._dt = 1.0 / hz
+        self.demo = (backend == "mock")
+        self.bus = None
+        self.sim = None
+
+        if self.demo:
+            # 데모: SITL 폐루프(자전거모델 + 가상 RTK/IMU). 실제 알고리즘이 UI 를 구동.
+            import sitl_sim
+            self.sys = sitl_sim.build_system(algo="implement", profile="normal",
+                                             realistic=True)
+            self.sim = sitl_sim.Simulator(self.sys, KUBOTA_MR1157,
+                                          target_speed=1.2, yaw_tau=0.25)
+        else:
             self.bus = ApolloCanBus(backend="bridge", host=host, port=port,
                                     on_state=lambda s: log.info(f"CAN {s}"))
-        else:
-            self.bus = ApolloCanBus(backend=backend)
-        self.sys = AutoSteerSystem(self.bus, params=KUBOTA_MR1157, algo="implement")
-        self.sys.set_profile("normal")
-        self._dt = 1.0 / hz
+            self.sys = AutoSteerSystem(self.bus, params=KUBOTA_MR1157, algo="implement")
+            self.sys.set_profile("normal")
+
         self._running = False
         self._thread = None
         self._last: dict = {}
@@ -48,7 +61,8 @@ class Controller:
 
     # ── 수명주기 ──────────────────────────────────────────────
     def start(self):
-        self.bus.start()
+        if self.bus is not None:
+            self.bus.start()
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                         name="autosteer-loop")
@@ -60,7 +74,8 @@ class Controller:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
-        self.bus.stop()
+        if self.bus is not None:
+            self.bus.stop()
         return "ok"
 
     # ── 설정/명령 ─────────────────────────────────────────────
@@ -86,12 +101,16 @@ class Controller:
     def estop(self):
         self.sys.emergency_stop()
 
-    # ── 센서 입력 (GNSS/IMU 브릿지에서 호출) ────────────────────
+    # ── 센서 입력 (bridge 모드에서 GNSS/IMU 브릿지가 호출) ───────
     def on_rtk(self, lat, lon, quality, source="pa3"):
+        if self.demo:
+            return                      # 데모는 SITL 이 RTK 를 공급
         self.sys.on_rtk(float(lat), float(lon), int(quality), source=str(source))
-        self.sys.safety.clear_override()        # 앱에는 운전대 개입 센서 별도
+        self.sys.safety.clear_override()
 
     def on_imu(self, heading, ang_vel, fwd_accel, roll=0.0, pitch=0.0):
+        if self.demo:
+            return
         self.sys.on_imu(float(heading), float(ang_vel), float(fwd_accel),
                         self._dt, float(roll), float(pitch))
 
@@ -100,13 +119,20 @@ class Controller:
         while self._running:
             t0 = time.time()
             try:
-                st = dict(self.sys.control_step(self._dt))
+                if self.demo:
+                    st = dict(self.sim.step(self._dt))   # 폐루프 한 틱(rtk/imu 주입+제어)
+                else:
+                    st = dict(self.sys.control_step(self._dt))
             except Exception as e:
                 st = {"error": str(e)}
-            s = self.bus.stats
-            st.update(running=self._running, can_state=s.state,
-                      can_available=self.bus.available, can_tx=s.tx,
-                      can_rx=s.rx, can_reconnects=s.reconnects)
+            if self.bus is not None:
+                s = self.bus.stats
+                st.update(can_state=s.state, can_available=self.bus.available,
+                          can_tx=s.tx, can_rx=s.rx, can_reconnects=s.reconnects)
+            else:
+                st.update(can_state="SIM", can_available=True,
+                          can_tx=0, can_rx=0, can_reconnects=0)
+            st["running"] = self._running
             with self._lock:
                 self._last = st
             rest = self._dt - (time.time() - t0)
@@ -156,40 +182,35 @@ def shutdown():
     return "ok"
 
 
-# ── CPython 검증 (백엔드=mock, 하드웨어/안드로이드 불필요) ─────────────
+# ── CPython 검증 (backend=mock = SITL 데모, 안드로이드/하드웨어 불필요) ──
 if __name__ == "__main__":
-    import math
     print("=" * 66)
-    print("app_main — Chaquopy 진입점 CPython 검증 (backend=mock)")
+    print("app_main — Chaquopy 진입점 CPython 검증 (backend=mock = SITL 데모)")
     print("=" * 66)
 
-    boot(backend="mock")
-    set_ab_line(0, 0, 0, 40, width=3.0, passes=2, speed=1.2)
-    set_profile("heavy")
-    set_deadman(True)
-
-    # GNSS/IMU 공급 (앱에서는 브릿지가 담당) — 0.6초간 직선주행 시늉
-    lat = 37.0
-    for k in range(30):
-        on_rtk(lat, 127.0, 4, "pa3")
-        on_imu(math.pi / 2, 0.0, 0.5)
-        lat += 1.2 * 0.02 / 111320
-        if k == 5:
-            print("engage():", engage())
-        time.sleep(0.02)
+    boot(backend="mock")               # SITL 자동 engage + 폐루프 시작
+    time.sleep(0.8)                    # 50Hz 루프가 한동안 추종하게 둠
 
     st = json.loads(status_json())
     print("\nstatus 일부:")
-    for key in ("engaged", "safety", "profile", "can_state", "can_available",
-                "can_tx", "can_rx", "xte_cm", "target_angle_deg"):
-        print(f"  {key:>16}: {st.get(key)}")
+    for key in ("engaged", "safety", "profile", "active_gnss",
+                "xte_cm", "target_angle_deg", "measured_angle_deg",
+                "speed_mps", "can_state"):
+        print(f"  {key:>18}: {st.get(key)}")
 
-    assert st.get("can_available") is True, "CAN(mock) 미연결"
-    assert st.get("can_tx", 0) >= 1, "모터 명령 송신 없음"
-    assert "safety" in st and "profile" in st
-    estop()
-    time.sleep(0.05)
+    assert st.get("engaged") is True, "SITL 데모가 engage 되지 않음"
+    assert st.get("safety") == "SAFE", f"안전상태 비정상: {st.get('safety')}"
+    assert "xte_cm" in st and abs(st["xte_cm"]) < 100, "XTE 비정상/발산"
+    assert st.get("speed_mps", 0) > 0.3, "속도 미상승"
+
+    print("\n프로파일 전환/해제 테스트:")
+    print("  set_profile('heavy') →", set_profile("heavy"))
+    print("  disengage()");  disengage(); time.sleep(0.05)
+    assert json.loads(status_json()).get("engaged") is False
+    print("  engage() →", engage());  time.sleep(0.05)
+    assert json.loads(status_json()).get("engaged") is True
+    estop(); time.sleep(0.05)
     assert json.loads(status_json()).get("engaged") is False
     shutdown()
-    print("\n  ✓ boot→경로설정→engage→제어루프→상태폴링→estop→shutdown 전 경로 동작")
-    print("  실기기: boot(backend='bridge') + Kotlin ApolloCanBridge 기동")
+    print("\n  ✓ mock=SITL 폐루프: 자동 engage→실제 알고리즘 추종→프로파일/해제/estop 동작")
+    print("  실기기: boot(backend='bridge') + Kotlin ApolloCanBridge + GNSS/IMU 브릿지")
