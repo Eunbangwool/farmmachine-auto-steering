@@ -1,12 +1,12 @@
 package com.farmmachine.autosteer
 
 import android.annotation.SuppressLint
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
-import com.farmmachine.autosteer.py.PythonEngine
-import kotlin.concurrent.thread
 
 /**
  * 운영 UI 호스트. HTML(assets/autosteer_ui.html)을 WebView 로 띄우고,
@@ -24,10 +24,13 @@ class MainActivity : ComponentActivity() {
             View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
 
-        // Chaquopy Python 백그라운드 부팅 — 실패해도 WebView 는 뜬다.
-        // 하드웨어(CAN/GNSS) 미연결 동안은 mock 백엔드로 UI 동작 검증.
-        thread(name = "py-boot") {
-            runCatching { PythonEngine.boot(applicationContext, "mock") }
+        // 자율조향 포그라운드 서비스 기동 → ApolloCanBridge(libsysmcu.so CAN) +
+        // Python(bridge 백엔드) 50Hz 루프. 실패해도 WebView 는 뜬다.
+        // (비-Apollo/권한 미설정이면 CAN 은 비활성, UI·탐색은 정상 동작)
+        val svc = Intent(this, AutoSteerService::class.java)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc)
+            else startService(svc)
         }
 
         val web = WebView(this).apply {

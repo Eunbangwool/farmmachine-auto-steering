@@ -291,7 +291,7 @@ Apollo 10 Pro는 CAN 내장 (IP65, ADB 환경). SDK 문서 확인 필요.
 
 1. **★ 실측**: wheelbase, antenna_to_axle — 물리 측정 (미완). ✅ 사전준비: `calibration.py`로 저속 주행 자동 추정 + `field_config.py`로 JSON 주입
 2. ✅ **CanSpec 채우기**: Keya KY170 매뉴얼 V2.4 프로토콜 이식 완료(250k, 0x06000001 TX, cmd_speed/parse_heartbeat). ★ 남은 건 (a) `_send_motor` 를 cmd_speed 속도제어로 배선 + SITL 재검증, (b) WAS 앵글센서 CAN ID 현장 캡처(`can_tools.py`)
-3. ✅ **ApolloCanInterface 구현**: SocketCAN + `apollo_can.ApolloCanBus`(bridge/socketcan/slcan/mock, 자동재연결). 결정: **Kotlin 브릿지** 주 경로(`APOLLO_CAN.md`). ★ 남은 건 Kotlin CAN 서비스에 벤더 SDK open/send/recv 채우기 + 실제 CAN ID
+3. ✅ **ApolloCanInterface/CAN 배선**: `apollo_can.ApolloCanBus`(bridge…) → Kotlin `ApolloCanBridge` → **`com.van.jni.VanMcu`(libsysmcu.so JNI)** 로 실제 송수신 배선 완료(`CanWrite`/`setCanSpeed`/`setOnCanListener`). VanMcu 는 com.agmo.autokit 디컴파일의 **인터페이스 사실**만 자체 구현(clean-room). **CAN 접근엔 device-owner 필요**: `adb shell dpm set-device-owner com.farmmachine.autosteer/.AdminReceiver`(AdminReceiver+device_admin.xml 추가). MainActivity 가 mock→**AutoSteerService(bridge)** 기동. ★ 남은 건 실차에서 모터 CAN **채널(0/1) 확정** + 확장프레임 플래그 검증
 4. ✅ **RTK 연결**: `f9p_client.F9pUsbClient`/`ChcnavPa3SerialClient` → `on_rtk()` (GGA 파싱, 품질 4/5, sniff/UBX/보레이트탐색)
 5. ✅ **IMU 캘리브레이션**: `ImuCalibrator` (평지 30초 평균 → ImuOffset)
 6. ✅ **3-모드 프로파일**: `TuningProfile` + `PROFILE_NORMAL/HEAVY/SAND` + `set_profile()`

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 디바이스 관리자 정책. CAN/GPIO 하드웨어 접근(device-owner) + 키오스크 잠금용. -->
+<device-admin>
+    <uses-policies>
+        <force-lock />
+    </uses-policies>
+</device-admin>
