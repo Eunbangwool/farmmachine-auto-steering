@@ -60,6 +60,7 @@ class Controller:
         self._lock = threading.Lock()
         self._jog_on = False          # 모터 조그 활성 여부(Enable 시퀀스 추적)
         self._ntrip = None            # NTRIP 클라이언트(RTK 보정신호)
+        self._gnss_client = None      # GNSS NMEA 클라이언트(F9P/PA-3) — NTRIP RTCM 주입 대상
 
         if vendor:
             self.set_vendor(vendor)
@@ -199,6 +200,36 @@ class Controller:
         self.sys.on_imu(float(heading), float(ang_vel), float(fwd_accel),
                         self._dt, float(roll), float(pitch))
 
+    def on_heading(self, compass_deg):
+        """INS/듀얼안테나 진헤딩(나침반°). Kotlin GNSS 브릿지가 직접 푸시할 때."""
+        if not self.demo:
+            self.sys.on_heading(float(compass_deg))
+
+    def start_gnss(self, port="/dev/ttyACM0", baud=0):
+        """
+        F9P/PA-3 USB-serial 에서 NMEA(GGA 위치 + HDT 진헤딩) 읽어 on_rtk/on_heading 공급.
+        baud=0 이면 벤더 GNSS 스펙의 serial_baud 사용. 안테나/포트 없으면 안전 무동작.
+        ★ Apollo USB-serial 접근 경로는 현장 확인(필요시 Kotlin USB-serial 브릿지).
+        """
+        if self.demo:
+            return "demo"
+        import f9p_client as fc
+        spec = getattr(self.sys.vendor, "gnss_primary", None) if self.sys.vendor else None
+        baud = int(baud) or (spec.serial_baud if spec else 115200)
+        src = self.sys.gnss.primary
+        self._gnss_client = fc.F9pUsbClient(
+            port=str(port), baudrate=baud, source=src,
+            on_rtk=lambda la, lo, q: self.sys.on_rtk(la, lo, q, source=src),
+            on_heading=self.sys.on_heading)
+        ok = False
+        try:
+            ok = self._gnss_client.start()
+        except Exception as e:
+            log.warning(f"GNSS 시작 실패: {e}")
+        if not ok:
+            log.info("GNSS 미연결(안테나/포트 없음) — 연결되면 재시도/자동 동작")
+        return "ok" if ok else "no-gnss"
+
     # ── 제어 루프 (50Hz) ──────────────────────────────────────
     def _loop(self):
         while self._running:
@@ -278,6 +309,8 @@ def ntrip_connect(host, port, mount, user="", pw=""):
 def ntrip_disconnect(): return _ctrl.ntrip_disconnect() if _ctrl else "no-ctrl"
 def ntrip_status():     return json.dumps(_ctrl.ntrip_status() if _ctrl else
                                           {"connected": False, "bytes": 0, "error": ""}, ensure_ascii=False)
+def on_heading(compass_deg):  _ctrl and _ctrl.on_heading(compass_deg)
+def start_gnss(port="/dev/ttyACM0", baud=0): return _ctrl.start_gnss(port, baud) if _ctrl else "no-ctrl"
 def on_rtk(lat, lon, quality, source="pa3"):  _ctrl and _ctrl.on_rtk(lat, lon, quality, source)
 def on_imu(h, av, acc, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_imu(h, av, acc, roll, pitch)
 def status_json():      return _ctrl.status_json() if _ctrl else "{}"

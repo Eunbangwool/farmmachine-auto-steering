@@ -157,8 +157,12 @@ class CanSpec:
 - **ver2 / CHCNAV NX510 / FJD (GNSS+INS 스마트안테나)**: 수신기가 heading/자세 융합 출력. `heading_source="ins"`
 - 코드: `GnssReceiverSpec.heading_source`("ins"/"dual"/"none") + `VendorProfile.gnss_alt`(AGMO ver1/ver2 둘 다 등록).
   AGMO 프로파일: primary=ver2(INS), alt=ver1(dual). CHCNAV/FJD=ins. F9P 단독=none.
-- **공통 경로**: 둘 다 진헤딩을 NMEA **HDT** 로 출력 → `f9p_client.parse_hdt`/`on_heading` → `on_imu` → EKF.
-  (`tune_for_receiver` 가 heading_acc 로 EKF R 자동 튜닝.) roll/pitch 는 수신기 proprietary(추후 벤더별 파싱).
+- **공통 경로(✅ 배선·검증)**: HDT(나침반 진헤딩) → `f9p_client.parse_hdt`/`on_heading` →
+  `AutoSteerSystem.on_heading`(나침반→수학각 90-θ 변환) → `StateEstimator.update_heading`.
+  GGA 위치 → `on_rtk`. IMU 없으면 `control_step` 이 EKF predict 수행(_imu_fed). 
+  app_main: `start_gnss(port,baud)`(F9P/PA-3 시리얼) + 모듈 `on_heading()`(Kotlin 푸시용).
+  검증: `test_closed_loop.py`(나침반↔수학각 0° 오차·북진 추종). 조향 수렴은 sitl_sim 6/6.
+  ★ 실차: Apollo USB-serial 접근경로 확인(필요시 Kotlin USB-serial 브릿지). roll/pitch proprietary 추후.
 - F9P 단독(none)은 헤딩 소스 없음 → 듀얼/IMU 필요.
 
 ---

@@ -968,6 +968,20 @@ class StateEstimator:
         self.x[3] = self.x[3] + fwd_accel * dt
         self.x[4] = angular_vel
 
+    def update_heading(self, heading_rad: float):
+        """
+        heading 단독 측정 갱신 — INS/듀얼안테나(HDT) 용.
+        IMU 없이 GNSS 헤딩만 들어오는 구성에서 EKF heading 을 보정.
+        """
+        np = self.np
+        heading = self.params.imu_offset.correct_yaw(heading_rad)
+        H = np.array([[0, 0, 1, 0, 0]])
+        resid = np.array([_wrap(heading - self.x[2])])
+        S = H @ self.P @ H.T + self.R_hdg
+        K = self.P @ H.T @ np.linalg.inv(S)
+        self.x = self.x + (K @ resid.reshape(1, 1)).flatten()
+        self.P = (np.eye(5) - K @ H) @ self.P
+
     def get_state(self) -> VehicleState:
         return VehicleState(x=self.x[0], y=self.x[1],
                             heading=self.x[2], speed=self.x[3],
@@ -1825,6 +1839,7 @@ class AutoSteerSystem:
         self._profile  = PROFILE_NORMAL
         self.tracking  = TrackingParams()
         self._engaged  = False
+        self._imu_fed  = False        # IMU 입력 여부 — 없으면 control_step 이 predict
         self._target_idx = 0
         self._prev_angle   = 0.0
         self._prev_angle_t = time.time()
@@ -1969,6 +1984,16 @@ class AutoSteerSystem:
         self.estimator.predict(dt)
         self.estimator.update_imu(raw_heading, ang_vel, fwd_accel, dt,
                                    raw_roll, raw_pitch)
+        self._imu_fed = True            # IMU 가 predict 담당(control_step 중복 방지)
+
+    def on_heading(self, heading_deg: float):
+        """
+        INS/듀얼안테나 **진북기준 진헤딩(나침반: 북=0°, 시계방향)** → EKF heading 갱신.
+        EKF 는 수학각(동=0, 반시계)을 쓰므로 변환: math = 90° - compass.
+        predict 는 control_step 이 담당. NMEA HDT → f9p_client.on_heading 경로.
+        """
+        math_deg = 90.0 - float(heading_deg)
+        self.estimator.update_heading(math.radians(math_deg))
 
     def get_implement_position(self) -> tuple:
         """
@@ -1991,6 +2016,11 @@ class AutoSteerSystem:
           engaged, safety_state, target_angle, measured_angle,
           motor_cmd, xte_m, progress, waypoint_section
         """
+        # IMU 가 없으면(GNSS-only) EKF 전파를 제어주기로 수행. IMU 있으면 on_imu 가 담당.
+        if not self._imu_fed:
+            self.estimator.predict(dt)
+        self._imu_fed = False
+
         self.actuator.process_can_recv()
         state = self.estimator.get_state()
 
