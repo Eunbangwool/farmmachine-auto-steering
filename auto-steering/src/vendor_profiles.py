@@ -120,7 +120,19 @@ class VendorProfile:
     uses_was:      bool = False
     # 대체 안테나(헤딩 소스 다른 버전). AGMO 처럼 ver1(듀얼)/ver2(INS) 둘 다 지원 시.
     gnss_alt:      Optional[GnssReceiverSpec] = None
+    # 추종 튜닝 오버라이드(TrackingParams 필드 dict). None = 기본값(AgNav 문서값).
+    #   CHCNAV 수준 성능 목표 — AgNav 사진 확인값. 실하드웨어 튜닝(tuning.py)으로 미세조정.
+    tracking:      Optional[Dict] = None
 
+
+# CHCNAV(AgNav) 문서 확인 추종 튜닝값 — 기본 TrackingParams 와 동일하나 명시 고정.
+# CHCNAV 수준 성능 목표값. 실하드웨어에서 tuning.py 로 미세조정.
+CHCNAV_TUNING: Dict = {
+    "online_sensitivity":   1.5,   # AgNav '온라인 민감도'
+    "approach_sensitivity": 2.5,   # AgNav '접근 라인 민감도'
+    "online_threshold":     2.5,   # AgNav '온라인 임계값'(m)
+    "curve_coefficient":    1.0,   # AgNav '커브 계수'
+}
 
 VENDOR_PROFILES: Dict[str, VendorProfile] = {
     "agmo": VendorProfile(
@@ -147,6 +159,7 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
         gnss_priority=("pa3", "f9p"),
         default_algo="implement",
         uses_was=False,    # WAS 장착 선택 가능, 없어도 동작 → 기본 미사용
+        tracking=CHCNAV_TUNING,   # AgNav 문서 추종값 명시 적용
         notes="PA-3 GNSS+INS 확정. 앵글센서(WAS) 선택(없어도 자동조향 가능). "
               "모터 CAN 프로토콜 ★미확정 — CHCNAV OEM CAN 문서 입수 후 "
               "canspec 채울 것(현재 조향 비활성).",

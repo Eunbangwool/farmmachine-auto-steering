@@ -982,6 +982,19 @@ class StateEstimator:
         self.x = self.x + (K @ resid.reshape(1, 1)).flatten()
         self.P = (np.eye(5) - K @ H) @ self.P
 
+    def update_rate(self, angular_vel: float, fwd_accel: float, dt: float,
+                    raw_roll: float = 0.0, raw_pitch: float = 0.0):
+        """
+        IMU 각속도/가속도/자세만 반영 — **heading 절대측정 없음**.
+        듀얼안테나(ver1): 절대 heading=update_heading(HDT), 고레이트 평활=이 각속도(자이로).
+        predict 가 x[4](yaw rate)로 heading 을 전파 → 절대 heading 갱신 사이를 매끄럽게(스네이크↓).
+        """
+        offset = self.params.imu_offset
+        self._current_roll  = offset.correct_roll(raw_roll)
+        self._current_pitch = offset.correct_pitch(raw_pitch)
+        self.x[3] = self.x[3] + fwd_accel * dt
+        self.x[4] = angular_vel
+
     def get_state(self) -> VehicleState:
         return VehicleState(x=self.x[0], y=self.x[1],
                             heading=self.x[2], speed=self.x[3],
@@ -1150,7 +1163,7 @@ class ImplementReferenced(PathFollower):
         k_h    = self.profile.k_heading_algo
         k_soft = 0.8 + 0.5 * max(0, state.speed)     # 속도 softening
         cross_t = math.atan2(k_eff * impl_xte, k_soft)
-        pred_t  = 0.12 * pred_xte                      # 예측 선제 조향
+        pred_t  = 0.12 * self.tracking.curve_coefficient * pred_xte   # 예측 선제(AgNav 커브계수)
 
         delta = k_h * h_err - cross_t - pred_t
 
@@ -1840,6 +1853,7 @@ class AutoSteerSystem:
         self.tracking  = TrackingParams()
         self._engaged  = False
         self._imu_fed  = False        # IMU 입력 여부 — 없으면 control_step 이 predict
+        self.heading_bias_deg = 0.0   # 듀얼안테나 베이스라인 yaw 바이어스(HeadingCalibrator)
         self._target_idx = 0
         self._prev_angle   = 0.0
         self._prev_angle_t = time.time()
@@ -1878,7 +1892,15 @@ class AutoSteerSystem:
         self._active_gnss = None
         self.estimator.tune_for_receiver(p.gnss_primary)
 
-        # 기본 알고리즘 적용
+        # 벤더 추종 튜닝 오버라이드(CHCNAV 문서값 등) 적용
+        tr = getattr(p, "tracking", None)
+        if tr:
+            for k, v in tr.items():
+                if hasattr(self.tracking, k):
+                    setattr(self.tracking, k, v)
+            log.info(f"추종 튜닝 적용({p.display_name}): {tr}")
+
+        # 기본 알고리즘 적용 (self.tracking 이 follower 로 전달됨)
         self.set_algorithm(p.default_algo, self.params.wheelbase)
 
         if not p.can_verified:
@@ -1986,14 +2008,31 @@ class AutoSteerSystem:
                                    raw_roll, raw_pitch)
         self._imu_fed = True            # IMU 가 predict 담당(control_step 중복 방지)
 
+    def on_gyro(self, ang_vel: float, fwd_accel: float = 0.0, dt: float = 0.02,
+                raw_roll: float = 0.0, raw_pitch: float = 0.0):
+        """
+        IMU 각속도(yaw rate)/가속도/자세 입력 — **절대 heading 없는 IMU**용.
+        듀얼안테나 ver1 구성: on_heading(듀얼 절대 heading) + on_gyro(IMU 레이트) 동시 공급
+        → EKF 가 절대 heading + 고레이트 평활을 융합(스네이크/지연 억제, INS급 헤딩).
+        """
+        self.estimator.predict(dt)
+        self.estimator.update_rate(ang_vel, fwd_accel, dt, raw_roll, raw_pitch)
+        self._imu_fed = True
+
     def on_heading(self, heading_deg: float):
         """
         INS/듀얼안테나 **진북기준 진헤딩(나침반: 북=0°, 시계방향)** → EKF heading 갱신.
         EKF 는 수학각(동=0, 반시계)을 쓰므로 변환: math = 90° - compass.
         predict 는 control_step 이 담당. NMEA HDT → f9p_client.on_heading 경로.
         """
-        math_deg = 90.0 - float(heading_deg)
-        self.estimator.update_heading(math.radians(math_deg))
+        # 듀얼안테나 베이스라인 바이어스 보정(ver1, HeadingCalibrator) → 수학각 변환
+        corrected = float(heading_deg) - self.heading_bias_deg
+        self.estimator.update_heading(math.radians(90.0 - corrected))
+
+    def set_heading_bias(self, bias_deg: float):
+        """듀얼안테나 헤딩 바이어스(나침반°) 설정 — HeadingCalibrator.finish().value."""
+        self.heading_bias_deg = float(bias_deg)
+        log.info(f"헤딩 바이어스 적용: {self.heading_bias_deg:+.2f}°")
 
     def get_implement_position(self) -> tuple:
         """

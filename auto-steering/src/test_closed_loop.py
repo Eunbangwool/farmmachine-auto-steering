@@ -86,10 +86,57 @@ def test_position_tracking():
     assert abs((hd - 90 + 180) % 360 - 180) < 2.0, f"heading 북(90°) 아님: {hd}"
 
 
+def test_dual_imu_fusion():
+    """ver1: 노이즈 있는 듀얼안테나 절대헤딩 + 자이로 레이트 → EKF 가 평활(스네이크↓)."""
+    import random, statistics
+    random.seed(7)
+    sys = _make_sys()
+    truth_compass = 0.0          # 북향(나침반 0)
+    raw_math, ekf_math = [], []
+    for _ in range(200):
+        noisy = truth_compass + random.gauss(0, 3.0)     # 듀얼헤딩 노이즈 ±3°
+        sys.on_gyro(ang_vel=random.gauss(0, 0.01), dt=0.05)   # 자이로(진짜 rate≈0)
+        sys.on_heading(noisy)
+        raw_math.append((90.0 - noisy))                  # 듀얼 raw(수학각)
+        ekf_math.append(math.degrees(sys.estimator.get_state().heading))
+    raw_std = statistics.pstdev(raw_math[50:])
+    ekf_std = statistics.pstdev(ekf_math[50:])
+    print(f"  raw 듀얼헤딩 std={raw_std:.2f}° → EKF 융합 std={ekf_std:.2f}° "
+          f"(평활비 {raw_std/max(1e-6,ekf_std):.1f}×)")
+    # 융합이 헤딩 노이즈를 유의미하게 감소(추가 평활은 Q[heading] 튜닝으로 가능)
+    assert ekf_std < raw_std * 0.8, f"융합 평활 부족: raw {raw_std:.2f} vs ekf {ekf_std:.2f}"
+
+
+def test_heading_calibration():
+    """ver1: 직선주행 20m → HeadingCalibrator 가 베이스라인 바이어스 복원 + on_heading 보정."""
+    from calibration import HeadingCalibrator
+    cal = HeadingCalibrator(min_distance_m=15.0, min_samples=80)
+    BIAS = 5.0                       # 진짜 바이어스 +5°(보고가 진로각보다 5° 큼)
+    north = 0.0
+    for _ in range(120):
+        north += 0.2                 # 북진 0.2m/스텝
+        cal.add_sample(east=0.0, north=north, reported_heading_deg=0.0 + BIAS)
+    est = cal.finish()
+    print(f"  캘리브: {est.note}  (기대 +{BIAS}°, ok={est.ok})")
+    assert est.ok and abs(est.value - BIAS) < 0.5, f"바이어스 복원 실패: {est.value}"
+    # 보정 적용 → 실제 북향(진로각 0)에서 EKF heading 이 수학각 90°로 정확
+    sys = _make_sys()
+    sys.set_heading_bias(est.value)
+    for _ in range(40):
+        sys.on_gyro(0.0, dt=0.05); sys.on_heading(0.0 + BIAS)   # 보고헤딩=진로+bias
+    hd = math.degrees(sys.estimator.get_state().heading) % 360.0
+    print(f"  바이어스 보정 후 EKF heading={hd:.1f}° (기대 90°=북)")
+    assert abs((hd - 90 + 180) % 360 - 180) < 1.0, f"보정 후 heading 오차: {hd}"
+
+
 if __name__ == "__main__":
     print("[1] HDT 나침반→수학각 변환")
     test_heading_convention()
     print("[2] GGA 위치 추종")
     test_position_tracking()
+    print("[3] ver1 듀얼안테나+IMU 융합(평활)")
+    test_dual_imu_fusion()
+    print("[4] ver1 헤딩 바이어스 캘리브(20m 직선)")
+    test_heading_calibration()
     print("\n  ✓ GNSS(NMEA)→EKF 입력 경로 검증 통과 — 헤딩 변환/위치 추종/무IMU predict. "
           "(조향 수렴은 sitl_sim 6/6)")

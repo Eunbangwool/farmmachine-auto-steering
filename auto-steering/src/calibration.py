@@ -149,6 +149,52 @@ class LeverArmEstimator:
         return Estimate(d, n, r2, ok, note)
 
 
+class HeadingCalibrator:
+    """
+    듀얼안테나(ver1) 헤딩 바이어스 캘리브 — 직선 자동주행(≈20m)으로 측정.
+
+    원리: (안테나 보고 heading) vs (연속 GPS 위치의 진행방향=진로각) 의 원형평균 차이.
+      = 안테나 베이스라인이 차체 종축과 어긋난 고정 yaw 바이어스(→ '중심 치우침' 원인).
+    부호: bias = circular_mean(reported - course). on_heading 에서 reported - bias 로 보정.
+    각도 단위: 나침반 진북기준(deg, 북=0, 시계방향) — AutoSteerSystem.on_heading 입력과 동일.
+    """
+    def __init__(self, min_distance_m: float = 15.0, min_samples: int = 80):
+        self.min_distance = min_distance_m
+        self.min_samples = min_samples
+        self._sin = 0.0
+        self._cos = 0.0
+        self._n = 0
+        self._last: Optional[tuple] = None
+        self._dist = 0.0
+
+    def add_sample(self, east: float, north: float, reported_heading_deg: float):
+        if self._last is not None:
+            de = east - self._last[0]; dn = north - self._last[1]
+            step = math.hypot(de, dn)
+            if step > 0.05:                              # 충분히 이동(정지 노이즈 제외)
+                course = math.degrees(math.atan2(de, dn))    # 나침반(북=0,CW)
+                diff = _wrap(math.radians(reported_heading_deg - course))
+                self._sin += math.sin(diff); self._cos += math.cos(diff)
+                self._n += 1; self._dist += step
+        self._last = (east, north)
+
+    @property
+    def progress(self) -> float:
+        return min(1.0, min(self._dist / self.min_distance, self._n / self.min_samples))
+
+    def ready(self) -> bool:
+        return self._dist >= self.min_distance and self._n >= self.min_samples
+
+    def finish(self) -> Estimate:
+        if self._n == 0:
+            return Estimate(0.0, 0, 0.0, False, "샘플 없음")
+        bias = math.degrees(math.atan2(self._sin, self._cos))
+        R = math.hypot(self._sin, self._cos) / self._n   # 집중도(0~1) = 직진 안정성
+        ok = self.ready() and R > 0.9
+        return Estimate(bias, self._n, R, ok,
+                        f"heading bias {bias:+.2f}° (dist {self._dist:.1f}m, R={R:.3f})")
+
+
 def estimate_from_log(samples: List[dict]) -> dict:
     """
     주행 로그 일괄 추정 헬퍼.

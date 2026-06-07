@@ -61,6 +61,7 @@ class Controller:
         self._jog_on = False          # 모터 조그 활성 여부(Enable 시퀀스 추적)
         self._ntrip = None            # NTRIP 클라이언트(RTK 보정신호)
         self._gnss_client = None      # GNSS NMEA 클라이언트(F9P/PA-3) — NTRIP RTCM 주입 대상
+        self._hcal = None             # 헤딩 바이어스 캘리브레이터(ver1, 진행 중일 때만)
 
         if vendor:
             self.set_vendor(vendor)
@@ -202,8 +203,32 @@ class Controller:
 
     def on_heading(self, compass_deg):
         """INS/듀얼안테나 진헤딩(나침반°). Kotlin GNSS 브릿지가 직접 푸시할 때."""
-        if not self.demo:
-            self.sys.on_heading(float(compass_deg))
+        if self.demo:
+            return
+        compass_deg = float(compass_deg)
+        self.sys.on_heading(compass_deg)
+        # ver1 헤딩 바이어스 캘리브 진행 중이면 (위치,보고헤딩) 샘플 수집
+        if self._hcal is not None:
+            st = self.sys.estimator.get_state()
+            self._hcal.add_sample(st.x, st.y, compass_deg)
+            if self._hcal.ready():
+                est = self._hcal.finish()
+                if est.ok:
+                    self.sys.set_heading_bias(est.value)
+                log.info(f"헤딩 캘리브 완료: {est.note}")
+                self._hcal = None
+
+    def start_heading_calib(self):
+        """ver1 듀얼안테나 헤딩 바이어스 캘리브 시작 — 이후 ~20m 직선 주행하면 자동 산출/적용."""
+        from calibration import HeadingCalibrator
+        self._hcal = HeadingCalibrator()
+        return "ok"
+
+    def heading_calib_status(self):
+        if self._hcal is None:
+            return {"active": False, "progress": 1.0, "bias_deg": self.sys.heading_bias_deg if not self.demo else 0.0}
+        return {"active": True, "progress": round(self._hcal.progress, 3),
+                "bias_deg": self.sys.heading_bias_deg if not self.demo else 0.0}
 
     def start_gnss(self, port="/dev/ttyACM0", baud=0):
         """
@@ -310,6 +335,8 @@ def ntrip_disconnect(): return _ctrl.ntrip_disconnect() if _ctrl else "no-ctrl"
 def ntrip_status():     return json.dumps(_ctrl.ntrip_status() if _ctrl else
                                           {"connected": False, "bytes": 0, "error": ""}, ensure_ascii=False)
 def on_heading(compass_deg):  _ctrl and _ctrl.on_heading(compass_deg)
+def start_heading_calib():    return _ctrl.start_heading_calib() if _ctrl else "no-ctrl"
+def heading_calib_status():   return json.dumps(_ctrl.heading_calib_status() if _ctrl else {"active": False}, ensure_ascii=False)
 def start_gnss(port="/dev/ttyACM0", baud=0): return _ctrl.start_gnss(port, baud) if _ctrl else "no-ctrl"
 def on_rtk(lat, lon, quality, source="pa3"):  _ctrl and _ctrl.on_rtk(lat, lon, quality, source)
 def on_imu(h, av, acc, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_imu(h, av, acc, roll, pitch)

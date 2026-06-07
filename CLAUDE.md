@@ -164,6 +164,15 @@ class CanSpec:
   검증: `test_closed_loop.py`(나침반↔수학각 0° 오차·북진 추종). 조향 수렴은 sitl_sim 6/6.
   ★ 실차: Apollo USB-serial 접근경로 확인(필요시 Kotlin USB-serial 브릿지). roll/pitch proprietary 추후.
 - F9P 단독(none)은 헤딩 소스 없음 → 듀얼/IMU 필요.
+- **ver1 융합·캘리브(✅ 구현·검증)**:
+  - **듀얼+IMU 융합**: `on_heading`(듀얼 절대) + `on_gyro`(IMU yaw rate, 절대heading 미사용)
+    → EKF predict 가 고레이트 평활 → 스네이크/지연 억제(테스트 ~1.4× 노이즈↓, 추가 평활은 Q튜닝).
+  - **헤딩 바이어스 캘리브**(중심 치우침 해결): `calibration.HeadingCalibrator` — 직선 ~20m 주행 중
+    (보고heading vs GPS 진로각) 원형평균 = 베이스라인 yaw 바이어스 → `set_heading_bias`/on_heading 보정.
+    app_main: `start_heading_calib()` 후 직선 주행하면 자동 산출·적용. (테스트: +5° 복원 R=1.0)
+- **CHCNAV 성능 튜닝(✅ A)**: `vendor_profiles.CHCNAV_TUNING`(AgNav 문서값) → `select_vendor` 가
+  `TrackingParams` 에 적용. `curve_coefficient` 도 예측항에 실제 반영(이전엔 미사용). 최종 갭은
+  실하드웨어 `tuning.py`+`MotorResponseProbe` 튜닝 + 동일 PA-3 신호품질.
 
 ---
 
