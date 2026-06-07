@@ -493,8 +493,8 @@ function openDetail(key){
          저속(±12RPM)으로 돌고, 떼면 즉시 정지합니다.<br>
          ⚠ 바퀴·조향 주변에 사람/장애물이 없는지 확인 후 시험하세요.</div>
        <div style="display:flex;gap:14px;justify-content:center;margin:10px 0">
-         <button class="jogbtn" data-dir="1">◀ 좌회전<br><span>누르는 동안</span></button>
-         <button class="jogbtn" data-dir="-1">우회전 ▶<br><span>누르는 동안</span></button>
+         <button class="jogbtn" data-dir="-1" data-name="좌회전">◀ 좌회전<br><span>누르는 동안</span></button>
+         <button class="jogbtn" data-dir="1" data-name="우회전">우회전 ▶<br><span>누르는 동안</span></button>
        </div>
        <button class="pill jogstop" id="jogStop">■ 정지</button>
        <div id="jogState" style="text-align:center;color:var(--sub);font-size:12px;margin-top:12px">대기</div>
@@ -552,7 +552,8 @@ function wireJog(){
     const dir=parseInt(btn.dataset.dir,10);
     const start=e=>{ e.preventDefault(); if(jogTimer) return;
       const r=jogSend(dir*JOG_PERMILLE), st=$('jogState');
-      if(st) st.textContent = r==='demo'?'데모 모드(실 CAN 없음)': r==='blocked'?'미확정 벤더 — 출력 차단': r==='error'?'CAN 미연결':(dir<0?'◀ 좌회전 중…':'우회전 중… ▶');
+      const nm=btn.dataset.name||'회전';
+      if(st) st.textContent = r==='demo'?'데모 모드(실 CAN 없음)': r==='blocked'?'미확정 벤더 — 출력 차단': r==='error'?'CAN 미연결':(nm+' 중…');
       if(r==='ok'||r==='demo') jogTimer=setInterval(()=>jogSend(dir*JOG_PERMILLE),150); };
     const end=e=>{ e.preventDefault(); jogStop(); };
     btn.onpointerdown=start; btn.onpointerup=end; btn.onpointerleave=end; btn.onpointercancel=end;
