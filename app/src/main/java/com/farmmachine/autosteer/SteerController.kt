@@ -18,6 +18,10 @@ object SteerController {
     /** 모터 점검 조그: permille(±, 0=정지). bridge 모드에서만 실동작. */
     fun motorJog(permille: Int): String =
         try { api().callAttr("motor_jog", permille).toString() } catch (e: Throwable) { "error" }
+
+    /** 모터 중앙(직진) 캘리브레이션 — 현재 누적각을 0 기준으로. */
+    fun motorCenter(): String =
+        try { api().callAttr("motor_center").toString() } catch (e: Throwable) { "error" }
     fun setDeadman(pressed: Boolean) = safe { api().callAttr("set_deadman", pressed) }
     fun setProfile(name: String) = safe { api().callAttr("set_profile", name) }
 

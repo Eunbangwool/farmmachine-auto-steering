@@ -175,6 +175,12 @@ class Controller:
             return self._ntrip.status()
         return {"connected": False, "bytes": 0, "error": "", "host": "", "port": 0, "mount": ""}
 
+    def motor_center(self):
+        """현재 모터 누적각을 직진(중앙) 기준으로 캘리브레이션 (WAS 미사용 모드)."""
+        if self.bus is not None and hasattr(self.sys, "actuator"):
+            self.sys.actuator.set_motor_center(); return "ok"
+        return "demo"
+
     # ── 센서 입력 (bridge 모드에서 GNSS/IMU 브릿지가 호출) ───────
     def on_rtk(self, lat, lon, quality, source="pa3"):
         if self.demo:
@@ -203,6 +209,8 @@ class Controller:
                 s = self.bus.stats
                 st.update(can_state=s.state, can_available=self.bus.available,
                           can_tx=s.tx, can_rx=s.rx, can_reconnects=s.reconnects)
+                try: st["heartbeat"] = self.sys.actuator.latest_heartbeat()
+                except Exception: pass
             else:
                 st.update(can_state="SIM", can_available=True,
                           can_tx=0, can_rx=0, can_reconnects=0)
@@ -259,6 +267,7 @@ def engage():           return _ctrl.engage() if _ctrl else False
 def disengage():        _ctrl and _ctrl.disengage()
 def estop():            _ctrl and _ctrl.estop()
 def motor_jog(permille): return _ctrl.motor_jog(permille) if _ctrl else "no-ctrl"
+def motor_center():      return _ctrl.motor_center() if _ctrl else "no-ctrl"
 def ntrip_connect(host, port, mount, user="", pw=""):
     return _ctrl.ntrip_connect(host, port, mount, user, pw) if _ctrl else "no-ctrl"
 def ntrip_disconnect(): return _ctrl.ntrip_disconnect() if _ctrl else "no-ctrl"

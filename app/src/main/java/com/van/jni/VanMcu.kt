@@ -72,8 +72,14 @@ object VanMcu {
      * type==CAN 일 때 data 를 CanMsg 로 파싱해 리스너에 전달.
      * ⚠ data 바이트 포맷은 추정 — 실제 RX 포맷은 현장 캡처로 검증 필요(TX 와 무관).
      */
+    @Volatile private var cbCount = 0
     @JvmStatic
     fun onCallback(type: Int, data: ByteArray) {
+        // 원시 포맷 캡처용 로그(처음 20개만 — 실제 RX 바이트 포맷 현장 확인).
+        if (cbCount < 20) {
+            android.util.Log.i("VanMcu", "onCallback #$cbCount type=$type len=${data.size} data=${data.joinToString(""){"%02X".format(it)}}")
+            cbCount++
+        }
         try {
             if (type == CAN) {
                 val l = canListener ?: return
