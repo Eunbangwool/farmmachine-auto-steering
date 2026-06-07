@@ -40,8 +40,9 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .overlay.on{display:block;}
 
 /* ───── 스플래시 ───── */
-#boot{background:linear-gradient(180deg,#2b6f6a,#1f4f4d);display:flex;flex-direction:column;
+#boot{background:linear-gradient(180deg,#2b6f6a,#1f4f4d);flex-direction:column;
   align-items:center;justify-content:center;gap:40px;}
+#boot.on{display:flex;}   /* .screen 기본 display:none → .on 일 때만 표시 */
 #boot .logo{display:flex;flex-direction:column;align-items:center;gap:6px;color:#eaf3f1;opacity:.95;}
 #boot .logo .mk{font-size:42px;font-weight:900;letter-spacing:2px;}
 #boot .logo .sb{font-size:13px;letter-spacing:3px;color:#bfe0db;}
@@ -71,7 +72,8 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 #consent .ok-btn.en{background:var(--agmo);}
 
 /* ───── 벤더 선택 (멀티벤더, AGMO 테마) ───── */
-#vendor{background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;}
+#vendor{background:var(--bg);flex-direction:column;align-items:center;justify-content:center;gap:18px;}
+#vendor.on{display:flex;}   /* .on 일 때만 표시 (consent/boot 를 덮지 않도록) */
 #vendor h2{font-size:22px;font-weight:700;margin:0;}
 #vendor .sub{color:var(--sub);font-size:13px;margin-top:-10px;}
 .vcards{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;}
@@ -147,7 +149,8 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .startbtn svg{width:36px;height:36px;}
 
 /* ───── 설정 드로어 ───── */
-#settings{display:flex;background:rgba(0,0,0,.04);}
+#settings{background:rgba(0,0,0,.04);}
+#settings.on{display:flex;}   /* .overlay 의 display:none 을 .on 일 때만 flex 로 (닫힘 동작 보장) */
 .drawer{width:42%;max-width:430px;background:var(--panel);height:100%;display:flex;flex-direction:column;
   box-shadow:2px 0 14px rgba(0,0,0,.12);}
 .detail{width:42%;max-width:430px;background:var(--panel);height:100%;display:none;flex-direction:column;
