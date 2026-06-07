@@ -1408,6 +1408,16 @@ class SteeringActuator:
         self._measured_angle= 0.0
         self._lock          = threading.Lock()
 
+        # 조향각 피드백 소스:
+        #   use_motor_encoder=False → WAS(SENSOR_ANGLE_ID)  (기본)
+        #   use_motor_encoder=True  → 모터 하트비트 누적각 (AGMO 등 WAS 미사용)
+        # 하트비트가 아직 안 들어오면 자동으로 WAS 로 폴백(시뮬/초기 안전).
+        self.use_motor_encoder = False
+        self.steer_ratio       = 17.5     # 조향비(AgNav 확인값): 모터/컬럼각 → 조향각
+        self._motor_angle_zero = 0.0      # 직진(중앙) 기준 모터 누적각(deg) — 캘리브레이션
+        self._hb               = {}       # 최신 모터 하트비트(angle/rpm/current/faults)
+        self._hb_seen          = False
+
         # 모터 보호 (AgNav 과부하 전류/시간/연성)
         mp = motor_params or DEFAULT_MOTOR_PROTECTION
         self._mp         = mp
@@ -1432,22 +1442,47 @@ class SteeringActuator:
         log.info(f"모터 게인: pos_kp={self.pos_kp:.2f} vel_kp={self.vel_kp:.2f} "
                  f"(WAS={profile.was_gain}, U={profile.u_gain})")
 
-    # ── 앵글센서 수신 ──────────────────────────────
+    # ── 조향각 피드백 수신 (WAS 또는 모터 하트비트) ──────────────
     def process_can_recv(self):
         """호출 루프에서 계속 호출: CAN 수신 처리."""
         msg = self.can.recv()
         while msg:
             can_id, data = msg
-            if can_id == CanSpec.SENSOR_ANGLE_ID and len(data) >= 2:
-                raw = int.from_bytes(
-                    data[CanSpec.SENSOR_BYTE_HI:CanSpec.SENSOR_BYTE_LO+1],
-                    'big', signed=CanSpec.SENSOR_SIGNED)
-                angle_rad = math.radians(
-                    raw / CanSpec.SENSOR_ANGLE_SCALE
-                    - CanSpec.SENSOR_ANGLE_OFFSET)
-                with self._lock:
-                    self._measured_angle = angle_rad
+            # 1) 모터 하트비트 (Keya 0x07000001) — WAS 미사용 시 조향각 피드백 + 보호용
+            if can_id == CanSpec.MOTOR_HEARTBEAT_ID and len(data) >= 8:
+                hb = CanSpec.parse_heartbeat(data)
+                if hb:
+                    self._hb = hb
+                    self._hb_seen = True
+                    if self.use_motor_encoder:
+                        # 모터 누적각(deg) → 중앙기준 → 조향비로 나눠 조향각(rad)
+                        motor_deg = hb.get('angle_deg', 0.0) - self._motor_angle_zero
+                        steer_rad = math.radians(motor_deg / max(1e-6, self.steer_ratio))
+                        with self._lock:
+                            self._measured_angle = steer_rad
+            # 2) WAS(SENSOR_ANGLE_ID) — WAS 모드, 또는 하트비트 아직 없을 때 폴백
+            elif can_id == CanSpec.SENSOR_ANGLE_ID and len(data) >= 2:
+                if (not self.use_motor_encoder) or (not self._hb_seen):
+                    raw = int.from_bytes(
+                        data[CanSpec.SENSOR_BYTE_HI:CanSpec.SENSOR_BYTE_LO+1],
+                        'big', signed=CanSpec.SENSOR_SIGNED)
+                    angle_rad = math.radians(
+                        raw / CanSpec.SENSOR_ANGLE_SCALE
+                        - CanSpec.SENSOR_ANGLE_OFFSET)
+                    with self._lock:
+                        self._measured_angle = angle_rad
             msg = self.can.recv()
+
+    def set_motor_center(self):
+        """현재 모터 누적각을 직진(중앙) 기준으로 캘리브레이션 (WAS 미사용 모드)."""
+        a = self._hb.get('angle_deg')
+        if a is not None:
+            self._motor_angle_zero = a
+            log.info(f"모터 중앙 캘리브레이션: zero={a:.1f}deg")
+
+    def latest_heartbeat(self) -> dict:
+        """최신 모터 하트비트(angle_deg/speed_rpm/current/faults). 없으면 빈 dict."""
+        return dict(self._hb)
 
     def get_measured_angle(self) -> float:
         with self._lock:
@@ -1747,6 +1782,8 @@ class AutoSteerSystem:
         p = vp.apply_vendor(key)
         self.vendor = p
         self.motor_verified = p.can_verified
+        # WAS 미사용 벤더(AGMO 등)는 모터 하트비트 누적각으로 조향각 피드백
+        self.actuator.use_motor_encoder = not getattr(p, "uses_was", False)
 
         # GNSS 소스 우선순위 재구성 + 수신기 기반 EKF 튜닝
         self.gnss = GnssArbiter(priority=p.gnss_priority)
