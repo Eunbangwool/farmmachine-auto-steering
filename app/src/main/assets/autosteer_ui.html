@@ -34,9 +34,9 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .androidbar .r{display:flex;gap:8px;align-items:center;opacity:.85;}
 
 /* 화면 전환 */
-.screen{position:absolute;inset:26px 0 0 0;display:none;}
+.screen{position:absolute;top:26px;right:0;bottom:0;left:0;display:none;}
 .screen.on{display:block;}
-.overlay{position:absolute;inset:0;display:none;z-index:30;}
+.overlay{position:absolute;top:0;right:0;bottom:0;left:0;display:none;z-index:30;}
 .overlay.on{display:block;}
 
 /* ───── 스플래시 ───── */
@@ -107,9 +107,9 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .sensor.good{color:var(--brand);} .sensor.good .ic{opacity:1;}
 
 /* ───── 메인 주행 화면 ───── */
-#main .field, #work .field{position:absolute;inset:98px 0 0 0;overflow:hidden;background:var(--field);}
+#main .field, #work .field{position:absolute;top:98px;right:0;bottom:0;left:0;overflow:hidden;background:var(--field);}
 .field .horizon{position:absolute;top:0;left:0;right:0;height:10px;background:var(--horizon);opacity:.5;}
-.field svg{position:absolute;inset:0;width:100%;height:100%;}
+.field svg{position:absolute;top:0;right:0;bottom:0;left:0;width:100%;height:100%;}
 .camera{position:absolute;top:14px;left:14px;width:42px;height:42px;border-radius:50%;
   background:rgba(40,55,55,.55);display:flex;align-items:center;justify-content:center;color:#fff;}
 .tractor{position:absolute;left:50%;top:58%;transform:translate(-50%,-50%);transition:left .25s,top .25s;}
@@ -121,7 +121,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .bigbtn:active{transform:scale(.97);}
 
 /* ───── 작업 화면 ───── */
-#work .field{inset:98px 0 0 0;}
+#work .field{top:98px;right:0;bottom:0;left:0;}
 .routebox{position:absolute;left:14px;top:112px;width:120px;background:rgba(255,255,255,.9);
   border-radius:12px;padding:12px 8px;display:flex;flex-direction:column;align-items:center;gap:8px;
   box-shadow:0 2px 8px rgba(0,0,0,.1);}
@@ -198,7 +198,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .pill.jogstop{background:var(--danger);}
 
 /* ───── 모달 (주행 모드/경로 유형/경고) ───── */
-.modal{position:absolute;inset:0;background:rgba(0,0,0,.55);display:none;z-index:40;
+.modal{position:absolute;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,.55);display:none;z-index:40;
   align-items:center;justify-content:center;flex-direction:column;gap:26px;}
 .modal.on{display:flex;}
 .modal .mt{color:#fff;font-size:21px;font-weight:700;}
