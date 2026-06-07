@@ -146,7 +146,9 @@ class ApolloCanBridge(
                 val dlc = (rec[4].toInt() and 0xFF).coerceIn(0, 8)
                 val data = rec.copyOfRange(5, 5 + dlc)
                 if (id != HEARTBEAT && canReady) {
-                    val txId = if (forceEff) (id.toInt() or 0x80000000.toInt()) else id.toInt()
+                    // 29-bit 확장 ID(Keya 0x06000001 등, >0x7FF)는 EFF 플래그 자동 부여.
+                    val needExt = forceEff || id > 0x7FFL
+                    val txId = if (needExt) (id.toInt() or 0x80000000.toInt()) else id.toInt()
                     try {
                         val ok = VanMcu.CanWrite(channel, txId, data)
                         lastTxId = txId; lastTxOk = ok; txCount++
