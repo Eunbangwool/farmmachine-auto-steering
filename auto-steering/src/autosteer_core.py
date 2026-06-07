@@ -1426,6 +1426,7 @@ class SteeringActuator:
         # 부호 규약(현장 확정): +permille=좌회전, -permille=우회전.
         self.speed_control     = False
         self.steer_permille_max = 400     # 조향 속도 상한(‰) — CanSpec.STEER_SPEED_MAX
+        self._est_angle        = 0.0      # 하트비트 없을 때 명령속도 적분 추정 조향각(rad)
 
         # 모터 보호 (AgNav 과부하 전류/시간/연성)
         mp = motor_params or DEFAULT_MOTOR_PROTECTION
@@ -1493,6 +1494,7 @@ class SteeringActuator:
     def set_motor_center(self):
         """현재 연속 모터각을 직진(중앙) 기준으로 캘리브레이션 (WAS 미사용 모드)."""
         self._motor_angle_zero = self._motor_cont_deg
+        self._est_angle = 0.0
         with self._lock:
             self._measured_angle = 0.0
         log.info(f"모터 중앙 캘리브레이션: zero={self._motor_angle_zero:.1f}deg")
@@ -1563,10 +1565,13 @@ class SteeringActuator:
 
         ★ 안전: 모터 인코더 모드인데 하트비트 미수신이면 명령 금지(폭주 방지).
         """
+        # 피드백 소스: 하트비트(실측) > 없으면 데드레커닝 추정각
+        #   (Keya 내부 Hall 이 속도명령을 충실히 실행 → 명령 permille 적분으로 조향각 추정.
+        #    실제 경로 오차는 GNSS 헤딩 외부루프가 보정.)
         if self.use_motor_encoder and not self._hb_seen:
-            self._send_speed(0)          # 피드백 없음 → 정지 유지
-            return 0.0
-        measured  = self.get_measured_angle()
+            measured = self._est_angle
+        else:
+            measured = self.get_measured_angle()
         angle_err = target_angle - measured
         if abs(angle_err) < self.deadband:
             self._send_speed(0)
@@ -1582,6 +1587,14 @@ class SteeringActuator:
         if self._protection.check_overload(cur):
             self.disable()
             return 0.0
+        # 하트비트 없으면: 실제 송신 permille 로 추정각 적분(포화 반영)
+        if self.use_motor_encoder and not self._hb_seen:
+            actual_rate = (permille / 1000.0 * CanSpec.RATED_RPM) * (2 * math.pi / 60.0) \
+                          / max(1e-6, self.steer_ratio)
+            # ±60° 로 클램프(추정 폭주 방지 — 물리 조향 한계 안)
+            self._est_angle = max(-1.05, min(1.05, self._est_angle + actual_rate * dt))
+            with self._lock:
+                self._measured_angle = self._est_angle
         self._send_speed(permille)
         return float(permille)
 

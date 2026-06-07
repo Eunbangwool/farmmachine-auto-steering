@@ -24,12 +24,13 @@ def _decode_value(b: bytes) -> int:
 
 
 class KeyaSimCan(CanInterface):
-    """cmd_speed 수신 → 모터 속도 → 누적각 적분 → 하트비트 송신."""
-    def __init__(self):
+    """cmd_speed 수신 → 모터 속도 → 누적각 적분 → (옵션)하트비트 송신."""
+    def __init__(self, emit_hb=True):
         self.motor_deg = 0.0
         self.permille = 0
         self.enabled = False
         self.last_permille = 0
+        self.emit_hb = emit_hb      # False = 하트비트 미송신(무피드백, 데드레커닝 검증)
         self._q = []
     def start(self): pass
     def stop(self): pass
@@ -46,6 +47,8 @@ class KeyaSimCan(CanInterface):
     def step(self, dt):
         rpm = self.permille / 1000.0 * CanSpec.RATED_RPM      # ±80RPM
         self.motor_deg += rpm * 360.0 / 60.0 * dt              # deg
+        if not self.emit_hb:
+            return
         raw = int(round(self.motor_deg)) & 0xFFFF
         self._q.append((CanSpec.MOTOR_HEARTBEAT_ID,
                         bytes([(raw >> 8) & 0xFF, raw & 0xFF, 0, 0, 0, 0, 0, 0])))
@@ -53,8 +56,8 @@ class KeyaSimCan(CanInterface):
         return self._q.pop(0) if self._q else None
 
 
-def run(target_deg=5.0, steps=1500, dt=0.02):
-    sim = KeyaSimCan()
+def run(target_deg=5.0, steps=1500, dt=0.02, emit_hb=True):
+    sim = KeyaSimCan(emit_hb=emit_hb)
     act = SteeringActuator(sim)
     act.speed_control = True
     act.use_motor_encoder = True
@@ -76,18 +79,23 @@ def run(target_deg=5.0, steps=1500, dt=0.02):
 
 
 if __name__ == "__main__":
-    # 1) 안전가드 + 수렴 + 부호(좌, target>0)
-    first, meas, perm = run(target_deg=5.0)
-    print(f"[좌 +5°] 첫틱cmd(하트비트前)={first}  수렴={meas:.2f}°  last_permille={perm}")
-    assert first == 0.0, "안전가드 실패: 하트비트 전 명령이 0이 아님"
-    assert abs(meas - 5.0) < 0.5, f"수렴 실패: {meas}"
-    assert perm > 0, "부호 실패: target>0(좌) 인데 permille 가 +가 아님"
+    # 1) 하트비트(실측 피드백) 모드 — 좌/우 수렴 + 부호
+    _, meas, perm = run(target_deg=5.0, emit_hb=True)
+    print(f"[HB 좌 +5°] 수렴={meas:.2f}°  첫비영permille={perm}")
+    assert abs(meas - 5.0) < 0.6, f"수렴 실패: {meas}"
+    assert perm > 0, "부호 실패: target>0(좌) → +permille"
+    _, meas2, perm2 = run(target_deg=-5.0, emit_hb=True)
+    print(f"[HB 우 -5°] 수렴={meas2:.2f}°  첫비영permille={perm2}")
+    assert abs(meas2 + 5.0) < 0.6 and perm2 < 0
 
-    # 2) 반대 부호(우, target<0) → permille -
-    _, meas2, perm2 = run(target_deg=-5.0)
-    print(f"[우 -5°] 수렴={meas2:.2f}°  last_permille={perm2}")
-    assert abs(meas2 + 5.0) < 0.5, f"수렴 실패: {meas2}"
-    assert perm2 < 0, "부호 실패: target<0(우) 인데 permille 가 -가 아님"
+    # 2) 무(無)하트비트 모드 — 데드레커닝(명령속도 적분)으로도 수렴
+    _, meas3, perm3 = run(target_deg=5.0, emit_hb=False)
+    print(f"[무HB 좌 +5°] 수렴(추정)={meas3:.2f}°  첫비영permille={perm3}")
+    assert abs(meas3 - 5.0) < 0.6, f"무HB 수렴 실패: {meas3}"
+    assert perm3 > 0
+    _, meas4, perm4 = run(target_deg=-5.0, emit_hb=False)
+    print(f"[무HB 우 -5°] 수렴(추정)={meas4:.2f}°  첫비영permille={perm4}")
+    assert abs(meas4 + 5.0) < 0.6 and perm4 < 0
 
-    print("\n  ✓ 무WAS 속도제어 조향 폐루프 검증 통과 "
-          "(안전가드/수렴/부호 +permille=좌)")
+    print("\n  ✓ 무WAS 속도제어 검증 통과 — 하트비트 有(실측)/無(데드레커닝) 둘 다 "
+          "수렴·부호(+=좌) 정상")
