@@ -57,19 +57,27 @@ class ApolloCanBridge(
             Log.w(TAG, "VanMcu 미탑재 → CAN 비활성(UI/Python 은 동작, 모터 송신 무시)")
             canReady = false; return
         }
+        // 1) TX 준비 — setCanSpeed 만 되면 CanWrite(모터 구동) 가능
         try {
             VanMcu.setCanSpeed(channel, bitrate)
-            VanMcu.setCallback(true)
+            canReady = true
+            Log.i(TAG, "libsysmcu.so CAN TX 준비 OK (ch=$channel @${bitrate / 1000}kbps)")
+        } catch (e: Throwable) {
+            canReady = false
+            Log.w(TAG, "CAN setCanSpeed 실패: ${e.message}")
+            return
+        }
+        // 2) RX 콜백 — 선택(피드백용). 실패해도 TX(모터 송신)에는 영향 없음.
+        try {
             VanMcu.setOnCanListener(object : VanMcu.OnCanListener {
                 override fun OnCan(m: VanMcu.CanMsg) {
                     if (m.channel == channel) rxQueue.offer(m.id to m.data)
                 }
             })
-            canReady = true
-            Log.i(TAG, "libsysmcu.so CAN open OK (ch=$channel @${bitrate / 1000}kbps)")
+            VanMcu.setCallback(true)
+            Log.i(TAG, "CAN RX 콜백 등록 OK")
         } catch (e: Throwable) {
-            canReady = false
-            Log.w(TAG, "CAN open 실패(device-owner 미설정 가능): ${e.message}")
+            Log.w(TAG, "CAN RX 콜백 미지원(무시, TX 는 동작): ${e.message}")
         }
     }
 

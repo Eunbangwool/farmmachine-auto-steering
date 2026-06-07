@@ -61,9 +61,34 @@ object VanMcu {
     // ── 콜백 등록 ─────────────────────────────────────────
     /** 콜백 시스템 on/off (CAN 수신/ACC/입력 이벤트 수신하려면 true). */
     @JvmStatic external fun setCallback(enable: Boolean): Boolean
-    @JvmStatic external fun setOnCanListener(listener: OnCanListener?)
-    @JvmStatic external fun setOnAccListener(listener: OnAccListener?)
-    @JvmStatic external fun setOnInputListener(listener: OnInputListener?)
+
+    @Volatile private var canListener: OnCanListener? = null
+    /** CAN 수신 리스너 등록 (Kotlin 측 저장 — onCallback 이 디스패치). */
+    @JvmStatic fun setOnCanListener(listener: OnCanListener?) { canListener = listener }
+
+    /**
+     * ★ libsysmcu.so 가 이벤트를 전달하는 정적 콜백 진입점(native → Java).
+     * 시그니처 (I[B)V 가 .so 와 정확히 일치해야 함(없으면 setCallback 실패).
+     * type==CAN 일 때 data 를 CanMsg 로 파싱해 리스너에 전달.
+     * ⚠ data 바이트 포맷은 추정 — 실제 RX 포맷은 현장 캡처로 검증 필요(TX 와 무관).
+     */
+    @JvmStatic
+    fun onCallback(type: Int, data: ByteArray) {
+        try {
+            if (type == CAN) {
+                val l = canListener ?: return
+                if (data.size >= 5) {
+                    val ch = data[0].toInt() and 0xFF
+                    val id = ((data[1].toInt() and 0xFF) shl 24) or
+                             ((data[2].toInt() and 0xFF) shl 16) or
+                             ((data[3].toInt() and 0xFF) shl 8) or
+                              (data[4].toInt() and 0xFF)
+                    val payload = if (data.size > 5) data.copyOfRange(5, data.size) else ByteArray(0)
+                    l.OnCan(CanMsg(ch, id, payload))
+                }
+            }
+        } catch (e: Throwable) { /* RX 파싱 실패 무시 — 모터 송신(TX)에는 영향 없음 */ }
+    }
 
     // ── GPIO (레벨러 밸브 UP/DOWN/HOLD 직접 제어용) ────────
     @JvmStatic external fun OutputSet(pin: Int, value: Int): Boolean
