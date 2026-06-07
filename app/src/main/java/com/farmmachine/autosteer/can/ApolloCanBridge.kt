@@ -23,9 +23,10 @@ import kotlin.concurrent.thread
  */
 class ApolloCanBridge(
     private val port: Int = 47100,
-    private val channel: Int = 0,           // Keya 조향모터 CAN 채널 (현장 확인)
-    private val bitrate: Int = 250_000,     // Keya KY170 = 250kbps (매뉴얼)
+    private var channel: Int = 0,           // Keya 조향모터 CAN 채널 (현장 확인, 0/1)
+    private var bitrate: Int = 250_000,     // Keya KY170 = 250kbps (매뉴얼)
 ) {
+    @Volatile private var forceEff = false  // true=확장ID 강제(id|0x80000000)
 
     @Volatile private var running = false
     private var serverThread: Thread? = null
@@ -37,15 +38,28 @@ class ApolloCanBridge(
     // VanMcu 수신 콜백 → 이 큐 → 접속 클라이언트(rxThread)로 relay
     private val rxQueue = LinkedBlockingQueue<Pair<Int, ByteArray>>(512)
 
-    // UI/진단용 상태 (JsBridge.canStatus() 가 읽음)
+    // UI/진단용 상태 (JsBridge 가 읽음)
     companion object {
         @Volatile var canReady = false          // libsysmcu.so CAN 채널 오픈 성공
         @Volatile var clientConnected = false   // Python ApolloCanBus 접속 여부
+        @Volatile var instance: ApolloCanBridge? = null
+        @Volatile var lastTxId = 0              // 마지막 송신 CAN ID (진단)
+        @Volatile var lastTxOk = false          // 마지막 CanWrite 결과 (진단)
+        @Volatile var txCount = 0               // 송신 프레임 수 (진단)
+    }
+
+    /** 현장 진단: CAN 채널/비트레이트/확장ID 강제 를 런타임 전환 후 재오픈. */
+    fun reconfigure(ch: Int, br: Int, eff: Boolean): Boolean {
+        channel = ch; bitrate = br; forceEff = eff
+        Log.i(TAG, "reconfigure ch=$ch br=$br eff=$eff")
+        openCan()
+        return canReady
     }
 
     fun start() {
         if (running) return
         running = true
+        instance = this
         openCan()
         serverThread = thread(name = "apollo-can-bridge") { serve() }
         Log.i(TAG, "CAN 브릿지 시작 :$port (ch=$channel @${bitrate / 1000}kbps, canReady=$canReady)")
@@ -132,8 +146,12 @@ class ApolloCanBridge(
                 val dlc = (rec[4].toInt() and 0xFF).coerceIn(0, 8)
                 val data = rec.copyOfRange(5, 5 + dlc)
                 if (id != HEARTBEAT && canReady) {
-                    try { VanMcu.CanWrite(channel, id.toInt(), data) }
-                    catch (e: Throwable) { Log.w(TAG, "CanWrite 실패: ${e.message}") }
+                    val txId = if (forceEff) (id.toInt() or 0x80000000.toInt()) else id.toInt()
+                    try {
+                        val ok = VanMcu.CanWrite(channel, txId, data)
+                        lastTxId = txId; lastTxOk = ok; txCount++
+                        Log.i(TAG, "TX ch=$channel id=0x%08X dlc=$dlc ok=%s".format(txId, ok))
+                    } catch (e: Throwable) { Log.w(TAG, "CanWrite 실패: ${e.message}") }
                 }
             }
         } finally {

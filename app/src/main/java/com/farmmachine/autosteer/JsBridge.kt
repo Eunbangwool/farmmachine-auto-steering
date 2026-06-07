@@ -36,9 +36,14 @@ class JsBridge {
     /** CAN 하드웨어 상태 (모터 점검 화면 표시용). logcat 없이 확인. */
     @JavascriptInterface fun canStatus(): String {
         val vm = com.van.jni.VanMcu.available
-        val ready = com.farmmachine.autosteer.can.ApolloCanBridge.canReady
-        val conn = com.farmmachine.autosteer.can.ApolloCanBridge.clientConnected
-        return """{"vanmcu":$vm,"canReady":$ready,"connected":$conn}"""
+        val b = com.farmmachine.autosteer.can.ApolloCanBridge
+        return """{"vanmcu":$vm,"canReady":${b.canReady},"connected":${b.clientConnected},"txCount":${b.txCount},"lastTxOk":${b.lastTxOk}}"""
+    }
+
+    /** 현장 진단: CAN 채널/비트레이트/확장ID 강제 전환. ch=0/1, br=250000/500000, eff=확장강제 */
+    @JavascriptInterface fun setCanParams(ch: Int, br: Int, eff: Boolean): String {
+        val ok = com.farmmachine.autosteer.can.ApolloCanBridge.instance?.reconfigure(ch, br, eff) ?: false
+        return """{"ch":$ch,"br":$br,"eff":$eff,"canReady":$ok}"""
     }
 
     @JavascriptInterface
