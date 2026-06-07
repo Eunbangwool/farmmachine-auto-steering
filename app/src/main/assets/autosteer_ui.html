@@ -26,7 +26,10 @@ html,body{margin:0;height:100%;overflow:hidden;}
 body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(--ink);
   user-select:none;-webkit-user-select:none;}
 .num{font-variant-numeric:tabular-nums;font-weight:900;}
-#app{position:relative;width:100vw;height:100vh;background:var(--bg);overflow:hidden;}
+/* 설계 캔버스 1024×600(Apollo 10 Pro) — JS(fitScreen)가 화면크기에 맞춰 scale.
+   고정 캔버스 + 비율유지 스케일 → 어떤 폰/태블릿에서도 잘림 없이 자동 맞춤. */
+#app{position:absolute;top:0;left:0;width:1024px;height:600px;transform-origin:top left;
+  background:var(--bg);overflow:hidden;}
 
 /* 안드로이드 상태바 */
 .androidbar{height:26px;background:var(--bar);color:#cdd6d2;display:flex;align-items:center;
@@ -603,7 +606,22 @@ function bootSeq(){
 $('settings').addEventListener('click',e=>{ if(e.target===$('settings')) setOverlay('settings',false); });
 ['modeModal','pathModal','warn'].forEach(id=>$(id).addEventListener('click',e=>{ if(e.target===$(id)) setModal(id,false); }));
 
+// ───────── 화면 자동 맞춤 (scale-to-fit) ─────────
+const DESIGN_W=1024, DESIGN_H=600;
+function fitScreen(){
+  const vw=window.innerWidth, vh=window.innerHeight;
+  const s=Math.min(vw/DESIGN_W, vh/DESIGN_H);
+  const x=Math.round((vw-DESIGN_W*s)/2), y=Math.round((vh-DESIGN_H*s)/2);
+  const app=$('app');
+  if(app) app.style.transform=`translate(${x}px,${y}px) scale(${s})`;
+}
+window.addEventListener('resize',fitScreen);
+window.addEventListener('orientationchange',fitScreen);
+window.addEventListener('load',fitScreen);
+setTimeout(fitScreen,150);   // WebView 초기 치수 보정
+
 // init
+fitScreen();
 drawField($('fieldSvgMain')); drawField($('fieldSvgWork'));
 $('tractorMain').innerHTML=TRACTOR_SVG;
 closeAllLayers();                 // 부팅 시 어떤 오버레이/모달도 열려있지 않도록 강제
