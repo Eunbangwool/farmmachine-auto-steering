@@ -174,6 +174,11 @@ class CanSpec:
 - **백엔드 배선**(JsBridge 유지): engaged→활성/비활성·주행시작/종료, xte_cm→오차, speed_mps→속도,
   motor_verified/vendor→배너, active_gnss→센서상태, engage()/disengage()/estop(), set_ab_line/setDemoAbLine
 - 멀티벤더: 부팅 시 제조사 선택은 유지하되 AGMO 테마로. (CHCNAV/FJD는 추후 각 앱 룩 분기 가능)
+- **우선순위(오너 지시)**: 먼저 **UI 구성(레이아웃/위젯배치/화면흐름) 일치**가 최우선. 색상은 후순위
+  — 실제 색값은 확보했으나(위) 정밀 색맞춤은 나중에. 구성부터 1:1로 맞춘다.
+- **AGMO Solution 2 (차기 반영 예정, 오너 보유)**: 1.6.7보다 **훨씬 세련된 UI**, **다른 태블릿+안테나**,
+  **AB 직선 경로 각도 변경 기능** 보유. 추후 오너가 디컴파일해서 전달 예정 →
+  받으면 이쪽 UI 로 다시 맞춘다(현재 1.6.7 구성은 그 전까지의 베이스).
 
 ---
 
