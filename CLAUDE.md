@@ -96,15 +96,25 @@ KUBOTA_MR1157 = TractorParams(
 
 ---
 
-## CanSpec — ★ 모터 문서로 채워야 함
+## CanSpec — ✅ 실모터 프로토콜 확정 (Keya KY170DD01005-08G, 매뉴얼 V2.4)
+
+> 별도 세션에서 실제 모터를 특정하고 매뉴얼 기반 CAN 프로토콜을 코드에 반영함(이식 완료).
 
 ```python
 class CanSpec:
-    CAN_BITRATE      = 500_000   # ★ 250000 / 500000 / 1000000
-    MOTOR_CMD_ID     = 0x201     # ★ 실제 CAN ID
-    SENSOR_ANGLE_ID  = 0x301     # ★ 앵글센서 CAN ID
-    # + 바이트 레이아웃, 스케일, 활성화 시퀀스
+    CAN_BITRATE   = 250_000        # 매뉴얼 확정 (parameter 0021=2, 공장기본). PA-3 500k 와 다름!
+    # 29-bit Extended ID (motor_id=1): TX=0x06000001 RX=0x05800001 HB=0x07000001
+    CMD_ENABLE  = 23 0D 20 01 00 00 00 00      # 속도제어 SDO
+    CMD_SPEED   = 23 00 20 01 [value 4B]       # cmd_speed(±1000‰ = ±80RPM), 워치독 1000ms
+    CMD_DISABLE = 23 0C 20 01 00 00 00 00
+    # parse_heartbeat(20ms): 누적각/속도RPM/전류/폴트코드(_parse_fault, 매뉴얼 p.23)
+    SENSOR_ANGLE_ID = 0x301        # ★ WAS CAN ID 는 여전히 현장 ttyWK 캡처 필요
 ```
+
+**⚠ 비트레이트 충돌 주의**: 모터=250k(매뉴얼), PA-3=500k(데이터시트). 같은 버스 공유 불가 →
+별도 버스이거나 한쪽 재설정 필요. 현장 확인 항목.
+**남은 배선**: `SteeringActuator._send_motor` 는 아직 제네릭 placeholder. 실차에선
+`CanSpec.cmd_speed(rpm_to_permille(...))` 속도제어로 교체 + SITL 재검증 필요.
 
 **AgNav 5.0 사진에서 확인된 모터 관련 값:**
 - 모터 피드백 유형: **홀(Hall) 센서**
@@ -203,7 +213,7 @@ Apollo 10 Pro는 CAN 내장 (IP65, ADB 환경). SDK 문서 확인 필요.
 ## 다음 작업 우선순위
 
 1. **★ 실측**: wheelbase, antenna_to_axle — 물리 측정 (미완). ✅ 사전준비: `calibration.py`로 저속 주행 자동 추정 + `field_config.py`로 JSON 주입
-2. **★ CanSpec 채우기**: 모터 CAN ID + 바이트 구조 — 모터 문서 (미완). ✅ 사전준비: `can_tools.py`로 버스 역추적(앵글/모터 ID 탐색), `field_config.py`로 JSON 주입
+2. ✅ **CanSpec 채우기**: Keya KY170 매뉴얼 V2.4 프로토콜 이식 완료(250k, 0x06000001 TX, cmd_speed/parse_heartbeat). ★ 남은 건 (a) `_send_motor` 를 cmd_speed 속도제어로 배선 + SITL 재검증, (b) WAS 앵글센서 CAN ID 현장 캡처(`can_tools.py`)
 3. ✅ **ApolloCanInterface 구현**: SocketCAN + `apollo_can.ApolloCanBus`(bridge/socketcan/slcan/mock, 자동재연결). 결정: **Kotlin 브릿지** 주 경로(`APOLLO_CAN.md`). ★ 남은 건 Kotlin CAN 서비스에 벤더 SDK open/send/recv 채우기 + 실제 CAN ID
 4. ✅ **RTK 연결**: `f9p_client.F9pUsbClient`/`ChcnavPa3SerialClient` → `on_rtk()` (GGA 파싱, 품질 4/5, sniff/UBX/보레이트탐색)
 5. ✅ **IMU 캘리브레이션**: `ImuCalibrator` (평지 30초 평균 → ImuOffset)
