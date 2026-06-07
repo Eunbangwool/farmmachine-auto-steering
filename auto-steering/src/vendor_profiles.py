@@ -35,9 +35,14 @@ from autosteer_core import GnssReceiverSpec, CHCNAV_PA3, UBLOX_F9P
 #  벤더 GNSS 스펙 (CHCNAV_PA3 / UBLOX_F9P 는 autosteer_core 재사용)
 # ═══════════════════════════════════════════════════════════════
 
-# AGMO ver1 — 듀얼안테나 + IMU (heading=베이스라인, 각속도/자세=IMU). ★ 추정값
+# AGMO ver1 — 듀얼안테나 + IMU. ★ 물리구성 확인(오너 제공 사진):
+#   가로 막대형 케이스, 양쪽 사이드(좌/우)에 안테나 2개 = **가로(횡) 베이스라인**,
+#   케이스 **내부 중앙에 IMU**(별도 박스 아님). heading=좌우 베이스라인,
+#   각속도/자세=중앙 IMU. → 가로 베이스라인이므로 두 안테나 높이차(RELPOSNED relPosD)
+#   는 **roll(횡경사)** 를 준다(세로였다면 pitch). 방법4 on_heading_meas 의 roll 유도와 일치.
+#   정확도값은 추정(베이스라인이 짧으면 heading σ 커짐 → accHeading 으로 적응형 R 처리).
 AGMO_V1_DUAL = GnssReceiverSpec(
-    name="AGMO ver1 (듀얼안테나+IMU)", can_bitrate=500_000, serial_baud=115_200,
+    name="AGMO ver1 (듀얼안테나+중앙IMU)", can_bitrate=500_000, serial_baud=115_200,
     nmea_rate_hz=10.0, imu_rate_hz=100.0,
     heading_acc_deg=0.3, rollpitch_acc_deg=0.2, vel_acc_mps=0.05,
     rtcm="RTCM3.x", heading_source="dual",

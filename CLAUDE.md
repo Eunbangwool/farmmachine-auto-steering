@@ -153,7 +153,12 @@ class CanSpec:
 > 자율조향엔 위치뿐 아니라 **헤딩(차량 방향)+roll/pitch**가 필수(모든 추종 알고리즘이 `state.heading` 사용).
 > 모터 하트비트(조향각)가 없어도 **헤딩만 있으면** GNSS로 폐루프가 닫힌다 → 헤딩 소스가 핵심 피드백.
 
-- **ver1 (듀얼안테나 + IMU)**: heading=두 안테나 baseline, 각속도/자세=별도 IMU. `heading_source="dual"`
+- **ver1 (듀얼안테나 + IMU)**: heading=두 안테나 baseline, 각속도/자세=IMU. `heading_source="dual"`
+  - ★ **물리구성 확인(오너 제공 사진, 여러 번 강조됨)**: 트랙터 루프에 얹는 **가로 막대형 케이스**.
+    **양쪽 사이드(좌/우)에 안테나 2개** = **가로(횡) 베이스라인**, **케이스 내부 중앙에 IMU**(별도 박스 아님).
+  - → 가로 베이스라인이므로 두 안테나 높이차(RELPOSNED `relPosD`)는 **roll(횡경사)** 를 준다(세로면 pitch).
+    방법 4 `on_heading_meas` 의 `_current_roll=asin(-relPosD/baseline)` 가 이 가로 마운트와 일치(검증됨).
+  - 베이스라인이 짧으면(막대 길이) heading σ 가 커짐 → `accHeading` 으로 에폭별 적응형 R 처리(방법 3).
 - **ver2 / CHCNAV NX510 / FJD (GNSS+INS 스마트안테나)**: 수신기가 heading/자세 융합 출력. `heading_source="ins"`
 - 코드: `GnssReceiverSpec.heading_source`("ins"/"dual"/"none") + `VendorProfile.gnss_alt`(AGMO ver1/ver2 둘 다 등록).
   AGMO 프로파일: primary=ver2(INS), alt=ver1(dual). CHCNAV/FJD=ins. F9P 단독=none.
