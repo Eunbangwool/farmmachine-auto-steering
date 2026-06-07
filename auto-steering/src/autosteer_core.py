@@ -1968,6 +1968,17 @@ class AutoSteerSystem:
         self._target_idx = 0
         log.info(f"경로 설정: {len(self.path)} 웨이포인트")
 
+    def nudge_path(self, dx_m: float):
+        """경로를 좌측 법선 방향으로 dx_m 만큼 횡이동(넛지). +=좌, -=우."""
+        if not self.path or len(self.path) < 2:
+            return
+        dx0 = self.path[1].x - self.path[0].x
+        dy0 = self.path[1].y - self.path[0].y
+        L = math.hypot(dx0, dy0) or 1.0
+        nx, ny = -dy0 / L, dx0 / L          # 진행방향 좌측 법선
+        for w in self.path:
+            w.x += nx * dx_m; w.y += ny * dx_m
+
     # ── 센서 입력 콜백 ──────────────────────────────
     def on_rtk(self, lat: float, lon: float, quality: int,
                source: Optional[str] = None):

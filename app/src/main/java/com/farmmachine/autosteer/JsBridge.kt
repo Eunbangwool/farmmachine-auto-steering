@@ -33,6 +33,11 @@ class JsBridge {
     @JavascriptInterface fun setVendor(key: String): String = SteerController.setVendor(key)
     @JavascriptInterface fun motorJog(permille: Int): String = SteerController.motorJog(permille)
     @JavascriptInterface fun motorCenter(): String = SteerController.motorCenter()
+    @JavascriptInterface fun nudge(cm: Int): String = SteerController.nudge(cm)
+    @JavascriptInterface fun setSectionCount(n: Int): String = SteerController.setSectionCount(n)
+    @JavascriptInterface fun setWheelbase(m: Double): String = SteerController.setWheelbase(m)
+    @JavascriptInterface fun startHeadingCalib(): String = SteerController.startHeadingCalib()
+    @JavascriptInterface fun headingCalibStatus(): String = SteerController.headingCalibStatus()
 
     /** CAN 하드웨어 상태 (모터 점검 화면 표시용). logcat 없이 확인. */
     @JavascriptInterface fun canStatus(): String {

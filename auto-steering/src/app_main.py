@@ -62,6 +62,7 @@ class Controller:
         self._ntrip = None            # NTRIP 클라이언트(RTK 보정신호)
         self._gnss_client = None      # GNSS NMEA 클라이언트(F9P/PA-3) — NTRIP RTCM 주입 대상
         self._hcal = None             # 헤딩 바이어스 캘리브레이터(ver1, 진행 중일 때만)
+        self._sections = 4            # 작업 섹션 수(표시)
 
         if vendor:
             self.set_vendor(vendor)
@@ -187,6 +188,26 @@ class Controller:
         if self.bus is not None and hasattr(self.sys, "actuator"):
             self.sys.actuator.set_motor_center(); return "ok"
         return "demo"
+
+    def nudge(self, cm):
+        """경로를 좌(+)/우(-)로 cm 만큼 횡이동(넛지)."""
+        try:
+            self.sys.nudge_path(float(cm) / 100.0); return "ok"
+        except Exception as e:
+            log.warning(f"nudge 실패: {e}"); return "error"
+
+    def set_section_count(self, n):
+        """작업 섹션 수 표시값(저장만 — 추후 섹션 제어 연동)."""
+        self._sections = max(1, int(n)); return str(self._sections)
+
+    def set_wheelbase(self, m):
+        """휠베이스(m) 변경 + 추종기 재구성."""
+        try:
+            self.sys.params.wheelbase = float(m)
+            self.sys.set_algorithm("implement", self.sys.params.wheelbase)
+            return "ok"
+        except Exception as e:
+            log.warning(f"set_wheelbase 실패: {e}"); return "error"
 
     # ── 센서 입력 (bridge 모드에서 GNSS/IMU 브릿지가 호출) ───────
     def on_rtk(self, lat, lon, quality, source="pa3"):
@@ -329,6 +350,9 @@ def disengage():        _ctrl and _ctrl.disengage()
 def estop():            _ctrl and _ctrl.estop()
 def motor_jog(permille): return _ctrl.motor_jog(permille) if _ctrl else "no-ctrl"
 def motor_center():      return _ctrl.motor_center() if _ctrl else "no-ctrl"
+def nudge(cm):           return _ctrl.nudge(cm) if _ctrl else "no-ctrl"
+def set_section_count(n): return _ctrl.set_section_count(n) if _ctrl else str(n)
+def set_wheelbase(m):    return _ctrl.set_wheelbase(m) if _ctrl else "no-ctrl"
 def ntrip_connect(host, port, mount, user="", pw=""):
     return _ctrl.ntrip_connect(host, port, mount, user, pw) if _ctrl else "no-ctrl"
 def ntrip_disconnect(): return _ctrl.ntrip_disconnect() if _ctrl else "no-ctrl"

@@ -22,6 +22,20 @@ object SteerController {
     /** 모터 중앙(직진) 캘리브레이션 — 현재 누적각을 0 기준으로. */
     fun motorCenter(): String =
         try { api().callAttr("motor_center").toString() } catch (e: Throwable) { "error" }
+
+    /** 경로 넛지(좌+/우- cm), 섹션 수, 휠베이스(m). */
+    fun nudge(cm: Int): String =
+        try { api().callAttr("nudge", cm).toString() } catch (e: Throwable) { "error" }
+    fun setSectionCount(n: Int): String =
+        try { api().callAttr("set_section_count", n).toString() } catch (e: Throwable) { "" }
+    fun setWheelbase(m: Double): String =
+        try { api().callAttr("set_wheelbase", m).toString() } catch (e: Throwable) { "error" }
+
+    /** ver1 헤딩 바이어스 캘리브(직선 ~20m). */
+    fun startHeadingCalib(): String =
+        try { api().callAttr("start_heading_calib").toString() } catch (e: Throwable) { "error" }
+    fun headingCalibStatus(): String =
+        try { api().callAttr("heading_calib_status").toString() } catch (e: Throwable) { "{}" }
     fun setDeadman(pressed: Boolean) = safe { api().callAttr("set_deadman", pressed) }
     fun setProfile(name: String) = safe { api().callAttr("set_profile", name) }
 
