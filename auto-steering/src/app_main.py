@@ -286,6 +286,30 @@ class Controller:
         "/sys/devices/virtual/misc/sunxi-gps/rf-ctrl/nstandby_state",  # u-blox standby 해제
     )
 
+    def scan_gnss(self, window=1.5):
+        """
+        내부 UART 자동 스니핑 — 어느 /dev/ttySx 에 GNSS(NMEA/UBX)가 나오는지 탐지(1단계).
+        ⚠ 블로킹(포트×보레이트×window). 전원 먼저 켠다.
+        """
+        if self.demo:
+            return {"demo": True}
+        self.gnss_power_on()
+        import f9p_client as fc
+        return fc.scan_ports(window=float(window))
+
+    def configure_moving_base(self, port="/dev/ttyS1", baud=0):
+        """
+        u-blox 무빙베이스 듀얼안테나 heading 출력(UBX-NAV-RELPOSNED)+위치/속도 활성·저장.
+        ★ 전제: 수신기가 무빙베이스/로버 모드(AGMO 돔=공장설정 추정). 적용 후 RELPOSNED 가
+          안 나오면 모드 미설정 → 현장 조사. (f9p_client.moving_base_heading_cfg 주석 참고)
+        """
+        if self.demo:
+            return "demo"
+        import f9p_client as fc
+        spec = getattr(self.sys.vendor, "gnss_primary", None) if self.sys.vendor else None
+        baud = int(baud) or (spec.serial_baud if spec else 115200)
+        return fc.configure_serial(str(port), baud, fc.moving_base_heading_cfg())
+
     def gnss_power_on(self):
         """AGMO ver1 내부 u-blox 전원/standby ON (best-effort sysfs write)."""
         if self.demo:
@@ -419,6 +443,8 @@ def start_mount_diag():       return _ctrl.start_mount_diag() if _ctrl else "no-
 def mount_diag_status():      return json.dumps(_ctrl.mount_diag_status() if _ctrl else {"active": False}, ensure_ascii=False)
 def start_gnss(port="/dev/ttyS1", baud=0): return _ctrl.start_gnss(port, baud) if _ctrl else "no-ctrl"
 def gnss_power_on():    return _ctrl.gnss_power_on() if _ctrl else "no-ctrl"
+def scan_gnss(window=1.5): return json.dumps(_ctrl.scan_gnss(window) if _ctrl else {"best": None, "ports": []}, ensure_ascii=False)
+def configure_moving_base(port="/dev/ttyS1", baud=0): return _ctrl.configure_moving_base(port, baud) if _ctrl else "no-ctrl"
 def on_rtk(lat, lon, quality, source="pa3"):  _ctrl and _ctrl.on_rtk(lat, lon, quality, source)
 def on_imu(h, av, acc, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_imu(h, av, acc, roll, pitch)
 def status_json():      return _ctrl.status_json() if _ctrl else "{}"

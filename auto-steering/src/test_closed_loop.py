@@ -290,6 +290,40 @@ def test_cog_aiding():
     assert abs((hd2 - 90 + 180) % 360 - 180) < 2.0, f"슬립 보정 실패: {hd2}"
 
 
+def test_ubx_cfg_builder():
+    """UBX-CFG 빌더 — 체크섬 정합 + 무빙베이스 시퀀스에 RELPOSNED 활성 포함."""
+    import f9p_client as fc
+    # build_ubx 체크섬 자기정합: parse_relposned 가 같은 검증로직으로 통과해야 함
+    f = fc.build_ubx(0x06, 0x01, bytes([0x01, 0x3C, 1]))
+    assert f[:2] == b"\xb5\x62" and f[2] == 0x06 and f[3] == 0x01, "CFG-MSG 헤더 오류"
+    cka, ckb = fc._ubx_checksum(f[2:-2])
+    assert (cka, ckb) == (f[-2], f[-1]), "Fletcher 체크섬 불일치"
+    # CFG-RATE 100ms
+    r = fc.ubx_cfg_rate(100, 1, 1)
+    assert r[2] == 0x06 and r[3] == 0x08 and r[6] | (r[7] << 8) == 100, "CFG-RATE payload 오류"
+    # 무빙베이스 시퀀스: NAV-RELPOSNED(0x01,0x3C) 활성(rate=1) 프레임이 있어야 함
+    seq = fc.moving_base_heading_cfg()
+    # CFG-MSG 프레임 = B5 62 06 01 03 00 [cls id rate] ck_a ck_b = 11바이트
+    has_relpos = any(m[2] == 0x06 and m[3] == 0x01 and len(m) == 11 and
+                     m[6] == 0x01 and m[7] == 0x3C and m[8] == 1 for m in seq)
+    has_save = any(m[2] == 0x06 and m[3] == 0x09 for m in seq)
+    assert has_relpos, "무빙베이스 시퀀스에 RELPOSNED 활성 없음"
+    assert has_save, "CFG-CFG 저장 프레임 없음"
+    # 모든 프레임 체크섬 정합
+    for m in seq:
+        ca, cb = fc._ubx_checksum(m[2:-2])
+        assert (ca, cb) == (m[-2], m[-1]), "시퀀스 프레임 체크섬 오류"
+    print(f"  build_ubx 체크섬 OK · 무빙베이스 {len(seq)}프레임(RELPOSNED 활성·저장 포함)")
+
+
+def test_scan_ports_safe():
+    """포트 스캔 — 존재하지 않는 포트에도 안전(크래시/예외 없음)."""
+    import f9p_client as fc
+    out = fc.scan_ports(ports=["/dev/does-not-exist-xyz"], bauds=(115200,), window=0.05)
+    assert out["best"] is None and out["ports"][0]["found"] is False, "미존재 포트 처리 실패"
+    print("  미존재 포트 안전 처리 OK (best=None)")
+
+
 if __name__ == "__main__":
     print("[1] HDT 나침반→수학각 변환")
     test_heading_convention()
@@ -313,5 +347,9 @@ if __name__ == "__main__":
     test_mount_diagnostic()
     print("[11] 진로각(COG) 보조 + 슬립 보정(방법 5)")
     test_cog_aiding()
+    print("[12] UBX-CFG 빌더 + 무빙베이스 heading 활성 시퀀스")
+    test_ubx_cfg_builder()
+    print("[13] 내부 UART 포트 스캔(안전성)")
+    test_scan_ports_safe()
     print("\n  ✓ GNSS(NMEA/UBX)→EKF 입력 경로 검증 통과 — 헤딩 변환/위치 추종/무IMU predict "
           "+ 무빙베이스 헤딩(적응형R·게이팅·틸트)·COG보조. (조향 수렴은 sitl_sim 6/6)")

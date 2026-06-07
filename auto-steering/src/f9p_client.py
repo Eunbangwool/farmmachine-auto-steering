@@ -640,6 +640,119 @@ def detect_baudrate(port: str = "/dev/ttyACM0",
     return (best[0], best[1]) if best[2] > 0 else (None, None)
 
 
+def scan_ports(ports=None,
+               bauds=(115200, 38400, 460800, 9600, 57600, 230400),
+               window: float = 1.5):
+    """
+    여러 시리얼 포트를 순회하며 GNSS(NMEA/UBX)가 나오는 포트를 자동 탐지.
+    AGMO ver1 = Apollo **내부 UART** 직결이라 어느 /dev/ttySx 인지 모를 때 현장 1단계용.
+    ports=None 이면 /dev/ttyS* + /dev/ttyUSB* + /dev/ttyACM* 자동 후보.
+    반환 dict: {"best": {port,baud,score,...}|None, "ports": [포트별 요약...]}.
+    """
+    import glob as _glob
+    if ports is None:
+        ports = sorted(set(_glob.glob("/dev/ttyS*") +
+                           _glob.glob("/dev/ttyUSB*") +
+                           _glob.glob("/dev/ttyACM*")))
+    results = []; best = None
+    for p in ports:
+        baud, rep = detect_baudrate(p, candidates=bauds, window=window)
+        if rep is None:
+            results.append({"port": p, "found": False, "score": 0}); continue
+        s = rep.summary()
+        score = s["nmea_ok"] * 2 + s["ubx_frames"] + s["rtcm3_frames"]
+        entry = {"port": p, "found": score > 0, "baud": baud, "score": score,
+                 "formats": s["formats"], "nmea_by_type": s["nmea_by_type"],
+                 "gga_count": s["gga_count"], "gga_qualities": s["gga_qualities"],
+                 "ubx_frames": s["ubx_frames"]}
+        results.append(entry)
+        if score > 0 and (best is None or score > best["score"]):
+            best = entry
+    log.info(f"GNSS 포트 스캔: best={best['port'] if best else None}")
+    return {"best": best, "ports": results}
+
+
+# ═══════════════════════════════════════════════════════════════
+#  UBX-CFG — u-blox 설정 메시지 빌더 (무빙베이스 듀얼안테나 heading 활성)
+#  레거시 CFG-MSG/CFG-RATE/CFG-CFG (F9P 하위호환 수용). 동작 사실=u-blox 프로토콜 공개표준.
+# ═══════════════════════════════════════════════════════════════
+
+def build_ubx(msg_class: int, msg_id: int, payload: bytes = b"") -> bytes:
+    """UBX 프레임 = B5 62 cls id len(LE2) payload ck_a ck_b (Fletcher)."""
+    body = bytes([msg_class & 0xFF, msg_id & 0xFF,
+                  len(payload) & 0xFF, (len(payload) >> 8) & 0xFF]) + bytes(payload)
+    cka, ckb = _ubx_checksum(body)
+    return b"\xb5\x62" + body + bytes([cka, ckb])
+
+
+def ubx_cfg_msg(msg_class: int, msg_id: int, rate: int = 1) -> bytes:
+    """CFG-MSG(0x06 0x01): 해당 메시지를 명령 수신 포트에서 rate(0=off) 로 출력."""
+    return build_ubx(0x06, 0x01, bytes([msg_class & 0xFF, msg_id & 0xFF, rate & 0xFF]))
+
+
+def ubx_cfg_rate(meas_ms: int = 100, nav_rate: int = 1, time_ref: int = 1) -> bytes:
+    """CFG-RATE(0x06 0x08): meas_ms(측정주기) / nav_rate(사이클) / time_ref(1=GPS)."""
+    import struct
+    return build_ubx(0x06, 0x08, struct.pack("<HHH", meas_ms, nav_rate, time_ref))
+
+
+def ubx_cfg_save() -> bytes:
+    """CFG-CFG(0x06 0x09): 현재 설정을 BBR+Flash+EEPROM 에 저장(전원유지)."""
+    import struct
+    return build_ubx(0x06, 0x09,
+                     struct.pack("<IIIB", 0x00000000, 0x0000FFFF, 0x00000000, 0x17))
+
+
+# UBX 메시지 ID (class 0x01=NAV, 0xF0=NMEA 표준) — 공개 프로토콜 확정값
+_NAV = 0x01
+_NMEA = 0xF0
+
+
+def moving_base_heading_cfg(meas_ms: int = 100):
+    """
+    듀얼안테나 heading(UBX-NAV-RELPOSNED) + 위치/속도 출력 활성 + 저장하는 UBX 프레임 목록.
+    farmmachine 파서 정합: RELPOSNED(헤딩)·PVT·VELNED(COG, 방법5)·NMEA GGA(위치)·VTG.
+    잡음 NMEA(GLL/GSA/GSV)는 끈다.
+
+    ★ 전제: 수신기가 **무빙베이스/로버 모드**여야 RELPOSNED 가 유효 heading 을 준다
+      (AGMO ver1 돔은 공장에서 그렇게 설정됐을 가능성 높음). 적용 후에도 RELPOSNED 가
+      안 나오거나 carrSoln/heading_valid 가 0 이면 → 무빙베이스 모드 미설정 → 현장 조사 필요.
+    헤딩 NMEA(HDT)는 표준 ID 불확실 + UBX RELPOSNED 가 주경로라 활성하지 않음.
+    """
+    return [
+        ubx_cfg_rate(meas_ms, 1, 1),
+        ubx_cfg_msg(_NAV,  0x3C, 1),   # NAV-RELPOSNED — 듀얼안테나 heading
+        ubx_cfg_msg(_NAV,  0x07, 1),   # NAV-PVT — 위치/속도
+        ubx_cfg_msg(_NAV,  0x12, 1),   # NAV-VELNED — 진로각(COG, 방법5)
+        ubx_cfg_msg(_NMEA, 0x00, 1),   # NMEA GGA — 위치(parse_gga)
+        ubx_cfg_msg(_NMEA, 0x05, 1),   # NMEA VTG — 진로각/속도(parse_vtg)
+        ubx_cfg_msg(_NMEA, 0x01, 0),   # GLL off
+        ubx_cfg_msg(_NMEA, 0x02, 0),   # GSA off
+        ubx_cfg_msg(_NMEA, 0x03, 0),   # GSV off
+        ubx_cfg_save(),
+    ]
+
+
+def configure_serial(port: str, baud: int = 115200, frames=()) -> str:
+    """UBX 설정 프레임들을 시리얼 포트에 순차 기록. 'ok'/'no-pyserial'/'no-port'."""
+    import time as _t
+    try:
+        import serial
+    except ImportError:
+        log.error("pyserial 미설치"); return "no-pyserial"
+    try:
+        ser = serial.Serial(port, baud, timeout=0.5)
+    except Exception as e:
+        log.error(f"설정 포트 열기 실패({port}@{baud}): {e}"); return "no-port"
+    try:
+        for f in frames:
+            ser.write(f); ser.flush(); _t.sleep(0.05)
+    finally:
+        ser.close()
+    log.info(f"UBX 설정 {len(list(frames))}프레임 기록 → {port}@{baud}")
+    return "ok"
+
+
 # ═══════════════════════════════════════════════════════════════
 #  단독 테스트 (하드웨어 없이 GGA 파싱 + 콜백 경로 검증)
 # ═══════════════════════════════════════════════════════════════

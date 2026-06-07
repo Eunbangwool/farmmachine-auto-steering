@@ -30,6 +30,14 @@
 `gnss_pwren_state`, Allwinner sunxi). 이후 **CHCNAV PA-3/NX510(CAN 500k 또는 RS232)** 도 실험 후 추가.
 **USB 는 레벨러 안테나 추가 시에만** 사용. (과거 "USB→F9P" 표기는 폐기)
 
+**✅ 현장 1단계 도구(미리 구현)**: `app_main.scan_gnss()`(=`f9p_client.scan_ports`) 내부 `/dev/ttyS*`
+자동 스니핑으로 GNSS 나오는 포트·보레이트 탐지 → `start_gnss(port,baud)`. `gnss_power_on()` 가
+sysfs(`gnss_pwren_state`/`nstandby_state`) best-effort 전원 ON. `configure_moving_base(port)`
+(=`f9p_client.moving_base_heading_cfg`)로 u-blox 에 UBX-NAV-RELPOSNED(듀얼헤딩)+PVT+VELNED+
+NMEA GGA/VTG 출력 활성·저장(레거시 CFG-MSG/RATE/CFG, F9P 수용). ★ RELPOSNED 유효헤딩은
+수신기가 **무빙베이스/로버 모드**여야 함(AGMO 돔=공장설정 추정; 안 나오면 모드 미설정→현장조사).
+검증: `test_closed_loop.py` [12]UBX빌더·[13]포트스캔.
+
 ### Monorepo 구조
 ```
 farmmachine-auto-steering/
