@@ -199,9 +199,43 @@
   .rotate-hint svg{width:54px;height:54px;color:var(--steer);}
   .rotate-hint p{color:var(--dim);font-size:15px;line-height:1.5;}
   .rotate-hint b{color:var(--txt);}
+
+  /* ===== 제조사 선택 오버레이 (앱 시작) ===== */
+  #vendorOverlay{position:fixed;inset:0;z-index:60;background:rgba(6,10,14,.97);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;}
+  #vendorOverlay.hidden{display:none;}
+  #vendorOverlay h2{font-family:'Rajdhani',sans-serif;font-size:26px;letter-spacing:1px;
+    color:#e8eef2;margin:0;}
+  #vendorOverlay .sub{color:#7a8b97;font-size:14px;margin-top:-12px;}
+  .vendor-cards{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;max-width:760px;}
+  .vendor-card{width:210px;background:#0e171f;border:2px solid #2b3a45;border-radius:14px;
+    padding:20px 18px;cursor:pointer;transition:border-color .15s,transform .1s;text-align:left;}
+  .vendor-card:hover{border-color:#34d4e0;transform:translateY(-2px);}
+  .vendor-card .vn{font-family:'Rajdhani',sans-serif;font-size:22px;font-weight:700;color:#e8eef2;}
+  .vendor-card .vt{font-size:13px;color:#9fb0bc;margin:6px 0 12px;line-height:1.4;min-height:36px;}
+  .vendor-card .vg{font-size:12px;color:#6f8694;}
+  .vendor-card .vbadge{display:inline-block;margin-top:12px;font-size:11px;font-weight:600;
+    padding:3px 8px;border-radius:6px;}
+  .vbadge.ok{background:rgba(57,211,83,.15);color:#39d353;}
+  .vbadge.todo{background:rgba(245,183,58,.15);color:#f5b73a;}
+  /* 모터 미확정 경고 배너 */
+  #motorWarn{display:none;position:fixed;left:0;right:0;bottom:0;z-index:40;
+    background:#3a2a0a;color:#f5b73a;border-top:2px solid #f5b73a;
+    padding:10px 16px;font-size:13px;text-align:center;}
+  #motorWarn.show{display:block;}
 </style>
 </head>
 <body>
+
+<!-- ===== 제조사 선택 (앱 시작 시 표시) ===== -->
+<div id="vendorOverlay">
+  <h2>제조사 선택</h2>
+  <div class="sub">태블릿에 연결된 하드웨어 제조사를 선택하세요</div>
+  <div class="vendor-cards" id="vendorCards"></div>
+</div>
+<!-- 모터 CAN 프로토콜 미확정 경고 -->
+<div id="motorWarn"></div>
+
 <div class="app" id="app">
 
   <!-- ===== STATUS STRIP (shared) ===== -->
@@ -433,6 +467,14 @@
         if(typeof st.xte_cm==="number") S.xte=st.xte_cm;
         if(typeof st.target_angle_deg==="number") S.steerAng=st.target_angle_deg;
         if(typeof st.speed_mps==="number") S.speed=st.speed_mps;
+        if(typeof st.motor_verified==="boolean"){
+          const w=$("motorWarn");
+          if(!st.motor_verified){
+            w.classList.add("show");
+            w.textContent="⚠ "+(st.vendor_name||"이 제조사")+" 모터 CAN 프로토콜 미확정 — "
+              +"자율조향 출력 비활성 (GNSS·표시만 동작). 문서 입수 후 활성화됩니다.";
+          }else{ w.classList.remove("show"); }
+        }
       }catch(e){}
     }
     // 주행 (시뮬 전용 — 실기기 속도는 위에서 주입)
@@ -584,6 +626,35 @@
   $("menu").addEventListener("click",()=>{
     alert("설정\n\n· 차량 파라미터 (휠베이스, 안테나 오프셋)\n· 안테나↔블레이드 기하 (h, d)\n· 유압 응답 캘리브레이션\n· CAN / NTRIP / LoRa 연결\n· 호환 모드: AGMO / CHCNAV / FJDynamics");
   });
+
+  // ===== 제조사 선택 오버레이 =====
+  function vendorList(){
+    if(BR && BR.listVendors){ try{ return JSON.parse(BR.listVendors()||"[]"); }catch(e){} }
+    // 브라우저 미리보기 폴백 (Python 브리지 없을 때)
+    return [
+      {key:"agmo",  name:"AGMO",       tagline:"AGMO 자율주행 키트 · Keya 조향모터", can_verified:true,  gnss:"AGMO GNSS"},
+      {key:"chcnav",name:"CHCNAV",     tagline:"NX510 / AgNav · PA-3 안테나",        can_verified:false, gnss:"CHCNAV PA-3"},
+      {key:"fjd",   name:"FJDynamics", tagline:"AT2 dome · FJD 전동조향",            can_verified:false, gnss:"FJDynamics AT2"},
+    ];
+  }
+  function chooseVendor(key){
+    if(BR && BR.setVendor){ try{ BR.setVendor(key); }catch(e){} }
+    $("vendorOverlay").classList.add("hidden");
+  }
+  (function initVendors(){
+    const wrap=$("vendorCards"); if(!wrap) return;
+    vendorList().forEach(v=>{
+      const c=document.createElement("div"); c.className="vendor-card";
+      const badge = v.can_verified
+        ? '<span class="vbadge ok">조향 지원</span>'
+        : '<span class="vbadge todo">GNSS만 · 모터 준비중</span>';
+      c.innerHTML='<div class="vn">'+v.name+'</div>'
+        +'<div class="vt">'+(v.tagline||"")+'</div>'
+        +'<div class="vg">GNSS: '+(v.gnss||"-")+'</div>'+badge;
+      c.addEventListener("click",()=>chooseVendor(v.key));
+      wrap.appendChild(c);
+    });
+  })();
 
   buildMap(); render();
   requestAnimationFrame(loop);

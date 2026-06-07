@@ -17,6 +17,8 @@ import android.webkit.JavascriptInterface
  *   AndroidSteer.setDeadman(pressed)     // true: 누름 / false: 뗌
  *   AndroidSteer.setAbLine(ax,ay,bx,by,width,passes,speed)
  *   AndroidSteer.setDemoAbLine()
+ *   AndroidSteer.listVendors(): String   // 제조사 목록 JSON (시작화면용)
+ *   AndroidSteer.setVendor(key): String   // "agmo" | "chcnav" | "fjd"
  *
  * JS 쪽은 setInterval 로 statusJson() 을 ~100ms 폴링해 화면을 갱신하면 된다.
  */
@@ -27,6 +29,8 @@ class JsBridge {
     @JavascriptInterface fun estop() = SteerController.estop()
     @JavascriptInterface fun setProfile(name: String) = SteerController.setProfile(name)
     @JavascriptInterface fun setDeadman(pressed: Boolean) = SteerController.setDeadman(pressed)
+    @JavascriptInterface fun listVendors(): String = SteerController.listVendors()
+    @JavascriptInterface fun setVendor(key: String): String = SteerController.setVendor(key)
 
     @JavascriptInterface
     fun setAbLine(ax: Double, ay: Double, bx: Double, by: Double,

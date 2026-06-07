@@ -35,7 +35,7 @@ log = logging.getLogger("app_main")
 class Controller:
     def __init__(self, backend: str = "bridge",
                  host: str = "127.0.0.1", port: int = 47100,
-                 hz: float = 50.0):
+                 hz: float = 50.0, vendor: str = None):
         self._dt = 1.0 / hz
         self.demo = (backend == "mock")
         self.bus = None
@@ -58,6 +58,18 @@ class Controller:
         self._thread = None
         self._last: dict = {}
         self._lock = threading.Lock()
+
+        if vendor:
+            self.set_vendor(vendor)
+
+    def set_vendor(self, key: str) -> str:
+        """제조사 선택 → 모터 CAN/GNSS/알고리즘 활성화. UI 시작화면에서 호출."""
+        p = self.sys.select_vendor(key)
+        if self.demo:
+            # 데모(SITL)는 시뮬레이터라 모터를 항상 구동(미확정 벤더도 시각화 허용)
+            self.sys.motor_verified = True
+        self.sys.set_profile("normal")
+        return p.key
 
     # ── 수명주기 ──────────────────────────────────────────────
     def start(self):
@@ -151,13 +163,28 @@ class Controller:
 _ctrl: "Controller | None" = None
 
 
-def boot(backend: str = "bridge", host: str = "127.0.0.1", port: int = 47100):
+def boot(backend: str = "bridge", host: str = "127.0.0.1", port: int = 47100,
+         vendor: str = None):
     global _ctrl
     if _ctrl is None:
         logging.basicConfig(level=logging.INFO)
-        _ctrl = Controller(backend=backend, host=host, port=port)
+        _ctrl = Controller(backend=backend, host=host, port=port, vendor=vendor)
         _ctrl.start()
     return "ok"
+
+
+def list_vendors() -> str:
+    """제조사 선택화면용 목록 JSON. (부팅 전에도 호출 가능)"""
+    import vendor_profiles
+    return json.dumps(vendor_profiles.list_vendors(), ensure_ascii=False)
+
+
+def set_vendor(key: str) -> str:
+    """제조사 선택. 부팅 전이면 그 벤더로 부팅, 부팅 후면 런타임 전환."""
+    if _ctrl is None:
+        boot(vendor=key)
+        return key
+    return _ctrl.set_vendor(key)
 
 
 def set_ab_line(ax, ay, bx, by, width=3.0, passes=4, speed=1.2):

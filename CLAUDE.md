@@ -147,6 +147,25 @@ class CanSpec:
 
 ---
 
+## 멀티벤더 (제조사 선택) — ✅ `vendor_profiles.py`
+
+> 컨셉: 이 앱을 **CHCNAV / AGMO / FJDynamics** 태블릿에 설치만 하면 그들의 하드웨어
+> (조향모터 + GNSS + 앵글센서)를 그대로 사용. 앱 시작 시 제조사를 고르면 그 스택으로 구성.
+
+- `VendorProfile`(frozen dataclass): 모터 CanSpec(dict) + GNSS 주/백업 + GnssArbiter 우선순위 + 기본 알고리즘 + `can_verified`
+- `VENDOR_PROFILES` 레지스트리:
+  - **agmo** ✅ `can_verified=True` — Keya KY170(250k) 확정 + AGMO GNSS(추정)
+  - **chcnav** ★ `can_verified=False` — PA-3 GNSS+INS 확정 / 모터 CAN 미확정
+  - **fjd** ★ `can_verified=False` — AT2 dome(추정) / 모터 CAN 미확정
+- `apply_vendor(key)` → `field_config.apply_canspec()` 로 CanSpec 런타임 활성화
+- `AutoSteerSystem.select_vendor(key)` → CanSpec + GnssArbiter 우선순위 + EKF 튜닝 + 알고리즘 적용.
+  **`can_verified=False` 면 `engage()` 거부**(조향 출력 비활성, GNSS·표시는 동작) = 안전장치
+- 진입: `app_main.list_vendors()` / `set_vendor(key)` ← JsBridge `listVendors()`/`setVendor()` ← UI 시작화면 오버레이(`#vendorOverlay`). 미확정 벤더는 하단 경고 배너(`#motorWarn`)
+- status JSON 에 `vendor`/`vendor_name`/`motor_verified` 추가
+- ★ 남은 일: CHCNAV/FJD 모터 CAN 프로토콜 입수 → `vendor_profiles` 의 canspec 채우고 `can_verified=True`. GNSS 추정 스펙(AGMO/FJD) 실측 교정
+
+---
+
 ## AgNav 5.0 3-모드 시스템 (미구현, 다음 작업)
 
 AgNav는 작업 상황별 3개 프로파일을 따로 유지:

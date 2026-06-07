@@ -17,6 +17,14 @@ object SteerController {
     fun setDeadman(pressed: Boolean) = safe { api().callAttr("set_deadman", pressed) }
     fun setProfile(name: String) = safe { api().callAttr("set_profile", name) }
 
+    /** 제조사 선택화면용 목록 JSON. */
+    fun listVendors(): String =
+        try { api().callAttr("list_vendors").toString() } catch (e: Throwable) { "[]" }
+
+    /** 제조사 선택 → 모터 CAN/GNSS/알고리즘 활성화. */
+    fun setVendor(key: String): String =
+        try { api().callAttr("set_vendor", key).toString() } catch (e: Throwable) { "" }
+
     fun setAbLine(ax: Double, ay: Double, bx: Double, by: Double,
                   width: Double, passes: Int, speed: Double) = safe {
         api().callAttr("set_ab_line", ax, ay, bx, by, width, passes, speed)

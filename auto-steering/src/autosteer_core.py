@@ -679,6 +679,7 @@ class CanSpec:
     MOTOR_BYTE_CHECKSUM  = -1
     MOTOR_MODE_DISABLE   = 0x00
     MOTOR_MODE_ANGLE     = 0x01
+    MOTOR_MODE_TORQUE    = 0x02    # 레거시 호환 (현 Keya 속도제어 경로에선 미사용)
     MOTOR_ANGLE_SCALE    = 1.0
     MOTOR_MAX_SPEED      = 400
 
@@ -1706,7 +1707,8 @@ class AutoSteerSystem:
                  params:       TractorParams        = None,
                  algo:         str                  = "pure_pursuit",
                  motor_params: MotorProtectionParams = None,
-                 max_speed_mps: float               = 2.5):
+                 max_speed_mps: float               = 2.5,
+                 vendor:       str                  = None):
         self.params    = params or KUBOTA_MR1157
         self.estimator = StateEstimator(self.params)
         self.actuator  = SteeringActuator(can, motor_params=motor_params)
@@ -1724,7 +1726,45 @@ class AutoSteerSystem:
         self.gnss = GnssArbiter(priority=("pa3", "f9p"))
         self._active_gnss: Optional[str] = None
 
+        # 벤더(제조사) 프로파일 — 미선택 시 기존 동작(검증된 것으로 간주)
+        self.vendor = None
+        self.motor_verified = True
+
         self.set_algorithm(algo, self.params.wheelbase)
+
+        if vendor:
+            self.select_vendor(vendor)
+
+    def select_vendor(self, key: str):
+        """
+        제조사 프로파일 활성화 (앱 시작 시 선택).
+        해당 벤더의 모터 CAN(CanSpec) + GNSS 우선순위 + EKF 튜닝 + 기본 알고리즘을 적용.
+
+        can_verified=False 인 벤더(모터 프로토콜 미확정)는 안전을 위해
+        조향 출력을 비활성한다(engage 거부). GNSS/상태표시는 계속 동작.
+        """
+        import vendor_profiles as vp
+        p = vp.apply_vendor(key)
+        self.vendor = p
+        self.motor_verified = p.can_verified
+
+        # GNSS 소스 우선순위 재구성 + 수신기 기반 EKF 튜닝
+        self.gnss = GnssArbiter(priority=p.gnss_priority)
+        self._active_gnss = None
+        self.estimator.tune_for_receiver(p.gnss_primary)
+
+        # 기본 알고리즘 적용
+        self.set_algorithm(p.default_algo, self.params.wheelbase)
+
+        if not p.can_verified:
+            self._engaged = False
+            log.warning(f"[{p.display_name}] 모터 CAN 프로토콜 ★미확정 — "
+                        f"조향 출력 비활성(engage 거부). 문서 입수 후 "
+                        f"vendor_profiles 의 canspec/can_verified 갱신 필요.")
+        log.info(f"벤더 선택: {p.display_name} "
+                 f"(모터확정={p.can_verified}, GNSS={p.gnss_primary.name}, "
+                 f"우선순위={p.gnss_priority})")
+        return p
 
     def set_algorithm(self, algo: str, wheelbase: float):
         """
@@ -1911,6 +1951,9 @@ class AutoSteerSystem:
             "engaged": self._engaged,
             "safety": safety.name,
             "profile": self._profile.name,
+            "vendor": self.vendor.key if self.vendor else None,
+            "vendor_name": self.vendor.display_name if self.vendor else None,
+            "motor_verified": self.motor_verified,
             "active_gnss": self._active_gnss,
             "slope_correction": self.params.slope_correction,
             "target_angle_deg": math.degrees(target),
@@ -1927,6 +1970,10 @@ class AutoSteerSystem:
 
     # ── 모드 전환 ───────────────────────────────────
     def engage(self) -> bool:
+        if not self.motor_verified:
+            vn = self.vendor.display_name if self.vendor else "?"
+            log.warning(f"engage 거부: [{vn}] 모터 CAN 프로토콜 미확정")
+            return False
         if not self.safety.is_safe:
             log.warning(f"engage 거부: {self.safety.state.name}")
             return False
