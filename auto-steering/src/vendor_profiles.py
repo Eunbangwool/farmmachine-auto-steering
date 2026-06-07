@@ -107,6 +107,10 @@ class VendorProfile:
     gnss_priority: tuple             # GnssArbiter source 우선순위
     default_algo:  str
     notes:         str
+    # 앵글센서(WAS) 사용 여부. False = WAS 없이 조향(모터 인코더/GNSS 피드백).
+    #   AGMO: 항상 False(WAS 미사용 알고리즘 — Keya 하트비트 누적각으로 조향각 추정)
+    #   CHCNAV/FJD: WAS 장착 선택 가능하나 없어도 동작 → 기본 False
+    uses_was:      bool = False
 
 
 VENDOR_PROFILES: Dict[str, VendorProfile] = {
@@ -118,8 +122,10 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
         gnss_primary=AGMO_GNSS, gnss_backup=UBLOX_F9P,
         gnss_priority=("agmo", "f9p"),
         default_algo="implement",
-        notes="Keya KY170 매뉴얼 V2.4 프로토콜 확정(250k 속도제어). "
-              "GNSS 스펙은 추정값 — 현장 확인. WAS CAN ID 캡처 필요.",
+        uses_was=False,    # AGMO = WAS 미사용(모터 인코더 피드백)
+        notes="Keya KY170 매뉴얼 V2.4 프로토콜 확정(250k 속도제어, 확장프레임). "
+              "앵글센서 미사용 — 조향각은 Keya 하트비트 누적각으로 추정. "
+              "GNSS 스펙은 추정값 — 현장 확인.",
     ),
     "chcnav": VendorProfile(
         key="chcnav", display_name="CHCNAV",
@@ -129,8 +135,10 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
         gnss_primary=CHCNAV_PA3, gnss_backup=UBLOX_F9P,
         gnss_priority=("pa3", "f9p"),
         default_algo="implement",
-        notes="PA-3 GNSS+INS 확정. 모터 CAN 프로토콜 ★미확정 — "
-              "CHCNAV OEM CAN 문서 입수 후 canspec 채울 것(현재 조향 비활성).",
+        uses_was=False,    # WAS 장착 선택 가능, 없어도 동작 → 기본 미사용
+        notes="PA-3 GNSS+INS 확정. 앵글센서(WAS) 선택(없어도 자동조향 가능). "
+              "모터 CAN 프로토콜 ★미확정 — CHCNAV OEM CAN 문서 입수 후 "
+              "canspec 채울 것(현재 조향 비활성).",
     ),
     "fjd": VendorProfile(
         key="fjd", display_name="FJDynamics",
@@ -140,8 +148,10 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
         gnss_primary=FJD_AT2, gnss_backup=UBLOX_F9P,
         gnss_priority=("fjd", "f9p"),
         default_algo="implement",
-        notes="AT2 GNSS+INS(추정). 모터 CAN 프로토콜 ★미확정 — "
-              "FJD 문서/버스 캡처(can_tools) 후 canspec 채울 것(현재 조향 비활성).",
+        uses_was=False,    # WAS 장착 선택 가능, 없어도 동작 → 기본 미사용
+        notes="AT2 GNSS+INS(추정). 앵글센서(WAS) 선택(없어도 자동조향 가능). "
+              "모터 CAN 프로토콜 ★미확정 — FJD 문서/버스 캡처(can_tools) 후 "
+              "canspec 채울 것(현재 조향 비활성).",
     ),
 }
 
@@ -161,6 +171,7 @@ def list_vendors() -> List[dict]:
         "can_verified": p.can_verified,
         "gnss":         p.gnss_primary.name,
         "bitrate":      p.canspec.get("CAN_BITRATE"),
+        "uses_was":     p.uses_was,
         "notes":        p.notes,
     } for p in VENDOR_PROFILES.values()]
 

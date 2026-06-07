@@ -108,7 +108,7 @@ class CanSpec:
     CMD_SPEED   = 23 00 20 01 [value 4B]       # cmd_speed(±1000‰ = ±80RPM), 워치독 1000ms
     CMD_DISABLE = 23 0C 20 01 00 00 00 00
     # parse_heartbeat(20ms): 누적각/속도RPM/전류/폴트코드(_parse_fault, 매뉴얼 p.23)
-    SENSOR_ANGLE_ID = 0x301        # ★ WAS CAN ID 는 여전히 현장 ttyWK 캡처 필요
+    SENSOR_ANGLE_ID = 0x301        # WAS — ★AGMO 미사용(아래 참고). CHCNAV/FJD 장착 시만 캡처
 ```
 
 **⚠ 비트레이트 충돌 주의**: 모터=250k(매뉴얼), PA-3=500k(데이터시트). 같은 버스 공유 불가 →
@@ -125,6 +125,17 @@ class CanSpec:
 - 핸들 데드존: 20
 - 스티어링 데드존 오프셋: 0
 - 제어 모드: Mode2 (P=25, D=80, 최대RPM=20, 연성=100)
+
+---
+
+## 앵글센서(WAS) 정책 — ★ 벤더별 상이 (오너 확인)
+
+- **AGMO**: 앵글센서 **미사용** 알고리즘. 조향각 피드백 = **Keya 모터 하트비트 누적각**
+  (Hall 인코더, parse_heartbeat 의 angle_raw). 별도 WAS 불필요 → **WAS CAN ID 캡처도 불필요.**
+- **CHCNAV / FJD**: WAS 장착 **선택 가능하나 없어도 자동조향 가능**. 기본은 미장착(`uses_was=False`).
+- 코드: `vendor_profiles.VendorProfile.uses_was`. `SteeringActuator` 의 각도 피드백 소스는
+  WAS(SENSOR_ANGLE_ID) 대신 **모터 하트비트 각**을 쓰도록 전환 필요(★ 실차 autosteer 단계 작업).
+- SafetyMonitor 의 "운전자 개입(앵글센서 급변)" 감지도 WAS 없으면 모터 인코더/토크 기반으로 대체.
 
 ---
 
@@ -290,7 +301,7 @@ Apollo 10 Pro는 CAN 내장 (IP65, ADB 환경). SDK 문서 확인 필요.
 ## 다음 작업 우선순위
 
 1. **★ 실측**: wheelbase, antenna_to_axle — 물리 측정 (미완). ✅ 사전준비: `calibration.py`로 저속 주행 자동 추정 + `field_config.py`로 JSON 주입
-2. ✅ **CanSpec 채우기**: Keya KY170 매뉴얼 V2.4 프로토콜 이식 완료(250k, 0x06000001 TX, cmd_speed/parse_heartbeat). ★ 남은 건 (a) `_send_motor` 를 cmd_speed 속도제어로 배선 + SITL 재검증, (b) WAS 앵글센서 CAN ID 현장 캡처(`can_tools.py`)
+2. ✅ **CanSpec 채우기**: Keya KY170 매뉴얼 V2.4 프로토콜 이식 완료(250k, 0x06000001 TX **확장프레임**, cmd_speed/parse_heartbeat). 실차 모터 회전 확인됨(확장ID 자동). ★ 남은 건 (a) autosteer `_send_motor` 를 cmd_speed 속도제어로 배선 + SITL 재검증, (b) 조향각 피드백을 **모터 하트비트 각**으로(AGMO=WAS 미사용). WAS CAN ID 캡처는 **CHCNAV/FJD 가 WAS 장착할 때만** 필요
 3. ✅ **ApolloCanInterface/CAN 배선**: `apollo_can.ApolloCanBus`(bridge…) → Kotlin `ApolloCanBridge` → **`com.van.jni.VanMcu`(libsysmcu.so JNI)** 로 실제 송수신 배선 완료(`CanWrite`/`setCanSpeed`/`setOnCanListener`). VanMcu 는 com.agmo.autokit 디컴파일의 **인터페이스 사실**만 자체 구현(clean-room). **CAN 접근엔 device-owner 필요**: `adb shell dpm set-device-owner com.farmmachine.autosteer/.AdminReceiver`(AdminReceiver+device_admin.xml 추가). MainActivity 가 mock→**AutoSteerService(bridge)** 기동. ★ 남은 건 실차에서 모터 CAN **채널(0/1) 확정** + 확장프레임 플래그 검증
 4. ✅ **RTK 연결**: `f9p_client.F9pUsbClient`/`ChcnavPa3SerialClient` → `on_rtk()` (GGA 파싱, 품질 4/5, sniff/UBX/보레이트탐색)
 5. ✅ **IMU 캘리브레이션**: `ImuCalibrator` (평지 30초 평균 → ImuOffset)
