@@ -190,6 +190,12 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .expand{display:flex;align-items:center;gap:12px;padding:16px 4px;border-bottom:1px solid var(--line);font-size:15px;font-weight:700;}
 .expand .ic{color:var(--brand);width:22px;height:22px;}
 .expand .ch{margin-left:auto;color:var(--muted);}
+/* 모터 점검 조그 버튼 */
+.jogbtn{flex:1;max-width:170px;height:92px;border-radius:14px;border:2px solid var(--brand);
+  background:var(--brand-lt);color:var(--brand-dk);font-size:17px;font-weight:700;line-height:1.35;}
+.jogbtn span{font-size:11px;color:var(--sub);font-weight:500;}
+.jogbtn:active{background:var(--brand);color:#fff;}
+.pill.jogstop{background:var(--danger);}
 
 /* ───── 모달 (주행 모드/경로 유형/경고) ───── */
 .modal{position:absolute;inset:0;background:rgba(0,0,0,.55);display:none;z-index:40;
@@ -363,7 +369,7 @@ const S = { engaged:false, xte:0, speed:0, sensorOk:false, motorVerified:true,
             vendorName:"", line:4, section:4, sys:{net:true,gps:false,rtk:false,imu:false,motor:true} };
 
 function closeAllLayers(){ document.querySelectorAll('.overlay,.modal,.detail').forEach(o=>o.classList.remove('on')); }
-function show(id){ closeAllLayers(); document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on')); $(id).classList.add('on'); }
+function show(id){ try{jogStop();}catch(e){} closeAllLayers(); document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on')); $(id).classList.add('on'); }
 function setOverlay(id,on){ $(id).classList.toggle('on',on); }
 function setModal(id,on){ $(id).classList.toggle('on',on); }
 
@@ -417,6 +423,7 @@ const MENU = [
   {key:'optim', label:'최적화', ic:'M4 6l6 6-6 6M14 6l6 6-6 6'},
   {key:'rtk', label:'RTK 보정 신호', ic:'M5 19a9 9 0 019-9M5 19a5 5 0 015-5M5 19h.01'},
   {key:'system', label:'시스템 상태', ic:'M12 3v9M7 6a8 8 0 1010 0'},
+  {key:'motortest', label:'모터 점검', ic:'M12 3v6M12 3a9 9 0 109 9'},
 ];
 function renderSetList(sel){
   $('setList').innerHTML = MENU.map(m=>`
@@ -428,7 +435,7 @@ function renderSetList(sel){
 function toggleRow(k,on,ro){ return `<div class="row"><span class="k">${k}</span><div class="tg ${on?'on':''} ${ro?'ro':''}"></div></div>`; }
 function openDetail(key){
   renderSetList(key);
-  const T={user:'사용자 정보',vehicle:'차량 정보',optim:'최적화',rtk:'RTK 보정 신호',system:'시스템 상태'};
+  const T={user:'사용자 정보',vehicle:'차량 정보',optim:'최적화',rtk:'RTK 보정 신호',system:'시스템 상태',motortest:'모터 점검'};
   $('detailTitle').textContent=T[key];
   let h='';
   if(key==='user'){
@@ -453,9 +460,39 @@ function openDetail(key){
     const s=S.sys;
     const sr=(k,on)=>`<div class="row"><span class="k">${k}</span><div style="display:flex;align-items:center"><span class="statlabel ${on?'on':''}">${on?'ON':'OFF'}</span><div class="tg ${on?'on':''} ro"></div></div></div>`;
     h=sr('네트워크',s.net)+sr('GPS',s.gps)+sr('RTK',s.rtk)+sr('IMU',s.imu)+sr('조향 모터',s.motor);
+  }else if(key==='motortest'){
+    h=`<div style="font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:14px">
+         안테나 없이 <b>모터 회전</b>을 점검합니다. 버튼을 <b>누르고 있는 동안</b>만
+         저속(±12RPM)으로 돌고, 떼면 즉시 정지합니다.<br>
+         ⚠ 바퀴·조향 주변에 사람/장애물이 없는지 확인 후 시험하세요.</div>
+       <div style="display:flex;gap:14px;justify-content:center;margin:10px 0">
+         <button class="jogbtn" data-dir="-1">◀ 좌회전<br><span>누르는 동안</span></button>
+         <button class="jogbtn" data-dir="1">우회전 ▶<br><span>누르는 동안</span></button>
+       </div>
+       <button class="pill jogstop" id="jogStop">■ 정지</button>
+       <div id="jogState" style="text-align:center;color:var(--sub);font-size:12px;margin-top:12px">대기</div>`;
   }
   $('detailBody').innerHTML=h;
   $('detail').classList.add('on');
+  if(key==='motortest') wireJog();
+}
+
+// ───────── 모터 조그(hold-to-run) ─────────
+const JOG_PERMILLE=150;     // app_main JOG_MAX_PERMILLE 와 동일(저속 점검)
+let jogTimer=null;
+function jogSend(p){ if(BR&&BR.motorJog){ try{ return BR.motorJog(p); }catch(e){} return 'error'; } return 'demo'; }
+function jogStop(){ if(jogTimer){ clearInterval(jogTimer); jogTimer=null; } jogSend(0); const st=$('jogState'); if(st) st.textContent='정지'; }
+function wireJog(){
+  document.querySelectorAll('.jogbtn').forEach(btn=>{
+    const dir=parseInt(btn.dataset.dir,10);
+    const start=e=>{ e.preventDefault(); if(jogTimer) return;
+      const r=jogSend(dir*JOG_PERMILLE), st=$('jogState');
+      if(st) st.textContent = r==='demo'?'데모 모드(실 CAN 없음)': r==='blocked'?'미확정 벤더 — 출력 차단': r==='error'?'CAN 미연결':(dir<0?'◀ 좌회전 중…':'우회전 중… ▶');
+      if(r==='ok'||r==='demo') jogTimer=setInterval(()=>jogSend(dir*JOG_PERMILLE),150); };
+    const end=e=>{ e.preventDefault(); jogStop(); };
+    btn.onpointerdown=start; btn.onpointerup=end; btn.onpointerleave=end; btn.onpointercancel=end;
+  });
+  const sb=$('jogStop'); if(sb) sb.onclick=jogStop;
 }
 
 // ───────── 벤더 선택 ─────────
@@ -486,7 +523,7 @@ function initVendors(){
 $('consentChk').onclick=()=>{ const c=$('consentChk'); c.classList.toggle('ok'); $('consentOk').classList.toggle('en',c.classList.contains('ok')); };
 $('consentOk').onclick=()=>{ if($('consentChk').classList.contains('ok')){ initVendors(); show('vendor'); } };
 $('btnSettings').onclick=()=>{ renderSetList('user'); openDetail('user'); setOverlay('settings',true); };
-$('setClose').onclick=()=>setOverlay('settings',false);
+$('setClose').onclick=()=>{ try{jogStop();}catch(e){} setOverlay('settings',false); };
 $('detailClose').onclick=()=>$('detail').classList.remove('on');
 $('btnDrive').onclick=()=>setModal('modeModal',true);
 $('modeX').onclick=()=>setModal('modeModal',false);

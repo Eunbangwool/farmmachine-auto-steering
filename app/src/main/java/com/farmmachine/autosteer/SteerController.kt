@@ -14,6 +14,10 @@ object SteerController {
 
     fun disengage() = safe { api().callAttr("disengage") }
     fun estop() = safe { api().callAttr("estop") }
+
+    /** 모터 점검 조그: permille(±, 0=정지). bridge 모드에서만 실동작. */
+    fun motorJog(permille: Int): String =
+        try { api().callAttr("motor_jog", permille).toString() } catch (e: Throwable) { "error" }
     fun setDeadman(pressed: Boolean) = safe { api().callAttr("set_deadman", pressed) }
     fun setProfile(name: String) = safe { api().callAttr("set_profile", name) }
 

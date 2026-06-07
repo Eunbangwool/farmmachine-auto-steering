@@ -31,6 +31,7 @@ class JsBridge {
     @JavascriptInterface fun setDeadman(pressed: Boolean) = SteerController.setDeadman(pressed)
     @JavascriptInterface fun listVendors(): String = SteerController.listVendors()
     @JavascriptInterface fun setVendor(key: String): String = SteerController.setVendor(key)
+    @JavascriptInterface fun motorJog(permille: Int): String = SteerController.motorJog(permille)
 
     @JavascriptInterface
     fun setAbLine(ax: Double, ay: Double, bx: Double, by: Double,

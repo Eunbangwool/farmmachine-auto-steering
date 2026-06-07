@@ -58,6 +58,7 @@ class Controller:
         self._thread = None
         self._last: dict = {}
         self._lock = threading.Lock()
+        self._jog_on = False          # 모터 조그 활성 여부(Enable 시퀀스 추적)
 
         if vendor:
             self.set_vendor(vendor)
@@ -112,6 +113,36 @@ class Controller:
 
     def estop(self):
         self.sys.emergency_stop()
+        self.motor_jog(0)
+
+    # ── 모터 점검(조그) — 안테나 없이 모터 구동 확인용 ──────────────
+    #   안전: 저속 캡(±JOG_MAX_PERMILLE), hold-to-run(UI가 누르는 동안 반복 호출),
+    #   떼면 0 → 정지+Disable. UI가 멈추면 Keya 워치독(1s)이 자동 정지.
+    JOG_MAX_PERMILLE = 150        # ≈12 RPM (정격 80RPM 의 15%) — 점검용 저속
+
+    def motor_jog(self, permille):
+        """모터 조그: permille(±1000‰)=속도. 0이면 정지. bridge 모드에서만 실동작."""
+        from autosteer_core import CanSpec
+        p = int(permille)
+        p = max(-self.JOG_MAX_PERMILLE, min(self.JOG_MAX_PERMILLE, p))
+        if self.bus is None:                 # 데모(mock): 실 CAN 없음
+            return "demo"
+        if not getattr(self.sys, "motor_verified", True):
+            return "blocked"                 # 미확정 벤더 → 출력 차단
+        try:
+            if p != 0:
+                if not self._jog_on:
+                    self.bus.send(CanSpec.MOTOR_CMD_ID, CanSpec.CMD_ENABLE)
+                    self._jog_on = True
+                self.bus.send(CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(p))
+            else:
+                self.bus.send(CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(0))
+                self.bus.send(CanSpec.MOTOR_CMD_ID, CanSpec.CMD_DISABLE)
+                self._jog_on = False
+            return "ok"
+        except Exception as e:
+            log.warning(f"motor_jog 실패: {e}")
+            return "error"
 
     # ── 센서 입력 (bridge 모드에서 GNSS/IMU 브릿지가 호출) ───────
     def on_rtk(self, lat, lon, quality, source="pa3"):
@@ -196,6 +227,7 @@ def set_deadman(p):     _ctrl and _ctrl.set_deadman(p)
 def engage():           return _ctrl.engage() if _ctrl else False
 def disengage():        _ctrl and _ctrl.disengage()
 def estop():            _ctrl and _ctrl.estop()
+def motor_jog(permille): return _ctrl.motor_jog(permille) if _ctrl else "no-ctrl"
 def on_rtk(lat, lon, quality, source="pa3"):  _ctrl and _ctrl.on_rtk(lat, lon, quality, source)
 def on_imu(h, av, acc, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_imu(h, av, acc, roll, pitch)
 def status_json():      return _ctrl.status_json() if _ctrl else "{}"
