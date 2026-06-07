@@ -46,6 +46,7 @@ class ApolloCanBridge(
         @Volatile var lastTxId = 0              // 마지막 송신 CAN ID (진단)
         @Volatile var lastTxOk = false          // 마지막 CanWrite 결과 (진단)
         @Volatile var txCount = 0               // 송신 프레임 수 (진단)
+        @Volatile var rxCount = 0               // 수신 프레임 수 (진단 — 하트비트 도착 확인)
     }
 
     /** 현장 진단: CAN 채널/비트레이트/확장ID 강제 를 런타임 전환 후 재오픈. */
@@ -85,9 +86,16 @@ class ApolloCanBridge(
         try {
             VanMcu.setOnCanListener(object : VanMcu.OnCanListener {
                 override fun OnCan(m: VanMcu.CanMsg) {
-                    if (m.channel == channel) rxQueue.offer(m.id to m.data)
+                    rxQueue.offer(m.id to m.data)          // 채널 무관 전부 수용(진단)
+                    rxCount++
                 }
             })
+            // 일부 .so 는 RX 가 기본 '전부 차단' → 필터 비우고 전체 수용(id=0,mask=0) 시도
+            try {
+                VanMcu.CanHwFilterClear(channel)
+                VanMcu.CanHwFilterAdd(channel, 0, 0)
+                Log.i(TAG, "RX 필터 전체수용 설정")
+            } catch (e: Throwable) { Log.w(TAG, "RX 필터설정 무시: ${e.message}") }
             VanMcu.setCallback(true)
             Log.i(TAG, "CAN RX 콜백 등록 OK")
         } catch (e: Throwable) {
@@ -152,7 +160,8 @@ class ApolloCanBridge(
                     try {
                         val ok = VanMcu.CanWrite(channel, txId, data)
                         lastTxId = txId; lastTxOk = ok; txCount++
-                        Log.i(TAG, "TX ch=$channel id=0x%08X dlc=$dlc ok=%s".format(txId, ok))
+                        if (txCount % 50 == 1)   // 과다로그 방지 — 50프레임당 1회
+                            Log.i(TAG, "TX ch=$channel id=0x%08X dlc=$dlc ok=%s (#%d)".format(txId, ok, txCount))
                     } catch (e: Throwable) { Log.w(TAG, "CanWrite 실패: ${e.message}") }
                 }
             }

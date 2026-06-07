@@ -38,7 +38,7 @@ class JsBridge {
     @JavascriptInterface fun canStatus(): String {
         val vm = com.van.jni.VanMcu.available
         val b = com.farmmachine.autosteer.can.ApolloCanBridge
-        return """{"vanmcu":$vm,"canReady":${b.canReady},"connected":${b.clientConnected},"txCount":${b.txCount},"lastTxOk":${b.lastTxOk}}"""
+        return """{"vanmcu":$vm,"canReady":${b.canReady},"connected":${b.clientConnected},"txCount":${b.txCount},"lastTxOk":${b.lastTxOk},"rxCount":${b.rxCount}}"""
     }
 
     /** NTRIP(RTK 보정신호) 접속/해제/상태. */

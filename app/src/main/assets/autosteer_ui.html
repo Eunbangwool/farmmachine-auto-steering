@@ -666,7 +666,7 @@ function poll(){
       else if(!c.vanmcu){ cs.textContent='CAN: libsysmcu.so 미탑재 (비-Apollo 기기)'; cs.style.background='#fdeede'; cs.style.color='#b9760f'; }
       else { cs.textContent='CAN: 채널 열기 실패 (setCanSpeed)'; cs.style.background='#fdeede'; cs.style.color='var(--danger)'; }
       const ti=$('txInfo');
-      if(ti) ti.textContent='송신 '+(c.txCount||0)+'프레임 · 마지막 CanWrite '+(c.lastTxOk?'성공':'실패/없음')
+      if(ti) ti.textContent='송신 '+(c.txCount||0)+' · 수신 '+(c.rxCount||0)+'프레임 · CanWrite '+(c.lastTxOk?'성공':'실패/없음')
              +' · ch='+curCh+' '+(curBr/1000)+'k '+(curEff?'확장강제':'자동');
     }catch(e){ cs.textContent='CAN: 상태 불명(브리지 미연결)'; }
   } else if(cs){ cs.textContent='CAN: 데모 모드(실 기기 아님)'; }
