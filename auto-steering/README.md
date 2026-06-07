@@ -75,6 +75,65 @@ print(GnssSniffer("/dev/ttyS1", 115200, echo=True).run(5).format_report())
 baud, rep = detect_baudrate("/dev/ttyS1")   # 보레이트 모를 때
 ```
 
+## ★ 현장 1단계 브링업 — AGMO ver1 (실차 폐루프 첫 검증)
+
+> 목표: **위치 + heading + 조향 피드백** 폐루프를 실기기에서 처음 닫는다.
+> 전제(오너 확인): GNSS = **AGMO ver1 듀얼안테나 → Apollo 내부 UART(u-blox)**, 모터 = Keya KY170 CAN.
+> **device-owner 불필요**(모터 TX 권한 없이 동작 확인됨). USB 는 레벨러 전용이라 여기 안 씀.
+> 진입점은 전부 `app_main.*`(JsBridge 로 UI 에서도 호출 가능).
+
+### 0) 준비
+- APK 빌드·설치(`build-autosteer-apk.yml`). device-owner 설정 **하지 않음**.
+- 시작화면에서 제조사 = AGMO 선택(`set_vendor("agmo")`). 모터 verified=True 라 engage 허용.
+- 안전: 바퀴 주변 사람/장애물 없음, 비상정지·데드맨 손 위.
+
+### 1) 모터 CAN (TX + heartbeat RX)
+```python
+# 조그(hold-to-run): 좌(+)/우(-) 회전·정지. 부호 규약: +permille=좌, -permille=우.
+motor_jog(150); ... ; motor_jog(0)
+can_status()          # {"txCount":↑, "rxCount":?, ...}  ← logcat VanMcu onCallback 도 확인
+```
+- `txCount` 증가 + 모터 회전 → TX OK. 방향이 반대면 배선/부호 현장 확정.
+- **`rxCount` 증가 / `onCallback` 로그** → heartbeat 살아남(= setCallback CAN 필터 수정 효과).
+  - 살면: 모터 인코더 누적각을 실측 피드백으로 사용.
+  - 0 이면: dead-reckoning 폴백으로 자동 동작(폐루프는 GNSS heading 이 닫음).
+- 모터 CAN **채널(0/1)** 이 다르면 `setCanParams(ch, 250000, false)` 로 전환.
+
+### 2) GNSS (내부 UART → 위치 + 듀얼안테나 heading)
+```python
+gnss_power_on()                       # 내부 u-blox 전원/standby ON (sysfs, best-effort)
+scan_gnss()                           # /dev/ttyS* 자동 스니핑 → best 포트·baud
+configure_moving_base("/dev/ttySX")   # UBX-NAV-RELPOSNED(듀얼헤딩)+PVT+VELNED+GGA/VTG 활성·저장
+start_gnss("/dev/ttySX")              # 파서 가동 → on_rtk/on_heading_meas/on_velocity 배선
+status_json()                         # active_gnss, pos, heading_deg, xte_cm, heading_degraded
+```
+- `scan_gnss().best` 가 None 이면 전원/배선/baud 확인(전원 sysfs 실패는 logcat 에 표시).
+- `status` 에 위치 갱신 + RTK 품질 4/5 + `heading_deg` 변화 → GNSS 유입 OK.
+- **RELPOSNED 가 안 나오거나 heading 이 안 잡히면**: 수신기가 무빙베이스/로버 모드가 아닐 수 있음
+  → 현장 조사(2번 `configure_moving_base` 는 출력만 켤 뿐, 모드 자체는 공장설정 가정).
+
+### 3) 듀얼안테나 heading 부호 확정 (base=좌/rover=우)
+```python
+start_mount_diag()    # 직선 ~15m 주행, 끝에 차를 우측으로 살짝 기울임
+mount_diag_status()   # base_antenna / rec_baseline_offset_deg(+90?) / rec_dual_roll_sign(+1?)
+```
+- 추천값이 코드 기본(`dual_baseline_offset_deg=90`, `dual_roll_sign=+1`)과 다르면 그 두 상수만 맞춤.
+
+### 4) 저속 폐루프 (1 km/h, 빈 농지)
+- engage 게이트: 데드맨 + RTK 4/5 + heading 유효 (+ heartbeat 있으면 사용). 끊기면 즉시 disengage.
+- `set_ab_line(...)` 또는 `setDemoAbLine()` → `engage()` → **일반 모드** 1km/h → 안정되면 과부하 모드.
+- E-stop/데드맨 동작을 **주행 전** 반드시 먼저 확인.
+
+### 문제 해결 빠른표
+| 증상 | 우선 확인 |
+|------|-----------|
+| 모터 안 돎 | `can_status().canReady`, 채널(0/1), 250k, 확장프레임(자동) |
+| 방향 반대 | data-dir/부호(현장), `+permille=좌` 규약 |
+| heartbeat rxCount=0 | logcat `onCallback` 유무 → 없으면 dead-reckoning 으로 계속 진행 가능 |
+| GNSS best=None | `gnss_power_on()` 로그, 다른 ttyS, baud(115200/38400/460800) |
+| heading 안 잡힘 | RELPOSNED 출력 여부(무빙베이스 모드) · `heading_degraded` 플래그 |
+| 중심 치우침 | `start_mount_diag`/`start_heading_calib` 로 바이어스 보정 |
+
 ## 현장 1일차 절차 (요약)
 1. `field_config.write_template` → 줄자 실측값 입력 (또는 calibration 자동추정)
 2. `f9p_client` sniff 로 PA-3/F9P NMEA·RTK fix(4/5) 확인
@@ -83,6 +142,8 @@ baud, rep = detect_baudrate("/dev/ttyS1")   # 보레이트 모를 때
 5. 데드맨 + 비상정지 동작 먼저 확인 → 1km/h 빈 농지 일반 모드 → 과부하 모드
 
 ## 남은 하드웨어 의존 항목
-- ApolloCanInterface: 실차 `can0` 비트레이트/포트만 맞추면 동작(코드 완료)
-- PA-3 CAN 출력(위치+자세): CHCNAV OEM CAN 프로토콜 문서 필요
-- 실측값/모터 CAN ID: 위 도구로 수집 → JSON 주입
+- 모터 CAN: Apollo `libsysmcu.so`(VanMcu **채널 API**, socketcan 아님) 경유 — 실차 채널(0/1) 확정.
+  RX heartbeat 는 setCallback(CAN 비트) 수정 완료 → 실기기 `onCallback`/`rxCount` 로 수신 검증.
+- GNSS: AGMO ver1 내부 UART 포트(`scan_gnss`) + 무빙베이스 RELPOSNED 출력 여부(모드=공장설정 가정) 현장 확인.
+- PA-3/NX510(CAN/RS232): 실험 후 추가. CAN 출력은 CHCNAV OEM CAN 프로토콜 문서 필요.
+- 실측값(wheelbase/레버암): `calibration` 자동추정 또는 줄자 → `tractor.json` 주입.
