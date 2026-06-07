@@ -278,14 +278,39 @@ class Controller:
         r = self._mdiag.report(); r["active"] = True
         return r
 
-    def start_gnss(self, port="/dev/ttyACM0", baud=0):
+    # AGMO ver1 GNSS(u-blox)는 Apollo 내부 UART 직결 + sysfs GPIO 전원(Allwinner sunxi).
+    # 디컴파일 인터페이스 사실(경로만): 전원/standby 를 1 로 써서 켠다. 권한(device-owner/system)
+    # 없으면 best-effort 실패 → logcat 으로 현장 확인. (USB 안테나는 레벨러 전용 — 여기 해당 없음)
+    _GNSS_PWR_SYSFS = (
+        "/sys/class/misc/sunxi-gps/rf-ctrl/gnss_pwren_state",          # GNSS 전원 enable
+        "/sys/devices/virtual/misc/sunxi-gps/rf-ctrl/nstandby_state",  # u-blox standby 해제
+    )
+
+    def gnss_power_on(self):
+        """AGMO ver1 내부 u-blox 전원/standby ON (best-effort sysfs write)."""
+        if self.demo:
+            return "demo"
+        done = []
+        for p in self._GNSS_PWR_SYSFS:
+            try:
+                with open(p, "w") as f:
+                    f.write("1")
+                done.append(p)
+            except Exception as e:
+                log.info(f"GNSS 전원 sysfs 쓰기 불가({p}): {e} — 권한/플랫폼 현장 확인")
+        return "ok" if done else "no-sysfs"
+
+    def start_gnss(self, port="/dev/ttyS1", baud=0):
         """
-        F9P/PA-3 USB-serial 에서 NMEA(GGA 위치 + HDT 진헤딩) 읽어 on_rtk/on_heading 공급.
-        baud=0 이면 벤더 GNSS 스펙의 serial_baud 사용. 안테나/포트 없으면 안전 무동작.
-        ★ Apollo USB-serial 접근 경로는 현장 확인(필요시 Kotlin USB-serial 브릿지).
+        GNSS(NMEA GGA 위치 + HDT/UBX 진헤딩) 읽어 on_rtk/on_heading(_meas) 공급.
+        ★ 자율조향 1단계 = AGMO ver1 안테나(내부 UART). port 는 내부 tty(예: /dev/ttyS1~S3) —
+          실기기에서 어느 포트에 NMEA 가 나오는지 현장 스니핑으로 확정. (USB 아님; USB=레벨러 전용)
+        baud=0 이면 벤더 GNSS 스펙 serial_baud. 포트/안테나 없으면 안전 무동작.
+        PA-3/NX510(CAN/RS232)은 실험 후 추가.
         """
         if self.demo:
             return "demo"
+        self.gnss_power_on()       # 내부 u-blox 전원 ON 시도(없으면 무시)
         import f9p_client as fc
         spec = getattr(self.sys.vendor, "gnss_primary", None) if self.sys.vendor else None
         baud = int(baud) or (spec.serial_baud if spec else 115200)
@@ -392,7 +417,8 @@ def start_heading_calib():    return _ctrl.start_heading_calib() if _ctrl else "
 def heading_calib_status():   return json.dumps(_ctrl.heading_calib_status() if _ctrl else {"active": False}, ensure_ascii=False)
 def start_mount_diag():       return _ctrl.start_mount_diag() if _ctrl else "no-ctrl"
 def mount_diag_status():      return json.dumps(_ctrl.mount_diag_status() if _ctrl else {"active": False}, ensure_ascii=False)
-def start_gnss(port="/dev/ttyACM0", baud=0): return _ctrl.start_gnss(port, baud) if _ctrl else "no-ctrl"
+def start_gnss(port="/dev/ttyS1", baud=0): return _ctrl.start_gnss(port, baud) if _ctrl else "no-ctrl"
+def gnss_power_on():    return _ctrl.gnss_power_on() if _ctrl else "no-ctrl"
 def on_rtk(lat, lon, quality, source="pa3"):  _ctrl and _ctrl.on_rtk(lat, lon, quality, source)
 def on_imu(h, av, acc, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_imu(h, av, acc, roll, pitch)
 def status_json():      return _ctrl.status_json() if _ctrl else "{}"

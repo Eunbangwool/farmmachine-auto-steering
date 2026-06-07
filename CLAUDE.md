@@ -16,13 +16,19 @@
 ### 자율조향 시스템 구성
 ```
 [Apollo 10 Pro 태블릿]  ← 본인 앱 실행 (AgNav 대체)
-    ├─ CAN → 조향 모터  (직접 제어)
-    ├─ CAN ← 앵글센서   (조향각 피드백)
-    ├─ USB → F9P       (RTK GNSS)
-    └─ USB → LoRa      (NTRIP 보정신호)
+    ├─ CAN  → 조향 모터  (직접 제어)
+    ├─ CAN  ← 앵글센서   (조향각 피드백)
+    ├─ UART(내부) ← AGMO ver1 듀얼안테나 GNSS  ★자율조향 1단계 (u-blox, sysfs GPIO 전원)
+    ├─ CAN/RS232 ← CHCNAV PA-3/NX510          (실험 후 추가)
+    └─ USB  ← (레벨러 안테나 전용)            ★자율조향 GNSS 아님
 ```
 
 **배경**: NX510(CHCNAV 자율조향)이 이미 설치되어 있으나, AgNav 앱을 본인 앱으로 교체하는 구조. 모터 회사와 모터 프로그램 보유. CAN 프로토콜은 AGMO 경유 입수 예정.
+
+**★ GNSS 경로(오너 확인, 2026-06)**: 자율조향 GNSS는 **USB 아님**. **1단계 = AGMO ver1 안테나(루프
+듀얼+IMU 돔) → Apollo 내부 UART(tty), sysfs GPIO 로 전원/standby ON**(AGMO 디컴파일: `UBLOX`/
+`gnss_pwren_state`, Allwinner sunxi). 이후 **CHCNAV PA-3/NX510(CAN 500k 또는 RS232)** 도 실험 후 추가.
+**USB 는 레벨러 안테나 추가 시에만** 사용. (과거 "USB→F9P" 표기는 폐기)
 
 ### Monorepo 구조
 ```
