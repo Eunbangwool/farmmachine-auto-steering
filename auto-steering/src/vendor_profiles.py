@@ -37,7 +37,7 @@ from autosteer_core import GnssReceiverSpec, CHCNAV_PA3, UBLOX_F9P
 
 # AGMO 자율주행 키트 수신기 — ★ 실제 스펙 미확인(보수적 추정값)
 AGMO_GNSS = GnssReceiverSpec(
-    name="AGMO GNSS (추정)", can_bitrate=500_000, serial_baud=115_200,
+    name="내장 GNSS (추정)", can_bitrate=500_000, serial_baud=115_200,
     nmea_rate_hz=10.0, imu_rate_hz=100.0,
     heading_acc_deg=0.5, rollpitch_acc_deg=0.2, vel_acc_mps=0.05,
     rtcm="RTCM3.x",
@@ -111,8 +111,8 @@ class VendorProfile:
 
 VENDOR_PROFILES: Dict[str, VendorProfile] = {
     "agmo": VendorProfile(
-        key="agmo", display_name="AGMO",
-        tagline="AGMO 자율주행 키트 · Keya 조향모터",
+        key="agmo", display_name="기본",
+        tagline="Apollo 10 Pro · Keya 조향모터",
         can_verified=True,
         canspec=KEYA_CANSPEC,
         gnss_primary=AGMO_GNSS, gnss_backup=UBLOX_F9P,

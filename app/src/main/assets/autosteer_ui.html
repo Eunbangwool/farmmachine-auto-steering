@@ -3,18 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>AGMO Solution — 자율주행</title>
+<title>자율주행</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
 <style>
 /* ════════════════════════════════════════════════════════════════
-   AGMO Solution 앱 화면 재현 (clean-room). 디자인: 밝은 회색 + 틸 강조.
-   ※ AGMO 디컴파일 자산 미사용 — 레이아웃/색/흐름만 자체 구현.
+   운영 UI (clean-room). 디자인: 밝은 회색 + 틸 강조.
+   ※ 외부 디컴파일 자산 미사용 — 레이아웃/색/흐름만 자체 구현.
    ════════════════════════════════════════════════════════════════ */
 :root{
-  /* AGMO Solution 실제 브랜드 색 (디컴파일 colors.xml 확인값) */
-  --agmo:#226b5d; --agmo-dk:#1a5448; --agmo-lt:#e2efec; --agmo-bright:#00b973;
+  /* 브랜드 색 토큰 */
+  --brand:#226b5d; --brand-dk:#1a5448; --brand-lt:#e2efec; --brand-bright:#00b973;
   --bg:#eaeaea; --panel:#eef1f3; --card:#ffffff;
   --field:#d9dde0; --field-top:#cfd6da; --field-line:#b3bbc0; --horizon:#86b9c0;
   --ink:#333333; --sub:#5b666d; --muted:#9aa4ab; --line:#dddddd;
@@ -66,12 +66,12 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 #consent .chk{display:flex;align-items:center;gap:8px;color:var(--sub);font-size:14px;cursor:pointer;}
 #consent .chk .b{width:20px;height:20px;border-radius:50%;border:2px solid var(--muted);
   display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;}
-#consent .chk.ok .b{background:var(--agmo);border-color:var(--agmo);}
+#consent .chk.ok .b{background:var(--brand);border-color:var(--brand);}
 #consent .ok-btn{background:var(--off);color:#fff;border:none;border-radius:22px;
   padding:10px 30px;font-size:15px;font-weight:700;}
-#consent .ok-btn.en{background:var(--agmo);}
+#consent .ok-btn.en{background:var(--brand);}
 
-/* ───── 벤더 선택 (멀티벤더, AGMO 테마) ───── */
+/* ───── 벤더 선택 (멀티벤더) ───── */
 #vendor{background:var(--bg);flex-direction:column;align-items:center;justify-content:center;gap:18px;}
 #vendor.on{display:flex;}   /* .on 일 때만 표시 (consent/boot 를 덮지 않도록) */
 #vendor h2{font-size:22px;font-weight:700;margin:0;}
@@ -79,12 +79,12 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .vcards{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;}
 .vcard{width:210px;background:var(--card);border:2px solid var(--line);border-radius:14px;
   padding:18px;text-align:left;cursor:pointer;transition:.12s;}
-.vcard:active{transform:scale(.98);} .vcard:hover{border-color:var(--agmo);}
+.vcard:active{transform:scale(.98);} .vcard:hover{border-color:var(--brand);}
 .vcard .vn{font-size:20px;font-weight:900;}
 .vcard .vt{font-size:12.5px;color:var(--sub);margin:6px 0 10px;min-height:34px;line-height:1.4;}
 .vcard .vg{font-size:11.5px;color:var(--muted);}
 .vbadge{display:inline-block;margin-top:10px;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;}
-.vbadge.ok{background:var(--agmo-lt);color:var(--agmo-dk);}
+.vbadge.ok{background:var(--brand-lt);color:var(--brand-dk);}
 .vbadge.todo{background:#fdeede;color:#c98a16;}
 
 /* ───── 상단 상태바 (주행/작업 공통) ───── */
@@ -97,14 +97,14 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .statusbar .cell.mode{flex:1.1;align-items:flex-start;padding-left:16px;}
 .statusbar .mode .k{display:flex;align-items:center;gap:6px;}
 .statusbar .mode .st{font-size:22px;font-weight:900;}
-.statusbar .mode .st.act{color:var(--agmo);}
+.statusbar .mode .st.act{color:var(--brand);}
 .err{display:flex;align-items:center;gap:8px;}
-.err .arr{color:var(--agmo);font-size:14px;letter-spacing:-2px;}
+.err .arr{color:var(--brand);font-size:14px;letter-spacing:-2px;}
 .err .arr.hot{color:var(--danger);}
 .err .e{font-size:26px;} .err .u{font-size:12px;color:var(--sub);font-weight:500;margin-left:2px;}
 .sensor{display:flex;align-items:center;gap:7px;font-size:17px;font-weight:700;color:var(--sub);}
 .sensor .ic{width:22px;height:22px;opacity:.6;}
-.sensor.good{color:var(--agmo);} .sensor.good .ic{opacity:1;}
+.sensor.good{color:var(--brand);} .sensor.good .ic{opacity:1;}
 
 /* ───── 메인 주행 화면 ───── */
 #main .field, #work .field{position:absolute;inset:98px 0 0 0;overflow:hidden;background:var(--field);}
@@ -117,7 +117,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .bigbtn{background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:14px;
   width:120px;height:92px;display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:8px;color:var(--ink);font-size:15px;font-weight:700;box-shadow:0 3px 10px rgba(0,0,0,.08);}
-.bigbtn svg{width:34px;height:34px;color:var(--agmo);}
+.bigbtn svg{width:34px;height:34px;color:var(--brand);}
 .bigbtn:active{transform:scale(.97);}
 
 /* ───── 작업 화면 ───── */
@@ -130,22 +130,22 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .routebox .lineno{width:38px;height:38px;border-radius:50%;border:2px solid var(--sub);
   display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;color:var(--sub);}
 .endbtn{position:absolute;left:14px;bottom:22px;display:flex;align-items:center;gap:6px;
-  background:var(--agmo-lt);color:var(--agmo-dk);border:none;border-radius:10px;padding:9px 14px;
+  background:var(--brand-lt);color:var(--brand-dk);border:none;border-radius:10px;padding:9px 14px;
   font-size:13px;font-weight:700;}
 .workctrl{position:absolute;right:16px;top:112px;display:flex;flex-direction:column;gap:14px;align-items:flex-end;}
 .nudges{display:flex;gap:10px;}
 .nbtn{width:58px;height:48px;background:#fff;border:1px solid var(--line);border-radius:10px;
-  display:flex;align-items:center;justify-content:center;color:var(--agmo);box-shadow:0 2px 6px rgba(0,0,0,.06);}
+  display:flex;align-items:center;justify-content:center;color:var(--brand);box-shadow:0 2px 6px rgba(0,0,0,.06);}
 .uturn{display:flex;align-items:center;gap:14px;}
 .ubtn{width:54px;height:54px;border-radius:50%;background:#fff;border:1px solid var(--line);
   display:flex;align-items:center;justify-content:center;color:var(--ink);box-shadow:0 2px 6px rgba(0,0,0,.06);}
 .section{display:flex;flex-direction:column;align-items:center;gap:2px;}
-.section .arr{color:var(--agmo);font-size:18px;}
+.section .arr{color:var(--brand);font-size:18px;}
 .section .n{font-size:24px;}
 .startbtn{width:118px;height:96px;border-radius:14px;background:#fff;border:1px solid var(--line);
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
-  color:var(--agmo-dk);font-size:14px;font-weight:700;box-shadow:0 3px 10px rgba(0,0,0,.1);}
-.startbtn.go{background:var(--agmo);color:#fff;border-color:var(--agmo);}
+  color:var(--brand-dk);font-size:14px;font-weight:700;box-shadow:0 3px 10px rgba(0,0,0,.1);}
+.startbtn.go{background:var(--brand);color:#fff;border-color:var(--brand);}
 .startbtn svg{width:36px;height:36px;}
 
 /* ───── 설정 드로어 ───── */
@@ -156,7 +156,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .detail{width:42%;max-width:430px;background:var(--panel);height:100%;display:none;flex-direction:column;
   box-shadow:2px 0 14px rgba(0,0,0,.12);}
 .detail.on{display:flex;}
-.dhead{height:56px;background:var(--agmo);color:#fff;display:flex;align-items:center;justify-content:center;
+.dhead{height:56px;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;
   position:relative;font-size:19px;font-weight:700;flex:none;}
 .dhead .x{position:absolute;right:16px;font-size:24px;font-weight:400;}
 .dhead .back{position:absolute;left:14px;font-size:15px;font-weight:500;display:flex;align-items:center;gap:4px;}
@@ -166,29 +166,29 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .mitem .lbl{flex:1;}
 .mitem .ch{color:var(--muted);font-size:18px;}
 .mitem.sel{background:#dfe4e7;font-weight:700;}
-.mitem.sel .ic{color:var(--agmo);}
+.mitem.sel .ic{color:var(--brand);}
 .dbody{flex:1;overflow:auto;padding:22px;}
 .row{display:flex;align-items:center;justify-content:space-between;padding:14px 4px;border-bottom:1px solid var(--line);}
 .row .k{font-size:15px;font-weight:700;color:var(--ink);}
 .row .val{font-size:14px;color:var(--sub);}
 /* 토글 */
 .tg{width:46px;height:26px;border-radius:14px;background:var(--off);position:relative;transition:.15s;}
-.tg.on{background:var(--agmo);}
+.tg.on{background:var(--brand);}
 .tg::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
   background:#fff;transition:.15s;}
 .tg.on::after{left:23px;}
 .tg.ro{opacity:.95;}
 .statlabel{font-size:13px;font-weight:700;margin-right:8px;color:var(--muted);}
-.statlabel.on{color:var(--agmo);}
-.pill{background:var(--agmo);color:#fff;border:none;border-radius:24px;padding:12px;width:100%;
+.statlabel.on{color:var(--brand);}
+.pill{background:var(--brand);color:#fff;border:none;border-radius:24px;padding:12px;width:100%;
   font-size:16px;font-weight:700;margin-top:18px;}
 .tabs{display:flex;background:#dfe4e7;border-radius:10px;padding:4px;margin-bottom:18px;}
 .tabs .t{flex:1;text-align:center;padding:8px;border-radius:8px;font-weight:700;color:var(--sub);}
 .tabs .t.sel{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.1);}
 .ver{display:flex;align-items:center;gap:10px;justify-content:center;margin-top:24px;color:var(--sub);}
-.ver .mk{font-weight:900;color:var(--agmo);font-size:20px;}
+.ver .mk{font-weight:900;color:var(--brand);font-size:20px;}
 .expand{display:flex;align-items:center;gap:12px;padding:16px 4px;border-bottom:1px solid var(--line);font-size:15px;font-weight:700;}
-.expand .ic{color:var(--agmo);width:22px;height:22px;}
+.expand .ic{color:var(--brand);width:22px;height:22px;}
 .expand .ch{margin-left:auto;color:var(--muted);}
 
 /* ───── 모달 (주행 모드/경로 유형/경고) ───── */
@@ -202,7 +202,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .choice{width:130px;height:120px;background:#f3f5f6;border-radius:14px;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:12px;font-size:15px;font-weight:700;color:var(--ink);}
 .choice:active{transform:scale(.97);}
-.choice svg{width:46px;height:40px;color:var(--agmo);}
+.choice svg{width:46px;height:40px;color:var(--brand);}
 /* 경고 다이얼로그 */
 #warn .card{width:62%;max-width:560px;background:#fff;border-radius:14px;overflow:hidden;}
 #warn .wt{color:var(--danger);font-weight:700;text-align:center;padding:16px;font-size:16px;}
@@ -227,7 +227,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
       <div class="rail"></div><div class="dot l"></div><div class="dot r"></div>
       <div class="trk">🚜</div><div class="pct" id="bootPct">8%</div>
     </div>
-    <div class="logo"><div class="mk">◭ AGMO</div><div class="sb">AGRICULTURAL MOBILITY</div></div>
+    <div class="logo"><div class="mk">◭ 자율주행</div><div class="sb">AUTO STEER</div></div>
   </div>
 
   <!-- ══ 동의 ══ -->
@@ -437,7 +437,7 @@ function openDetail(key){
        ${toggleRow('과속 경고 알림',true)}${toggleRow('주행 오차 경고 알림',true)}
        <div class="row"><span class="k">AB 근접 알림</span><span class="val">OFF ▾</span></div>
        ${toggleRow('경로 이탈 자동 중지',false)}
-       <div class="ver"><span class="mk">◭</span><div>AGMO Solution<br><span style="font-size:11px">1.6.7</span></div></div>`;
+       <div class="ver"><span class="mk">◭</span><div>자율주행<br><span style="font-size:11px">v0.1</span></div></div>`;
   }else if(key==='vehicle'){
     h=`<div class="tabs"><div class="t sel">1</div><div class="t">2</div><div class="t">3</div></div>
        <div style="text-align:center;padding:18px 0">${TRACTOR_SVG.replace('width="48" height="54"','width="150" height="120"')}</div>
@@ -448,7 +448,7 @@ function openDetail(key){
     h=ex('IMU 영점 설정','M4 8l4 4-4 4M12 8l4 4-4 4')+ex('GPS 중심 설정','M12 21s7-6 7-11a7 7 0 10-14 0c0 5 7 11 7 11z')+ex('배속 선회 설정','M4 12a8 8 0 018-8v4l5-5-5-5v4');
   }else if(key==='rtk'){
     const r=(k,v)=>`<div class="row"><span class="k">${k}</span><span class="val">${v}</span></div>`;
-    h=r('서버 IP','***.***.***.182')+r('서버 포트','2101')+r('계정 ID','agmo00060')+r('계정 비밀번호','●●●●●●●●')+r('마운트 포인트','AGMO_AUTO');
+    h=r('서버 IP','***.***.***.182')+r('서버 포트','2101')+r('계정 ID','user0001')+r('계정 비밀번호','●●●●●●●●')+r('마운트 포인트','AUTO');
   }else if(key==='system'){
     const s=S.sys;
     const sr=(k,on)=>`<div class="row"><span class="k">${k}</span><div style="display:flex;align-items:center"><span class="statlabel ${on?'on':''}">${on?'ON':'OFF'}</span><div class="tg ${on?'on':''} ro"></div></div></div>`;
@@ -464,7 +464,7 @@ function vendorList(){
   if(BR && BR.listVendors){ try{ v=JSON.parse(BR.listVendors()||"[]"); }catch(e){} }
   if(Array.isArray(v) && v.length) return v;       // Python 정상 → 사용
   return [                                          // 비었거나 실패 → 항상 보이는 기본 목록
-    {key:"agmo",name:"AGMO",tagline:"AGMO 자율주행 키트 · Keya 조향모터",can_verified:true,gnss:"AGMO GNSS"},
+    {key:"agmo",name:"기본",tagline:"Apollo 10 Pro · Keya 조향모터",can_verified:true,gnss:"내장 GNSS"},
     {key:"chcnav",name:"CHCNAV",tagline:"NX510 / AgNav · PA-3 안테나",can_verified:false,gnss:"CHCNAV PA-3"},
     {key:"fjd",name:"FJDynamics",tagline:"AT2 dome · FJD 전동조향",can_verified:false,gnss:"FJDynamics AT2"},
   ];
