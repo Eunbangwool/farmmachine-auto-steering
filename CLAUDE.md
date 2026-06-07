@@ -212,3 +212,31 @@ cd auto-steering/src
 pip install numpy
 python autosteer_core.py   # MockCAN으로 즉시 테스트 가능
 ```
+
+
+---
+
+## ⚖️ 법적 준수 사항 (Claude Code 필독)
+
+### 코드 작성 시 반드시 지켜야 할 원칙
+
+1. **코드 비복제**: AGMO·CHCNAV·FJD의 소스코드 표현을 절대 복사하지 않음
+   - `.so` 분석 결과는 인터페이스 사양(CAN ID, 함수 시그니처)만 사용
+   - 알고리즘은 공개 학술 자료 기반으로 독립 재작성
+
+2. **운전자 보조 시스템 명시**: UI에 "자율주행 아님, 운전자 상시 감독 필요"
+   문구 반드시 포함 (이용약관 제2조 반영)
+
+3. **작동 기록 저장**: 사고 시 책임 규명을 위해 조향 명령·운전자 개입 여부를
+   로컬에 저장하는 로직 유지 (이용약관 제8조)
+
+4. **상표 비혼용**: 코드·UI에 AGMO·CHCNAV·FJD 상표·로고 사용 금지
+
+### 관련 문서 위치
+- `legal/TERMS_OF_SERVICE.md`            — 이용약관 (변호사 검토 필요)
+- `legal/INSURANCE_GUIDE.md`             — PL보험 가입 가이드
+- `legal/INDEPENDENT_DEVELOPMENT_RECORD.md` — 독립 개발 입증 기록
+
+### 개발 일지 갱신 의무
+새 기능을 추가하거나 제3자 하드웨어 인터페이스를 분석할 때마다
+`legal/INDEPENDENT_DEVELOPMENT_RECORD.md`의 6절(개발 일지)에 날짜와 내용을 추가할 것.
