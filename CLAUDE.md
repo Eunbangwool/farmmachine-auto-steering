@@ -147,6 +147,34 @@ class CanSpec:
 
 ---
 
+## 운영 UI = AGMO Solution 앱 화면 재현 (★ 필수 / 세션 간 유지)
+
+> ⚠️ 이전에 매 세션마다 UI가 제각각으로 나온 원인: 이 요구가 CLAUDE.md에 없었고,
+> AGMO 분석물은 `apk-analysis/findings/`(gitignore, 외부공유금지)에만 있어 레포로 안 따라옴.
+> → **앞으로 운영 UI(`app/src/main/assets/autosteer_ui.html`)는 AGMO Solution 앱을 그대로 재현한다.**
+
+- **대상 앱 = AGMO Solution v1.6.7** (AGMO 태블릿 기본앱). **AgNav = CHCNAV 앱**(별개, 혼동 금지)
+- **clean-room 원칙**: AGMO 디컴파일 리소스/문자열/드로어블/스크린샷을 **레포에 커밋 금지**
+  (public repo + findings 정책). 화면을 보고 레이아웃/색/배치/흐름만 자체 HTML로 재현.
+- **디자인 시스템**: 밝은 회색 패널(#e9ecee)/흰 카드, **틸 강조 #2f9d8e**(헤더·토글ON·버튼·활성아이콘),
+  빨강 #e8472b(경고/종료), 원근 그리드 필드, 상단 라이트 상태바, Noto Sans KR
+- **화면 구성**:
+  1. 스플래시(AGMO 로고 + 트랙터가 진행바 위, %)
+  2. 사용자 동의 안내(약관 + 체크 + 확인)
+  3. 메인 주행화면: 상단 상태바[자율주행모드/비활성화 · 예상 종료 시간 · 오차 ◀◀ N cm ▶▶ · 현재 속도 km/h · 센서 상태] + 원근 필드(중앙 트랙터, 좌상단 카메라) + 하단 [⚙설정][🛞주행]
+  4. 설정 드로어(좌 틸헤더 리스트 → 우 디테일, 마스터-디테일):
+     사용자 정보(ID/언어/경고토글들/버전) · 차량 정보(1/2/3탭, 트랙터그림, 휠베이스, 변경하기) ·
+     최적화(IMU영점/GPS중심/배속선회) · RTK 보정 신호(서버IP/포트/ID/PW/마운트포인트) ·
+     시스템 상태(네트워크/GPS/RTK/IMU/조향모터 ON·OFF)
+  5. 주행 모드 선택 모달: AB 직선 / AB 곡선 / 완전자율
+  6. 경로 유형 모달: + 새 경로 추가 / 📁 기존 경로 사용
+  7. 작업화면: 좌 경로 미리보기(전진, AB선+트랙터, 라인#) + 우 넛지(±)·유턴L/R·섹션수·**주행 시작** + 경고 다이얼로그(비정상 작동: GPS/IMU 등 + 빨강 주행 종료)
+- **백엔드 배선**(JsBridge 유지): engaged→활성/비활성·주행시작/종료, xte_cm→오차, speed_mps→속도,
+  motor_verified/vendor→배너, active_gnss→센서상태, engage()/disengage()/estop(), set_ab_line/setDemoAbLine
+- 멀티벤더: 부팅 시 제조사 선택은 유지하되 AGMO 테마로. (CHCNAV/FJD는 추후 각 앱 룩 분기 가능)
+
+---
+
 ## 멀티벤더 (제조사 선택) — ✅ `vendor_profiles.py`
 
 > 컨셉: 이 앱을 **CHCNAV / AGMO / FJDynamics** 태블릿에 설치만 하면 그들의 하드웨어
