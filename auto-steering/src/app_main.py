@@ -62,6 +62,7 @@ class Controller:
         self._ntrip = None            # NTRIP 클라이언트(RTK 보정신호)
         self._gnss_client = None      # GNSS NMEA 클라이언트(F9P/PA-3) — NTRIP RTCM 주입 대상
         self._hcal = None             # 헤딩 바이어스 캘리브레이터(ver1, 진행 중일 때만)
+        self._mdiag = None            # 듀얼 마운트(base/rover·부호) 진단기(진행 중일 때만)
         self._sections = 4            # 작업 섹션 수(표시)
 
         if vendor:
@@ -251,6 +252,32 @@ class Controller:
         return {"active": True, "progress": round(self._hcal.progress, 3),
                 "bias_deg": self.sys.heading_bias_deg if not self.demo else 0.0}
 
+    def _on_heading_meas(self, meas):
+        """무빙베이스 RELPOSNED → EKF 반영 + (진행 중이면) 듀얼 마운트 진단 샘플 수집."""
+        self.sys.on_heading_meas(meas)
+        if self._mdiag is not None:
+            st = self.sys.estimator.get_state()      # x=east, y=north
+            self._mdiag.add_sample(st.x, st.y,
+                                   float(meas.get("heading_deg", 0.0)),
+                                   float(meas.get("rel_d_m", 0.0)),
+                                   float(meas.get("baseline_m", 1.0)),
+                                   float(meas.get("acc_deg", 0.0)))
+            self._mdiag.maybe_log()
+
+    def start_mount_diag(self):
+        """듀얼안테나 base/rover·부호 진단 시작 — 이후 직선 ~15m 주행(끝에 한쪽으로 살짝 기울이면 roll 부호까지)."""
+        if self.demo:
+            return "demo"
+        from calibration import DualMountDiagnostic
+        self._mdiag = DualMountDiagnostic()
+        return "ok"
+
+    def mount_diag_status(self):
+        if self._mdiag is None:
+            return {"active": False}
+        r = self._mdiag.report(); r["active"] = True
+        return r
+
     def start_gnss(self, port="/dev/ttyACM0", baud=0):
         """
         F9P/PA-3 USB-serial 에서 NMEA(GGA 위치 + HDT 진헤딩) 읽어 on_rtk/on_heading 공급.
@@ -267,7 +294,7 @@ class Controller:
             port=str(port), baudrate=baud, source=src,
             on_rtk=lambda la, lo, q: self.sys.on_rtk(la, lo, q, source=src),
             on_heading=self.sys.on_heading,
-            on_heading_meas=self.sys.on_heading_meas,   # 무빙베이스 RELPOSNED(방법 1·3·4)
+            on_heading_meas=self._on_heading_meas,      # 무빙베이스 RELPOSNED(방법 1·3·4) + 마운트 진단
             on_velocity=self.sys.on_velocity)           # 진로각 보조(방법 5)
         ok = False
         try:
@@ -363,6 +390,8 @@ def ntrip_status():     return json.dumps(_ctrl.ntrip_status() if _ctrl else
 def on_heading(compass_deg):  _ctrl and _ctrl.on_heading(compass_deg)
 def start_heading_calib():    return _ctrl.start_heading_calib() if _ctrl else "no-ctrl"
 def heading_calib_status():   return json.dumps(_ctrl.heading_calib_status() if _ctrl else {"active": False}, ensure_ascii=False)
+def start_mount_diag():       return _ctrl.start_mount_diag() if _ctrl else "no-ctrl"
+def mount_diag_status():      return json.dumps(_ctrl.mount_diag_status() if _ctrl else {"active": False}, ensure_ascii=False)
 def start_gnss(port="/dev/ttyACM0", baud=0): return _ctrl.start_gnss(port, baud) if _ctrl else "no-ctrl"
 def on_rtk(lat, lon, quality, source="pa3"):  _ctrl and _ctrl.on_rtk(lat, lon, quality, source)
 def on_imu(h, av, acc, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_imu(h, av, acc, roll, pitch)

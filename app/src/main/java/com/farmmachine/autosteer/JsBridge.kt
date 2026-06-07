@@ -38,6 +38,8 @@ class JsBridge {
     @JavascriptInterface fun setWheelbase(m: Double): String = SteerController.setWheelbase(m)
     @JavascriptInterface fun startHeadingCalib(): String = SteerController.startHeadingCalib()
     @JavascriptInterface fun headingCalibStatus(): String = SteerController.headingCalibStatus()
+    @JavascriptInterface fun startMountDiag(): String = SteerController.startMountDiag()
+    @JavascriptInterface fun mountDiagStatus(): String = SteerController.mountDiagStatus()
 
     /** CAN 하드웨어 상태 (모터 점검 화면 표시용). logcat 없이 확인. */
     @JavascriptInterface fun canStatus(): String {

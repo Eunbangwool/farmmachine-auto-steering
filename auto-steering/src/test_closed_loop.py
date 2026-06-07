@@ -246,6 +246,28 @@ def test_dual_mount_offset():
     assert abs((hd - 90 + 180) % 360 - 180) < 1.0, f"마운트 오프셋 복원 실패: {hd}"
 
 
+def test_mount_diagnostic():
+    """현장 진단: 직선주행 중 relPosHeading=course+90 → base=좌 추천. 기울임 → roll 부호."""
+    from calibration import DualMountDiagnostic
+    d = DualMountDiagnostic(min_distance_m=15.0, min_samples=60)
+    north = 0.0
+    for _ in range(120):                       # 북진(course≈0), 베이스라인=차체+90 → relPosHeading≈90
+        north += 0.25
+        d.add_sample(east=0.0, north=north, relpos_heading_deg=90.0,
+                     rel_d_m=0.0, baseline_m=0.6, acc_deg=0.4)
+    # 마지막에 우측으로 기울임(우 안테나 하강 → relPosD>0)
+    d.add_sample(east=0.0, north=north + 0.25, relpos_heading_deg=90.0,
+                 rel_d_m=0.08, baseline_m=0.6, acc_deg=0.4)
+    r = d.report()
+    print(f"  offset={r['offset_deg']:+.1f}° → base={r['base_antenna']} "
+          f"(추천 offset={r['rec_baseline_offset_deg']:+.0f}°, roll_sign={r['rec_dual_roll_sign']}), "
+          f"baseline={r['baseline_m']}m")
+    assert r["ready"], "샘플 부족"
+    assert abs(r["rec_baseline_offset_deg"] - 90.0) < 1e-6, "base=좌(+90°) 추천 실패"
+    assert "좌" in r["base_antenna"], r["base_antenna"]
+    assert r["rec_dual_roll_sign"] == 1.0, "우측하강 relPosD>0 → roll +1 추천 실패"
+
+
 def test_cog_aiding():
     """방법 5: 진로각(COG) 보조 — 잡음 수렴 + 슬립(beta) 보정 시 진짜 차체헤딩 추종."""
     import random
@@ -287,7 +309,9 @@ if __name__ == "__main__":
     test_tilt_compensation()
     print("[9] 듀얼 마운트 오프셋(base=좌/rover=우, +90°)")
     test_dual_mount_offset()
-    print("[10] 진로각(COG) 보조 + 슬립 보정(방법 5)")
+    print("[10] 듀얼 마운트 현장 진단 루틴(base/rover·부호 추천)")
+    test_mount_diagnostic()
+    print("[11] 진로각(COG) 보조 + 슬립 보정(방법 5)")
     test_cog_aiding()
     print("\n  ✓ GNSS(NMEA/UBX)→EKF 입력 경로 검증 통과 — 헤딩 변환/위치 추종/무IMU predict "
           "+ 무빙베이스 헤딩(적응형R·게이팅·틸트)·COG보조. (조향 수렴은 sitl_sim 6/6)")

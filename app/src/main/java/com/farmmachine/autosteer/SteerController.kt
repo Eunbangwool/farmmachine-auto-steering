@@ -36,6 +36,12 @@ object SteerController {
         try { api().callAttr("start_heading_calib").toString() } catch (e: Throwable) { "error" }
     fun headingCalibStatus(): String =
         try { api().callAttr("heading_calib_status").toString() } catch (e: Throwable) { "{}" }
+
+    /** 듀얼안테나 base/rover·부호 진단(직선 ~15m 주행). */
+    fun startMountDiag(): String =
+        try { api().callAttr("start_mount_diag").toString() } catch (e: Throwable) { "error" }
+    fun mountDiagStatus(): String =
+        try { api().callAttr("mount_diag_status").toString() } catch (e: Throwable) { "{}" }
     fun setDeadman(pressed: Boolean) = safe { api().callAttr("set_deadman", pressed) }
     fun setProfile(name: String) = safe { api().callAttr("set_profile", name) }
 

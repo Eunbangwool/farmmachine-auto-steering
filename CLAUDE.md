@@ -164,7 +164,12 @@ class CanSpec:
     `on_heading_meas`: `corrected=relPosHeading-90-bias`, `_current_roll=+asin(relPosD/baseline)`.
     잔여 미세 헤딩바이어스는 `HeadingCalibrator`. **부호 최종확인=실차 틸트테스트**(아니면 두 상수만 뒤집음).
   - 베이스라인이 짧으면(막대 길이) heading σ 가 커짐 → `accHeading` 으로 에폭별 적응형 R 처리(방법 3).
-  - 검증: `test_closed_loop.py` [8]틸트(우측하강 roll+10°)·[9]마운트오프셋(+90° 복원).
+  - 검증: `test_closed_loop.py` [8]틸트(우측하강 roll+10°)·[9]마운트오프셋(+90° 복원)·[10]진단루틴.
+  - ★ **현장 진단 루틴**(`calibration.DualMountDiagnostic`): 직선 ~15m 주행 중 (relPosHeading vs GPS진로각)
+    원형평균 → base/rover·`dual_baseline_offset_deg`(+90/−90/0/180) 자동 추천, 끝에 한쪽 기울이면
+    relPosD 부호로 `dual_roll_sign` 추천. ready 시 logcat 자동 출력(`maybe_log`). API:
+    `app_main.start_mount_diag()`/`mount_diag_status()` ← JsBridge `startMountDiag()`/`mountDiagStatus()`.
+    → AGMO 파일 없이도 실차 1회 주행으로 base=좌 여부·부호 확정(AGMO 디컴파일물은 원격에 없음).
 - **ver2 / CHCNAV NX510 / FJD (GNSS+INS 스마트안테나)**: 수신기가 heading/자세 융합 출력. `heading_source="ins"`
 - 코드: `GnssReceiverSpec.heading_source`("ins"/"dual"/"none") + `VendorProfile.gnss_alt`(AGMO ver1/ver2 둘 다 등록).
   AGMO 프로파일: primary=ver2(INS), alt=ver1(dual). CHCNAV/FJD=ins. F9P 단독=none.
