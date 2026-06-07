@@ -209,12 +209,13 @@ def test_heading_gating():
 def test_tilt_compensation():
     """방법 4: RELPOSNED 베이스라인 down 성분 → 차체 틸트(roll) → 경사보정에 공급."""
     sys = _make_sys()
-    # rel_d=-0.1736m, baseline=1.0m → tilt = asin(0.1736) = 10°
-    sys.on_heading_meas(dict(heading_deg=0.0, acc_deg=0.2, baseline_m=1.0,
-                             rel_d_m=-0.1736, fix_ok=True, valid=True,
+    # base=좌/rover=우: rover(우) 안테나가 0.1736m 하강 → relPosD=+0.1736, baseline=1.0
+    #   → roll = +asin(0.1736) = +10° (우측 하강).
+    sys.on_heading_meas(dict(heading_deg=90.0, acc_deg=0.2, baseline_m=1.0,
+                             rel_d_m=0.1736, fix_ok=True, valid=True,
                              heading_valid=True, carr_soln=2))
     roll = math.degrees(sys.estimator._current_roll)
-    print(f"  베이스라인 틸트 → roll={roll:.2f}° (기대 10°)")
+    print(f"  베이스라인 틸트(우측하강) → roll={roll:.2f}° (기대 +10°)")
     assert abs(roll - 10.0) < 0.5, f"틸트 유도 오차: {roll}"
     # 경사보정 배선 확인: roll 설정 시 update_rtk 가 횡방향 보정을 반영
     from calibration import RollPitchEstimator
@@ -229,6 +230,20 @@ def test_tilt_compensation():
     r2 = rp.update(ay=g, az=0.0, lin_acc=0.0, yaw_rate=1.0, dt=0.02)
     assert abs(math.degrees(r2) - 10.0) < 1.5, "원심가속 오염 배제 실패"
     print("  원심가속 구간 가속도-보정 배제 OK")
+
+
+def test_dual_mount_offset():
+    """base=좌/rover=우: 베이스라인 벡터=우현 → relPosHeading=차체+90° → 90° 차감해 차체헤딩 복원."""
+    sys = _make_sys()
+    # 차체가 정북(나침반 0)일 때 베이스라인(좌→우)은 정동 → relPosHeading=90°.
+    for _ in range(30):
+        sys.estimator.predict(0.05)
+        sys.on_heading_meas(dict(heading_deg=90.0, acc_deg=0.2, baseline_m=1.0,
+                                 rel_d_m=0.0, fix_ok=True, valid=True,
+                                 heading_valid=True, carr_soln=2))
+    hd = math.degrees(sys.estimator.get_state().heading) % 360.0
+    print(f"  baseline heading 90°(우현) → 차체 EKF {hd:.1f}° (기대 90°=북, 수학각)")
+    assert abs((hd - 90 + 180) % 360 - 180) < 1.0, f"마운트 오프셋 복원 실패: {hd}"
 
 
 def test_cog_aiding():
@@ -270,7 +285,9 @@ if __name__ == "__main__":
     test_heading_gating()
     print("[8] 베이스라인 틸트 보상 + roll 추정(방법 4)")
     test_tilt_compensation()
-    print("[9] 진로각(COG) 보조 + 슬립 보정(방법 5)")
+    print("[9] 듀얼 마운트 오프셋(base=좌/rover=우, +90°)")
+    test_dual_mount_offset()
+    print("[10] 진로각(COG) 보조 + 슬립 보정(방법 5)")
     test_cog_aiding()
     print("\n  ✓ GNSS(NMEA/UBX)→EKF 입력 경로 검증 통과 — 헤딩 변환/위치 추종/무IMU predict "
           "+ 무빙베이스 헤딩(적응형R·게이팅·틸트)·COG보조. (조향 수렴은 sitl_sim 6/6)")

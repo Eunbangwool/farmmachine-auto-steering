@@ -40,6 +40,8 @@ from autosteer_core import GnssReceiverSpec, CHCNAV_PA3, UBLOX_F9P
 #   케이스 **내부 중앙에 IMU**(별도 박스 아님). heading=좌우 베이스라인,
 #   각속도/자세=중앙 IMU. → 가로 베이스라인이므로 두 안테나 높이차(RELPOSNED relPosD)
 #   는 **roll(횡경사)** 를 준다(세로였다면 pitch). 방법4 on_heading_meas 의 roll 유도와 일치.
+#   ★ base=좌측·rover=우측(진행방향 기준) → relPosHeading=차체+90°(코드: dual_baseline_offset_deg=90),
+#     relPosD>0=우측하강=roll+(dual_roll_sign=+1). 부호 최종확인=실차 틸트테스트.
 #   정확도값은 추정(베이스라인이 짧으면 heading σ 커짐 → accHeading 으로 적응형 R 처리).
 AGMO_V1_DUAL = GnssReceiverSpec(
     name="AGMO ver1 (듀얼안테나+중앙IMU)", can_bitrate=500_000, serial_baud=115_200,

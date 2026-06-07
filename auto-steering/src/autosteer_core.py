@@ -1890,6 +1890,12 @@ class AutoSteerSystem:
         self.heading_bias_deg = 0.0   # 듀얼안테나 베이스라인 yaw 바이어스(HeadingCalibrator)
 
         # 무빙베이스 RTK 헤딩(방법 1·3·4) — 에폭별 적응형 R + fix 게이팅
+        # ★ AGMO ver1 안테나 마운트(오너 확인): base=좌측·rover=우측(진행방향 기준).
+        #   base→rover 벡터가 우현(starboard) → relPosHeading = 차체heading + 90° → 90° 차감.
+        #   relPosD>0(우 안테나 하강=우측 하강) → roll +(우측하강), 슬로프보정 규약과 일치.
+        #   부호는 실차 틸트테스트로 최종 확인(아니면 두 상수만 뒤집으면 됨).
+        self.dual_baseline_offset_deg = 90.0   # base=좌/rover=우 → +90°
+        self.dual_roll_sign           = 1.0    # +1: relPosD>0 → roll+(우측하강)
         self.max_hdg_acc_deg    = 0.6   # 이보다 거친 헤딩은 거부(σ 상한)
         self.accept_float_heading = False  # carrSoln=float(1) 헤딩 수용 여부
         self.phase_floor_m      = 0.005  # 베이스라인 위상오차 하한(과신뢰 방지)
@@ -2116,8 +2122,10 @@ class AutoSteerSystem:
         if not ok:
             return   # 헤딩 미갱신 → EKF 는 predict 로 coast
 
-        # 마운팅 바이어스(기존 HeadingCalibrator) 재사용 → 수학각 변환
-        corrected = float(meas["heading_deg"]) - self.heading_bias_deg
+        # 베이스라인 벡터(base=좌→rover=우)는 우현 → +90° 마운트 오프셋 차감,
+        # 잔여 미세 바이어스는 HeadingCalibrator(heading_bias_deg). → 수학각 변환
+        corrected = (float(meas["heading_deg"])
+                     - self.dual_baseline_offset_deg - self.heading_bias_deg)
         baseline = float(meas.get("baseline_m", 0.0)) or 1.0
         # σ 하한: 베이스라인 길이에 따른 위상오차 하한(과신뢰 방지)
         floor_deg = math.degrees(math.atan2(self.phase_floor_m, baseline))
@@ -2126,11 +2134,12 @@ class AutoSteerSystem:
             math.radians(90.0 - corrected), sigma)
         self._hdg_last_accept_t = time.time()
 
-        # 방법 4: 베이스라인 틸트 → roll(횡baseline 가정) → 경사 보정에 공급
+        # 방법 4: 가로 베이스라인 down성분 → roll(우측하강=+). 경사 보정에 공급.
+        # base=좌/rover=우 이므로 relPosD>0 = 우 안테나 하강 = 우측 하강(roll+).
         rel_d = meas.get("rel_d_m")
         if rel_d is not None and baseline > 0.1 and self._rp is None:
-            ratio = max(-1.0, min(1.0, -float(rel_d) / baseline))
-            self.estimator._current_roll = math.asin(ratio)
+            ratio = max(-1.0, min(1.0, float(rel_d) / baseline))
+            self.estimator._current_roll = self.dual_roll_sign * math.asin(ratio)
 
     def on_velocity(self, course_deg: float, speed_mps: float):
         """
