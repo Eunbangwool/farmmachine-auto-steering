@@ -96,8 +96,9 @@ class ApolloCanBridge(
                 VanMcu.CanHwFilterAdd(channel, 0, 0)
                 Log.i(TAG, "RX 필터 전체수용 설정")
             } catch (e: Throwable) { Log.w(TAG, "RX 필터설정 무시: ${e.message}") }
-            VanMcu.setCallback(true)
-            Log.i(TAG, "CAN RX 콜백 등록 OK")
+            // ★ 반드시 CAN 비트(2)로 켠다. true(=1=ACC)로 켜면 CAN 수신이 영구 미발생.
+            VanMcu.setCallback(VanMcu.CAN)
+            Log.i(TAG, "CAN RX 콜백 등록 OK (filter=CAN)")
         } catch (e: Throwable) {
             Log.w(TAG, "CAN RX 콜백 미지원(무시, TX 는 동작): ${e.message}")
         }
@@ -105,7 +106,7 @@ class ApolloCanBridge(
 
     fun stop() {
         running = false
-        try { if (canReady) { VanMcu.setOnCanListener(null); VanMcu.setCallback(false) } } catch (_: Throwable) {}
+        try { if (canReady) { VanMcu.setOnCanListener(null); VanMcu.setCallback(0) } } catch (_: Throwable) {}
         serverThread = null
     }
 

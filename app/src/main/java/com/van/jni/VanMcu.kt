@@ -59,8 +59,14 @@ object VanMcu {
     @JvmStatic external fun CanHwFilterClear(channel: Int): Boolean
 
     // ── 콜백 등록 ─────────────────────────────────────────
-    /** 콜백 시스템 on/off (CAN 수신/ACC/입력 이벤트 수신하려면 true). */
-    @JvmStatic external fun setCallback(enable: Boolean): Boolean
+    /**
+     * 콜백 필터 비트마스크 설정 (native). 수신할 이벤트 종류를 OR 로 지정:
+     *   ACC=1, CAN=2, INPUT=4, DEBUG=8.  0 = 전체 해제.
+     * ★ libsysmcu.so 시그니처는 setCallback(int) — Boolean 으로 호출하면 true→1(ACC)
+     *   로 들어가 CAN(2) 이 안 켜져 **CAN 수신이 영구 미발생**한다(과거 RX=0 의 진짜 원인).
+     *   CAN 프레임을 받으려면 반드시 CAN 비트(2)를 포함해 호출할 것.
+     */
+    @JvmStatic external fun setCallback(filterBitmask: Int): Boolean
 
     @Volatile private var canListener: OnCanListener? = null
     /** CAN 수신 리스너 등록 (Kotlin 측 저장 — onCallback 이 디스패치). */
@@ -68,14 +74,15 @@ object VanMcu {
 
     /**
      * ★ libsysmcu.so 가 이벤트를 전달하는 정적 콜백 진입점(native → Java).
-     * 시그니처 (I[B)V 가 .so 와 정확히 일치해야 함(없으면 setCallback 실패).
+     * 시그니처 (I[B)V 가 .so 와 정확히 일치해야 함(이름/시그니처 고정).
      * type==CAN 일 때 data 를 CanMsg 로 파싱해 리스너에 전달.
-     * ⚠ data 바이트 포맷은 추정 — 실제 RX 포맷은 현장 캡처로 검증 필요(TX 와 무관).
+     * RX 프레임 포맷(libsysmcu.so 인터페이스 사실):
+     *   data[0]=channel, data[1..4]=id(**big-endian**), data[5]=DLC, data[6..6+DLC]=payload.
      */
     @Volatile private var cbCount = 0
     @JvmStatic
     fun onCallback(type: Int, data: ByteArray) {
-        // 원시 포맷 캡처용 로그(처음 20개만 — 실제 RX 바이트 포맷 현장 확인).
+        // 원시 포맷 캡처용 로그(처음 20개만 — 현장 1차 검증용).
         if (cbCount < 20) {
             android.util.Log.i("VanMcu", "onCallback #$cbCount type=$type len=${data.size} data=${data.joinToString(""){"%02X".format(it)}}")
             cbCount++
@@ -83,13 +90,15 @@ object VanMcu {
         try {
             if (type == CAN) {
                 val l = canListener ?: return
-                if (data.size >= 5) {
+                if (data.size >= 6) {
                     val ch = data[0].toInt() and 0xFF
                     val id = ((data[1].toInt() and 0xFF) shl 24) or
                              ((data[2].toInt() and 0xFF) shl 16) or
                              ((data[3].toInt() and 0xFF) shl 8) or
                               (data[4].toInt() and 0xFF)
-                    val payload = if (data.size > 5) data.copyOfRange(5, data.size) else ByteArray(0)
+                    val dlc = (data[5].toInt() and 0xFF).coerceIn(0, 8)
+                    val end = minOf(6 + dlc, data.size)
+                    val payload = if (end > 6) data.copyOfRange(6, end) else ByteArray(0)
                     l.OnCan(CanMsg(ch, id, payload))
                 }
             }

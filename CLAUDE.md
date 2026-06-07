@@ -119,11 +119,16 @@ class CanSpec:
 `app_main.set_vendor` 가 실차(bridge)+확정벤더일 때만 활성(데모는 byte-layout 유지).
 검증: `test_speed_control.py`(좌/우 수렴·부호·안전가드), SITL 6/6 무손상.
 **모터 부호 규약(현장 확정): `+permille = 좌회전`, `−permille = 우회전`.**
-★ 실차 현황: RX 하트비트 **수신 0 확정**(필터 전체수용도 무효 → 모터가 CAN 피드백 미송신,
-  Keya 하트비트 주기 param 0034 꺼짐 추정 or .so RX 미제공). → **하트비트 비의존 설계로 전환**:
-  하트비트 없으면 **명령 permille 적분으로 조향각 추정(dead-reckoning, ±60° 클램프)**, 실제 경로는
-  GNSS 헤딩 외부루프가 보정. 하트비트 들어오면 자동으로 실측 사용. (test_speed_control: 有/無 둘 다 수렴)
-  남은 것: 직진 캘리브레이션 + 게인 튜닝(안테나 단계) + (원하면) Keya 하트비트 활성화.
+★ 실차 RX 하트비트 0 의 **진짜 원인 규명(AGMO 디컴파일 인터페이스 분석, 2026-06)**: 모터 미송신이
+  아니라 **`VanMcu.setCallback` 바인딩 버그**였음. libsysmcu.so 는 `setCallback(int 필터비트마스크)`
+  (ACC=1·**CAN=2**·INPUT=4·DEBUG=8)인데 우리가 `setCallback(Boolean)` 선언 + `true` 호출 →
+  필터=1(ACC)만 켜져 **CAN(2) 프레임이 영구 미전달**. 또 RX `onCallback` 파싱이 DLC 한 바이트
+  누락(올바름: data[0]=ch, [1..4]=id BE, **[5]=DLC**, [6..]=payload). → **수정 완료**(VanMcu.kt
+  `setCallback(Int)` + onCallback DLC 보정, ApolloCanBridge `setCallback(VanMcu.CAN)`). 실기기에서
+  **하트비트 수신이 살아날 가능성 높음**(현장 logcat `onCallback`/rxCount 로 확인). RX 살면 모터
+  하트비트 누적각을 실측 피드백으로 사용, 안 살면 기존 **dead-reckoning(permille 적분, ±60°)** 폴백
+  유지(test_speed_control: 有/無 둘 다 수렴). CAN 동작사실 확정: 250k·채널API(socketcan 아님)·
+  id BE 패킹·onCallback(int,byte[]) 정적 역호출.
 
 **AgNav 5.0 사진에서 확인된 모터 관련 값:**
 - 모터 피드백 유형: **홀(Hall) 센서**
