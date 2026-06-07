@@ -113,8 +113,13 @@ class CanSpec:
 
 **⚠ 비트레이트 충돌 주의**: 모터=250k(매뉴얼), PA-3=500k(데이터시트). 같은 버스 공유 불가 →
 별도 버스이거나 한쪽 재설정 필요. 현장 확인 항목.
-**남은 배선**: `SteeringActuator._send_motor` 는 아직 제네릭 placeholder. 실차에선
-`CanSpec.cmd_speed(rpm_to_permille(...))` 속도제어로 교체 + SITL 재검증 필요.
+**✅ 무WAS 속도제어 조향 구현 완료(시뮬 검증)**: `SteeringActuator.speed_control=True` 시
+조향각오차→목표각속도(P)→모터RPM(조향비17.5)→`cmd_speed`. 피드백=모터 하트비트
+누적각(16비트 wrap 언랩) — `use_motor_encoder`. 안전가드: **하트비트 미수신 시 명령 금지(폭주 방지)**.
+`app_main.set_vendor` 가 실차(bridge)+확정벤더일 때만 활성(데모는 byte-layout 유지).
+검증: `test_speed_control.py`(좌/우 수렴·부호·안전가드), SITL 6/6 무손상.
+**모터 부호 규약(현장 확정): `+permille = 좌회전`, `−permille = 우회전`.**
+★ 실차 남은 것: RX 하트비트 수신 확인(현재 "수신 없음") + 직진 캘리브레이션 + 게인 튜닝.
 
 **AgNav 5.0 사진에서 확인된 모터 관련 값:**
 - 모터 피드백 유형: **홀(Hall) 센서**

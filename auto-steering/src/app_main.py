@@ -70,6 +70,11 @@ class Controller:
         if self.demo:
             # 데모(SITL)는 시뮬레이터라 모터를 항상 구동(미확정 벤더도 시각화 허용)
             self.sys.motor_verified = True
+            self.sys.actuator.speed_control = False   # 데모는 byte-layout 시뮬 유지
+        else:
+            # 실차 + 프로토콜 확정 벤더(Keya) → 속도제어(cmd_speed) 자율조향 경로 사용.
+            # (autosteer engage 는 RTK Fix 필요 + 하트비트 없으면 명령 금지 = 폭주 방지)
+            self.sys.actuator.speed_control = bool(self.sys.motor_verified)
         self.sys.set_profile("normal")
         return p.key
 

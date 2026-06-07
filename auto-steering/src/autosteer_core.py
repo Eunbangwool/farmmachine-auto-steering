@@ -1417,6 +1417,12 @@ class SteeringActuator:
         self._motor_angle_zero = 0.0      # 직진(중앙) 기준 모터 누적각(deg) — 캘리브레이션
         self._hb               = {}       # 최신 모터 하트비트(angle/rpm/current/faults)
         self._hb_seen          = False
+        self._last_raw         = None     # 직전 누적각 raw(0~65535) — wrap 언랩용
+        self._motor_cont_deg   = 0.0      # 언랩된 연속 모터각(deg)
+        # 실모터(Keya) 속도제어 모드: True 면 cmd_speed(SDO)로 직접 구동(무WAS).
+        # 부호 규약(현장 확정): +permille=좌회전, -permille=우회전.
+        self.speed_control     = False
+        self.steer_permille_max = 400     # 조향 속도 상한(‰) — CanSpec.STEER_SPEED_MAX
 
         # 모터 보호 (AgNav 과부하 전류/시간/연성)
         mp = motor_params or DEFAULT_MOTOR_PROTECTION
@@ -1454,9 +1460,17 @@ class SteeringActuator:
                 if hb:
                     self._hb = hb
                     self._hb_seen = True
+                    # 누적각 raw(0~65535) 언랩 → 연속 모터각(deg)
+                    raw = hb.get('angle_raw', 0)
+                    if self._last_raw is not None:
+                        d = raw - self._last_raw
+                        if d > 32768:   d -= 65536
+                        elif d < -32768: d += 65536
+                        self._motor_cont_deg += d
+                    self._last_raw = raw
                     if self.use_motor_encoder:
-                        # 모터 누적각(deg) → 중앙기준 → 조향비로 나눠 조향각(rad)
-                        motor_deg = hb.get('angle_deg', 0.0) - self._motor_angle_zero
+                        # 연속 모터각 → 중앙기준 → 조향비로 나눠 조향각(rad)
+                        motor_deg = self._motor_cont_deg - self._motor_angle_zero
                         steer_rad = math.radians(motor_deg / max(1e-6, self.steer_ratio))
                         with self._lock:
                             self._measured_angle = steer_rad
@@ -1474,11 +1488,11 @@ class SteeringActuator:
             msg = self.can.recv()
 
     def set_motor_center(self):
-        """현재 모터 누적각을 직진(중앙) 기준으로 캘리브레이션 (WAS 미사용 모드)."""
-        a = self._hb.get('angle_deg')
-        if a is not None:
-            self._motor_angle_zero = a
-            log.info(f"모터 중앙 캘리브레이션: zero={a:.1f}deg")
+        """현재 연속 모터각을 직진(중앙) 기준으로 캘리브레이션 (WAS 미사용 모드)."""
+        self._motor_angle_zero = self._motor_cont_deg
+        with self._lock:
+            self._measured_angle = 0.0
+        log.info(f"모터 중앙 캘리브레이션: zero={self._motor_angle_zero:.1f}deg")
 
     def latest_heartbeat(self) -> dict:
         """최신 모터 하트비트(angle_deg/speed_rpm/current/faults). 없으면 빈 dict."""
@@ -1500,6 +1514,10 @@ class SteeringActuator:
         # 과부하 보호 체크
         if self._protection.is_disabled:
             return 0.0
+
+        # 실모터(Keya) 속도제어 모드 — cmd_speed(SDO)로 직접 구동(무WAS)
+        if self.speed_control:
+            return self._update_speed(target_angle, dt)
 
         measured   = self.get_measured_angle()
         angle_err  = target_angle - measured
@@ -1534,6 +1552,40 @@ class SteeringActuator:
         self._send_motor(cmd)
         return cmd
 
+    def _update_speed(self, target_angle: float, dt: float) -> float:
+        """
+        Keya 속도제어 조향 (무WAS):
+          조향각 오차 → 목표 조향각속도(P) → 모터 RPM(조향비) → permille → cmd_speed.
+        피드백 = 모터 하트비트 누적각(use_motor_encoder). 부호: +permille=좌, -permille=우.
+
+        ★ 안전: 모터 인코더 모드인데 하트비트 미수신이면 명령 금지(폭주 방지).
+        """
+        if self.use_motor_encoder and not self._hb_seen:
+            self._send_speed(0)          # 피드백 없음 → 정지 유지
+            return 0.0
+        measured  = self.get_measured_angle()
+        angle_err = target_angle - measured
+        if abs(angle_err) < self.deadband:
+            self._send_speed(0)
+            return 0.0
+        # 각도오차 → 목표 조향각속도(rad/s)
+        rate = max(-self.max_ang_vel, min(self.max_ang_vel, self.pos_kp * angle_err))
+        # 조향각속도 → 모터 RPM (조향비) → permille
+        motor_rpm = rate * self.steer_ratio * 60.0 / (2 * math.pi)
+        permille  = CanSpec.rpm_to_permille(motor_rpm, CanSpec.RATED_RPM)
+        permille  = int(max(-self.steer_permille_max, min(self.steer_permille_max, permille)))
+        # 과부하 보호(하트비트 전류 있으면 실값, 없으면 명령크기 추정)
+        cur = abs(self._hb.get('current', 0)) or abs(permille) * (self._mp.max_overload_current / 400.0)
+        if self._protection.check_overload(cur):
+            self.disable()
+            return 0.0
+        self._send_speed(permille)
+        return float(permille)
+
+    def _send_speed(self, permille: int):
+        """Keya 속도 명령 전송 (워치독 1s 이내 재전송은 제어루프가 보장)."""
+        self.can.send(CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(int(permille)))
+
     def _send_motor(self, cmd_val: float):
         """
         ★ 명령값을 CAN 바이트로 인코딩 (제네릭 바이트레이아웃 placeholder).
@@ -1559,6 +1611,11 @@ class SteeringActuator:
 
     def disable(self):
         """모터 비활성화."""
+        if self.speed_control:
+            self.can.send(CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(0))
+            self.can.send(CanSpec.MOTOR_CMD_ID, CanSpec.CMD_DISABLE)
+            self._vel_integral = 0.0
+            return
         data = bytearray(8)
         data[CanSpec.MOTOR_BYTE_MODE] = CanSpec.MOTOR_MODE_DISABLE
         self.can.send(CanSpec.MOTOR_CMD_ID, bytes(data))
