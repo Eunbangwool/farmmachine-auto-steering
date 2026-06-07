@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>통합 가이던스 — 자율조향 + RTK 균평</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e12;
+    --bg2:#0e141a;
+    --panel:#141b23;
+    --panel2:#10161d;
+    --line:#243039;
+    --line2:#2f3e4a;
+    --txt:#e8eef3;
+    --dim:#6b7884;
+    --dim2:#48535d;
+    --steer:#34d4e0;      /* 자율조향 = 청록 */
+    --steer-dk:#0c5b63;
+    --level:#f5b73a;      /* 레벨러 = 황금 */
+    --level-dk:#6e4e08;
+    --green:#39d353;
+    --green-dk:#0f5223;
+    --amber:#f5b73a;
+    --red:#ff4d44;
+    --red-dk:#5e1410;
+    --shadow:0 6px 24px rgba(0,0,0,.5);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    background:
+      radial-gradient(1200px 600px at 18% -10%, #12202a 0%, transparent 55%),
+      radial-gradient(900px 500px at 110% 120%, #1a1407 0%, transparent 50%),
+      var(--bg);
+    color:var(--txt);
+    font-family:'Barlow Semi Condensed',system-ui,sans-serif;
+    overflow:hidden;
+    user-select:none;
+  }
+  .num{font-family:'Rajdhani',sans-serif;font-feature-settings:"tnum" 1;font-variant-numeric:tabular-nums;}
+
+  /* ====== Shell ====== */
+  .app{height:100vh;display:flex;flex-direction:column;gap:8px;padding:8px;}
+  @media (max-width:820px){
+    .rotate-hint{display:flex;}
+  }
+
+  /* ====== Status strip ====== */
+  .topbar{
+    flex:0 0 auto;display:flex;align-items:center;gap:10px;
+    background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--line);border-radius:12px;
+    padding:9px 14px;box-shadow:var(--shadow);
+  }
+  .brand{font-family:'Rajdhani';font-weight:700;letter-spacing:.06em;font-size:15px;color:var(--txt);
+    display:flex;align-items:center;gap:8px;white-space:nowrap;}
+  .brand b{color:var(--steer);}
+  .brand i{color:var(--level);font-style:normal;}
+  .chip{
+    display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:9px;
+    background:var(--panel2);border:1px solid var(--line);font-size:12.5px;color:var(--dim);
+    white-space:nowrap;
+  }
+  .chip .num{font-size:15px;color:var(--txt);font-weight:600;}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--dim2);flex:0 0 auto;}
+  .dot.ok{background:var(--green);box-shadow:0 0 9px var(--green);}
+  .dot.warn{background:var(--amber);box-shadow:0 0 9px var(--amber);}
+  .dot.bad{background:var(--red);box-shadow:0 0 9px var(--red);}
+  .spacer{flex:1 1 auto;}
+  .clock{font-family:'Rajdhani';font-weight:600;font-size:16px;color:var(--dim);}
+
+  /* ====== Body grid ====== */
+  .main{flex:1 1 auto;display:grid;grid-template-columns:1.45fr 1fr;gap:8px;min-height:0;}
+  .mapwrap{
+    position:relative;border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    background:linear-gradient(180deg,#0c161d,#0a1117);box-shadow:var(--shadow);
+  }
+  #map{width:100%;height:100%;display:block;}
+  .map-badges{position:absolute;left:12px;top:12px;display:flex;flex-direction:column;gap:7px;}
+  .map-badge{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);
+    background:rgba(8,12,16,.7);backdrop-filter:blur(4px);border:1px solid var(--line);
+    padding:5px 9px;border-radius:8px;}
+  .swatch{width:13px;height:13px;border-radius:3px;flex:0 0 auto;}
+  .map-scale{position:absolute;right:12px;bottom:12px;font-size:11px;color:var(--dim2);
+    background:rgba(8,12,16,.6);padding:3px 8px;border-radius:6px;border:1px solid var(--line);}
+
+  .rail{display:flex;flex-direction:column;gap:8px;min-height:0;}
+
+  /* ====== Module card ====== */
+  .card{
+    position:relative;flex:1 1 0;border-radius:14px;border:1px solid var(--line);
+    background:linear-gradient(180deg,var(--panel),var(--panel2));
+    padding:12px 14px;display:flex;flex-direction:column;gap:9px;box-shadow:var(--shadow);
+    min-height:0;overflow:hidden;
+  }
+  .card::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;}
+  .card.steer::before{background:linear-gradient(90deg,var(--steer),transparent 70%);}
+  .card.level::before{background:linear-gradient(90deg,var(--level),transparent 70%);}
+  .card.engaged{border-color:var(--green-dk);}
+  .card.engaged.steer{box-shadow:0 0 0 1px var(--steer-dk) inset, var(--shadow);}
+  .card.fault{border-color:var(--red);animation:flash .6s steps(2,end) 3;}
+  @keyframes flash{50%{background:linear-gradient(180deg,#2a1413,#1a0e0d);}}
+
+  .card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .card-title{display:flex;align-items:center;gap:9px;font-family:'Rajdhani';font-weight:700;
+    letter-spacing:.07em;font-size:15px;}
+  .card.steer .card-title .tg{color:var(--steer);}
+  .card.level .card-title .tg{color:var(--level);}
+  .tag{font-size:11px;color:var(--dim);font-weight:600;letter-spacing:.05em;border:1px solid var(--line);
+    padding:2px 7px;border-radius:6px;}
+
+  .toggle{
+    appearance:none;border:none;cursor:pointer;font-family:'Rajdhani';font-weight:700;
+    letter-spacing:.06em;font-size:14px;color:#9fb0bd;background:var(--panel2);
+    border:1px solid var(--line2);border-radius:10px;padding:9px 16px;min-width:104px;
+    transition:.15s;
+  }
+  .toggle:active{transform:scale(.97);}
+  .card.steer .toggle.on{background:linear-gradient(180deg,#0f7d86,#0a5b62);color:#eafdff;border-color:#16a0ab;box-shadow:0 0 14px rgba(52,212,224,.35);}
+  .card.level .toggle.on{background:linear-gradient(180deg,#9a7411,#6e520a);color:#fff7e6;border-color:#caa033;box-shadow:0 0 14px rgba(245,183,58,.3);}
+
+  /* ====== Big readout ====== */
+  .readout{
+    flex:1 1 auto;border-radius:11px;background:
+      radial-gradient(120% 130% at 50% 0%, rgba(255,255,255,.03), transparent 60%),
+      var(--panel2);
+    border:1px solid var(--line);padding:8px 14px 10px;display:flex;flex-direction:column;
+    justify-content:center;min-height:0;
+  }
+  .ro-label{font-size:12px;letter-spacing:.12em;color:var(--dim);font-weight:600;}
+  .ro-row{display:flex;align-items:baseline;gap:10px;}
+  .ro-val{font-family:'Rajdhani';font-weight:700;font-size:clamp(40px,7.5vw,72px);line-height:.95;color:var(--txt);}
+  .ro-unit{font-family:'Rajdhani';font-weight:600;font-size:22px;color:var(--dim);}
+  .state-pill{margin-left:auto;display:flex;align-items:center;gap:8px;font-family:'Rajdhani';
+    font-weight:700;letter-spacing:.05em;font-size:15px;padding:5px 12px;border-radius:9px;
+    border:1px solid var(--line2);color:var(--dim);background:var(--panel);}
+  .state-pill.green{color:#bbf7cd;border-color:var(--green-dk);background:linear-gradient(180deg,#103a1f,#0c2a17);}
+  .state-pill.amber{color:#ffe7b0;border-color:#6e520a;background:linear-gradient(180deg,#3a2c0c,#2a2009);}
+  .state-pill.off{color:var(--dim2);}
+
+  /* error bar */
+  .bar{margin-top:10px;height:14px;border-radius:8px;background:var(--panel);border:1px solid var(--line);
+    position:relative;overflow:hidden;}
+  .bar .zone{position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);width:18%;
+    background:rgba(57,211,83,.14);border-left:1px dashed rgba(57,211,83,.4);border-right:1px dashed rgba(57,211,83,.4);}
+  .bar .needle{position:absolute;top:-3px;bottom:-3px;width:4px;border-radius:3px;left:50%;
+    transform:translateX(-50%);transition:left .12s linear,background .2s;}
+  .card.steer .bar .needle{background:var(--steer);box-shadow:0 0 8px var(--steer);}
+  .card.level .bar .needle{background:var(--level);box-shadow:0 0 8px var(--level);}
+  .bar.ongrade .needle{background:var(--green)!important;box-shadow:0 0 9px var(--green)!important;}
+  .bar-ends{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim2);margin-top:3px;}
+
+  /* sub metrics */
+  .submetrics{display:flex;gap:8px;}
+  .metric{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:6px 10px;}
+  .metric .k{font-size:10.5px;color:var(--dim);letter-spacing:.06em;}
+  .metric .v{font-family:'Rajdhani';font-weight:600;font-size:19px;color:var(--txt);}
+
+  /* segmented profile */
+  .seg{display:flex;gap:4px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:4px;}
+  .seg button{flex:1;appearance:none;border:none;background:transparent;color:var(--dim);cursor:pointer;
+    font-family:'Barlow Semi Condensed';font-weight:600;font-size:13px;padding:7px 4px;border-radius:7px;transition:.12s;}
+  .seg button.act{background:linear-gradient(180deg,#0f7d86,#0a5b62);color:#eafdff;}
+
+  /* leveler controls */
+  .lvl-ctrls{display:flex;align-items:stretch;gap:8px;}
+  .target-box{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:6px 12px;display:flex;flex-direction:column;justify-content:center;}
+  .target-box .k{font-size:10.5px;color:var(--dim);letter-spacing:.08em;}
+  .target-box .v{font-family:'Rajdhani';font-weight:700;font-size:26px;color:var(--level);}
+  .stepbtn{appearance:none;border:1px solid var(--line2);background:var(--panel2);color:var(--txt);
+    font-family:'Rajdhani';font-weight:700;font-size:26px;border-radius:11px;width:62px;cursor:pointer;transition:.12s;}
+  .stepbtn:active{transform:scale(.95);background:#1b2a14;border-color:var(--level);}
+  .holdbtn{appearance:none;border:1px solid var(--line2);background:var(--panel2);color:var(--dim);
+    font-family:'Rajdhani';font-weight:700;letter-spacing:.06em;font-size:14px;border-radius:11px;padding:0 14px;cursor:pointer;}
+  .holdbtn.act{background:linear-gradient(180deg,#3a2c0c,#2a2009);color:#ffe7b0;border-color:#caa033;}
+
+  /* ====== Bottom bar ====== */
+  .botbar{flex:0 0 auto;display:flex;align-items:center;gap:10px;
+    background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
+    border-radius:12px;padding:8px 12px;box-shadow:var(--shadow);}
+  .estop{appearance:none;cursor:pointer;font-family:'Rajdhani';font-weight:700;letter-spacing:.08em;
+    font-size:16px;color:#ffd9d6;background:linear-gradient(180deg,#b3251d,#7a160f);
+    border:1px solid #ff4d44;border-radius:11px;padding:11px 22px;
+    box-shadow:0 0 18px rgba(255,77,68,.35);transition:.12s;}
+  .estop:active{transform:scale(.97);}
+  .backbone{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--dim);}
+  .backbone b{color:var(--txt);font-weight:600;}
+  .menu{appearance:none;cursor:pointer;background:var(--panel2);border:1px solid var(--line2);
+    color:var(--dim);border-radius:10px;padding:10px 16px;font-family:'Rajdhani';font-weight:600;
+    letter-spacing:.05em;font-size:14px;}
+
+  .rotate-hint{display:none;position:fixed;inset:0;background:var(--bg);z-index:50;
+    align-items:center;justify-content:center;flex-direction:column;gap:14px;text-align:center;padding:30px;}
+  .rotate-hint svg{width:54px;height:54px;color:var(--steer);}
+  .rotate-hint p{color:var(--dim);font-size:15px;line-height:1.5;}
+  .rotate-hint b{color:var(--txt);}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ===== STATUS STRIP (shared) ===== -->
+  <div class="topbar">
+    <div class="brand">⌖ <b>STEER</b><span style="color:var(--dim2)">+</span><i>GRADE</i></div>
+    <div class="chip"><span class="dot ok" id="rtkDot"></span>RTK <span class="num" id="rtkState">FIX</span></div>
+    <div class="chip">위성 <span class="num" id="sats">21</span></div>
+    <div class="chip"><span class="dot ok" id="ntripDot"></span>NTRIP</div>
+    <div class="chip"><span class="dot ok" id="loraDot"></span>LoRa <span class="num" id="loraAge">0.4s</span></div>
+    <div class="chip">속도 <span class="num" id="speed">0.0</span> km/h</div>
+    <div class="chip">방위 <span class="num" id="hdg">12</span>°</div>
+    <div class="spacer"></div>
+    <div class="chip" style="border-color:var(--steer-dk)">정밀도 <span class="num" id="prec" style="color:var(--steer)">±1.2</span> cm</div>
+    <div class="clock num" id="clock">14:32</div>
+  </div>
+
+  <!-- ===== MAIN ===== -->
+  <div class="main">
+
+    <!-- MAP -->
+    <div class="mapwrap">
+      <svg id="map" viewBox="0 0 700 560" preserveAspectRatio="xMidYMid slice"></svg>
+      <div class="map-badges">
+        <div class="map-badge"><span class="swatch" style="background:var(--steer)"></span>주행 라인</div>
+        <div class="map-badge"><span class="swatch" style="background:rgba(57,211,83,.5)"></span>균평 완료</div>
+        <div class="map-badge"><span class="swatch" style="background:linear-gradient(90deg,#3a82f6,#39d353,#f5b73a,#ff4d44)"></span>깎기 / 메우기</div>
+      </div>
+      <div class="map-scale">◀ 40 m ▶ · 1패스 3.0 m</div>
+    </div>
+
+    <!-- RIGHT RAIL -->
+    <div class="rail">
+
+      <!-- AUTOSTEER CARD -->
+      <div class="card steer engaged" id="steerCard">
+        <div class="card-head">
+          <div class="card-title">⌖ <span class="tg">자율조향</span></div>
+          <button class="toggle on" id="steerToggle">조향 ON</button>
+        </div>
+        <div class="readout">
+          <div class="ro-label">크로스트랙 오차 (XTE)</div>
+          <div class="ro-row">
+            <span class="ro-val num" id="xte">−2.1</span>
+            <span class="ro-unit">cm</span>
+            <span class="state-pill green" id="steerPill">● 추종중</span>
+          </div>
+          <div class="bar ongrade" id="xteBar">
+            <div class="zone"></div><div class="needle" id="xteNeedle"></div>
+          </div>
+          <div class="bar-ends"><span>−20cm</span><span>0</span><span>+20cm</span></div>
+        </div>
+        <div class="submetrics">
+          <div class="metric"><div class="k">조향각</div><div class="v num"><span id="steerAng">4.2</span>°</div></div>
+          <div class="metric"><div class="k">라인</div><div class="v num" id="lineNo">3 / 12</div></div>
+          <div class="metric"><div class="k">알고리즘</div><div class="v" id="algoName" style="font-size:15px">작업기기준</div></div>
+        </div>
+        <div class="seg" id="profileSeg">
+          <button data-p="normal">일반</button>
+          <button data-p="heavy" class="act">과부하</button>
+          <button data-p="sand">모래토양</button>
+        </div>
+      </div>
+
+      <!-- LEVELER CARD -->
+      <div class="card level engaged" id="levelCard">
+        <div class="card-head">
+          <div class="card-title">▰ <span class="tg">RTK 균평</span></div>
+          <button class="toggle on" id="levelToggle">자동 ON</button>
+        </div>
+        <div class="readout">
+          <div class="ro-label">그레이드 오차 (블레이드)</div>
+          <div class="ro-row">
+            <span class="ro-val num" id="grade">+0.4</span>
+            <span class="ro-unit">cm</span>
+            <span class="state-pill green" id="levelPill">● 온그레이드</span>
+          </div>
+          <div class="bar ongrade" id="gradeBar">
+            <div class="zone"></div><div class="needle" id="gradeNeedle"></div>
+          </div>
+          <div class="bar-ends"><span>−10 메우기</span><span>0</span><span>+10 깎기</span></div>
+        </div>
+        <div class="submetrics">
+          <div class="metric"><div class="k">블레이드 높이</div><div class="v num"><span id="bladeZ">13.4</span> cm</div></div>
+          <div class="metric"><div class="k">유압</div><div class="v num" id="hydDir">HOLD</div></div>
+          <div class="metric"><div class="k">평면경사</div><div class="v num">0.21%</div></div>
+        </div>
+        <div class="lvl-ctrls">
+          <button class="stepbtn" id="tgtDown">▼</button>
+          <div class="target-box"><div class="k">목표 높이</div><div class="v num"><span id="target">13.0</span> cm</div></div>
+          <button class="holdbtn" id="holdBtn">HOLD</button>
+          <button class="stepbtn" id="tgtUp">▲</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===== BOTTOM BAR ===== -->
+  <div class="botbar">
+    <button class="estop" id="estop">■ 비상정지</button>
+    <div class="backbone">
+      <span class="dot ok"></span>
+      <span>단일 RTK 백본 · <b>F9P 1대 + NTRIP</b>가 조향·균평 <b>동시</b> 구동</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="backbone">호환 <b>AGMO · CHCNAV · FJDynamics</b> 하드웨어</div>
+    <button class="menu" id="menu">≡ 설정</button>
+  </div>
+
+</div>
+
+<div class="rotate-hint">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M2 12h20" opacity=".3"/></svg>
+  <p><b>가로 화면 권장</b><br>실제 트랙터 태블릿(10인치 가로)에<br>맞춰 설계된 화면입니다.</p>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  const $ = id => document.getElementById(id);
+
+  // ===== 상태 =====
+  const S = {
+    steerOn:true, levelOn:true, hold:false, estop:false,
+    profile:"heavy",
+    // 시뮬 물리
+    t:0, x:0, speed:1.2,          // m/s
+    xte:-2.1,                      // cm
+    steerAng:4.2,
+    line:3,
+    bladeZ:13.4, target:13.0,     // cm
+    groundBase:13.0,
+    hyd:"HOLD",
+    sats:21, rtk:"FIX", loraAge:0.4, prec:1.2,
+  };
+  const PROFILES={normal:{name:"퓨어퍼슈트",band:1.4},heavy:{name:"작업기기준",band:1.2},sand:{name:"스탠리",band:1.6}};
+
+  // ===== 맵 그리기 =====
+  const map=$("map");
+  const NS="http://www.w3.org/2000/svg";
+  const passes=12, passGap=46, x0=70, topY=40, botY=520;
+  let coverage=[]; // 완료 패스들
+  function buildMap(){
+    map.innerHTML="";
+    // 배경 격자
+    for(let i=0;i<=14;i++){
+      const gx=document.createElementNS(NS,"line");
+      gx.setAttribute("x1",10+i*48);gx.setAttribute("y1",20);
+      gx.setAttribute("x2",10+i*48);gx.setAttribute("y2",540);
+      gx.setAttribute("stroke","#16202a");gx.setAttribute("stroke-width","1");
+      map.appendChild(gx);
+    }
+    // 포장 경계
+    const bd=document.createElementNS(NS,"rect");
+    bd.setAttribute("x",x0-30);bd.setAttribute("y",topY-18);
+    bd.setAttribute("width",passGap*(passes-1)+60);bd.setAttribute("height",botY-topY+36);
+    bd.setAttribute("rx",10);bd.setAttribute("fill","none");
+    bd.setAttribute("stroke","#2b3a45");bd.setAttribute("stroke-width","1.5");
+    bd.setAttribute("stroke-dasharray","6 5");
+    map.appendChild(bd);
+
+    // 완료 균평 영역 (현재 라인 이전)
+    for(let p=0;p<S.line-1;p++){
+      const cx=x0+p*passGap;
+      const r=document.createElementNS(NS,"rect");
+      r.setAttribute("x",cx-passGap/2+3);r.setAttribute("y",topY-10);
+      r.setAttribute("width",passGap-6);r.setAttribute("height",botY-topY+20);
+      r.setAttribute("rx",4);
+      // 깎기/메우기 색조 (랜덤 약하게)
+      const hueShift=(p%3)-1;
+      const col=hueShift<0?"rgba(58,130,246,.16)":hueShift>0?"rgba(245,183,58,.14)":"rgba(57,211,83,.16)";
+      r.setAttribute("fill",col);
+      map.appendChild(r);
+    }
+    // AB 라인들
+    for(let p=0;p<passes;p++){
+      const cx=x0+p*passGap;
+      const ln=document.createElementNS(NS,"line");
+      ln.setAttribute("x1",cx);ln.setAttribute("y1",topY);
+      ln.setAttribute("x2",cx);ln.setAttribute("y2",botY);
+      const cur=(p===S.line-1);
+      ln.setAttribute("stroke",cur?"#34d4e0":"#33475260");
+      ln.setAttribute("stroke-width",cur?"2.4":"1.4");
+      if(cur)ln.setAttribute("filter","url(#glow)");
+      map.appendChild(ln);
+    }
+    // glow filter
+    const defs=document.createElementNS(NS,"defs");
+    defs.innerHTML='<filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
+    map.appendChild(defs);
+
+    // 트랙터 + 작업기 (그룹)
+    const g=document.createElementNS(NS,"g");g.setAttribute("id","tractor");
+    g.innerHTML=`
+      <rect x="-7" y="6" width="14" height="13" rx="2" fill="#0e171f" stroke="#f5b73a" stroke-width="2"/>
+      <path d="M0,-16 L11,10 L-11,10 Z" fill="#0e171f" stroke="#34d4e0" stroke-width="2.4"/>
+      <circle cx="0" cy="-3" r="3.4" fill="#34d4e0"/>
+    `;
+    map.appendChild(g);
+  }
+  function updateTractor(){
+    const g=$("tractor");if(!g)return;
+    const cx=x0+(S.line-1)*passGap + S.xte*0.5; // xte cm → px 약식
+    const prog=(S.x% (botY-topY))/(botY-topY);
+    const dir=(S.line%2===1)?1:-1;
+    const cy=dir>0?(topY+prog*(botY-topY)):(botY-prog*(botY-topY));
+    g.setAttribute("transform",`translate(${cx},${cy}) rotate(${dir>0?0:180})`);
+  }
+
+  // ===== 시뮬 루프 =====
+  let last=performance.now();
+  function loop(now){
+    const dt=Math.min(0.05,(now-last)/1000);last=now;
+    if(!S.estop) step(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  function step(dt){
+    S.t+=dt;
+    // 주행
+    if(S.steerOn){
+      S.speed += (1.2-S.speed)*0.05;
+    }else{ S.speed += (0-S.speed)*0.08; }
+    S.x += S.speed*dt*9; // px 진행 스케일
+
+    // 라인 끝 도달 → 다음 라인
+    if(S.x > (botY-topY)){
+      S.x=0; if(S.line<passes){S.line++; buildMap();}
+    }
+
+    // XTE 동특성 (조향 ON이면 0 부근 진동, OFF면 드리프트)
+    const band=PROFILES[S.profile].band;
+    if(S.steerOn){
+      const noise=(Math.sin(S.t*2.1)+Math.sin(S.t*5.3)*0.4)*band*0.7;
+      S.xte += (noise - S.xte)*0.12;
+      S.steerAng += ((-S.xte*1.4 + Math.sin(S.t*3)*1.5) - S.steerAng)*0.15;
+    }else{
+      S.xte += (Math.sin(S.t*0.7)*9 - S.xte)*0.03;
+      S.steerAng += (0-S.steerAng)*0.1;
+    }
+
+    // 지면 높이(주행하며 완만히 변함) → 목표는 평면, 블레이드가 추종
+    S.groundBase = 13.0 + Math.sin(S.x*0.012 + S.line)*2.4 + Math.sin(S.t*0.5)*0.8;
+
+    // 균평 제어 (히스테리시스 bang-bang 모사)
+    if(S.levelOn && !S.hold){
+      const err = S.bladeZ - S.target;            // +면 높음
+      const onGrade = Math.abs(err) < 1.5;
+      if(!onGrade){
+        const v = err>0 ? -9 : 8;                  // cm/s
+        S.bladeZ += v*dt;
+        S.hyd = err>0 ? "DOWN":"UP";
+      } else { S.hyd="HOLD"; }
+      // 목표가 지면따라 천천히 바뀐다고 보고 target을 groundBase로 서서히
+      S.target += (Math.round(S.groundBase*2)/2 - S.target)*0.02;
+    } else if(S.hold){
+      S.hyd="HOLD";
+    } else {
+      S.hyd="—"; S.bladeZ += (S.groundBase - S.bladeZ)*0.02;
+    }
+
+    // 센서 잡음
+    S.sats = 20 + Math.round(Math.sin(S.t*0.3)+1);
+    S.loraAge = 0.3 + Math.abs(Math.sin(S.t*0.8))*0.6;
+    S.prec = 1.0 + Math.abs(Math.sin(S.t*0.5))*0.6;
+  }
+
+  // ===== 렌더 =====
+  function render(){
+    // status
+    $("sats").textContent=S.sats;
+    $("loraAge").textContent=S.loraAge.toFixed(1)+"s";
+    $("speed").textContent=S.speed.toFixed(1);
+    $("hdg").textContent=(S.line%2===1?12:192);
+    $("prec").textContent="±"+S.prec.toFixed(1);
+    $("clock").textContent=new Date().toTimeString().slice(0,5);
+    const rtkOk=!S.estop;
+    $("rtkDot").className="dot "+(rtkOk?"ok":"bad");
+    $("rtkState").textContent=rtkOk?"FIX":"--";
+    $("ntripDot").className="dot ok"; $("loraDot").className="dot "+(S.loraAge<1?"ok":"warn");
+
+    // ---- AUTOSTEER ----
+    const sc=$("steerCard");
+    $("xte").textContent=(S.xte>=0?"+":"−")+Math.abs(S.xte).toFixed(1);
+    $("steerAng").textContent=(S.steerAng>=0?"":"−")+Math.abs(S.steerAng).toFixed(1);
+    $("lineNo").textContent=S.line+" / "+passes;
+    $("algoName").textContent=PROFILES[S.profile].name;
+    const xPct=Math.max(2,Math.min(98,50+S.xte*2.2));
+    $("xteNeedle").style.left=xPct+"%";
+    const steerOnGrade=Math.abs(S.xte)<1.5;
+    $("xteBar").classList.toggle("ongrade",S.steerOn&&steerOnGrade);
+    const sp=$("steerPill");
+    if(S.estop){sp.className="state-pill"; sp.textContent="■ 정지";}
+    else if(!S.steerOn){sp.className="state-pill off";sp.textContent="○ 해제";}
+    else if(steerOnGrade){sp.className="state-pill green";sp.textContent="● 추종중";}
+    else{sp.className="state-pill amber";sp.textContent="◐ 보정중";}
+    sc.classList.toggle("engaged",S.steerOn&&!S.estop);
+
+    // ---- LEVELER ----
+    const lc=$("levelCard");
+    const gerr=S.bladeZ - S.target;
+    $("grade").textContent=(gerr>=0?"+":"−")+Math.abs(gerr).toFixed(1);
+    $("bladeZ").textContent=S.bladeZ.toFixed(1);
+    $("target").textContent=S.target.toFixed(1);
+    $("hydDir").textContent=S.hold?"HOLD":S.hyd;
+    const gPct=Math.max(2,Math.min(98,50+gerr*4.2));
+    $("gradeNeedle").style.left=gPct+"%";
+    const lvlOnGrade=Math.abs(gerr)<1.5;
+    $("gradeBar").classList.toggle("ongrade",S.levelOn&&lvlOnGrade&&!S.hold);
+    const lp=$("levelPill");
+    if(S.estop){lp.className="state-pill";lp.textContent="■ 정지";}
+    else if(!S.levelOn){lp.className="state-pill off";lp.textContent="○ 수동";}
+    else if(S.hold){lp.className="state-pill amber";lp.textContent="‖ 홀드";}
+    else if(lvlOnGrade){lp.className="state-pill green";lp.textContent="● 온그레이드";}
+    else{lp.className="state-pill amber";lp.textContent="◐ 조정중";}
+    lc.classList.toggle("engaged",S.levelOn&&!S.estop);
+
+    updateTractor();
+  }
+
+  // ===== 인터랙션 =====
+  $("steerToggle").addEventListener("click",()=>{
+    if(S.estop)return; S.steerOn=!S.steerOn;
+    const b=$("steerToggle"); b.classList.toggle("on",S.steerOn);
+    b.textContent=S.steerOn?"조향 ON":"조향 OFF";
+  });
+  $("levelToggle").addEventListener("click",()=>{
+    if(S.estop)return; S.levelOn=!S.levelOn; S.hold=false;
+    const b=$("levelToggle"); b.classList.toggle("on",S.levelOn);
+    b.textContent=S.levelOn?"자동 ON":"자동 OFF";
+    $("holdBtn").classList.remove("act");
+  });
+  $("holdBtn").addEventListener("click",()=>{
+    if(S.estop||!S.levelOn)return; S.hold=!S.hold;
+    $("holdBtn").classList.toggle("act",S.hold);
+  });
+  $("tgtUp").addEventListener("click",()=>{ if(!S.estop)S.target=Math.min(40,S.target+0.5); });
+  $("tgtDown").addEventListener("click",()=>{ if(!S.estop)S.target=Math.max(-25,S.target-0.5); });
+  document.querySelectorAll("#profileSeg button").forEach(btn=>{
+    btn.addEventListener("click",()=>{
+      if(S.estop)return;
+      document.querySelectorAll("#profileSeg button").forEach(b=>b.classList.remove("act"));
+      btn.classList.add("act"); S.profile=btn.dataset.p;
+    });
+  });
+  $("estop").addEventListener("click",()=>{
+    S.estop=!S.estop;
+    if(S.estop){
+      S.steerOn=false;S.levelOn=false;
+      $("steerCard").classList.add("fault");$("levelCard").classList.add("fault");
+      $("steerToggle").classList.remove("on");$("steerToggle").textContent="조향 OFF";
+      $("levelToggle").classList.remove("on");$("levelToggle").textContent="자동 OFF";
+      $("estop").textContent="■ 정지됨 — 탭하여 해제";
+    }else{
+      $("steerCard").classList.remove("fault");$("levelCard").classList.remove("fault");
+      $("estop").textContent="■ 비상정지";
+    }
+  });
+  $("menu").addEventListener("click",()=>{
+    alert("설정\n\n· 차량 파라미터 (휠베이스, 안테나 오프셋)\n· 안테나↔블레이드 기하 (h, d)\n· 유압 응답 캘리브레이션\n· CAN / NTRIP / LoRa 연결\n· 호환 모드: AGMO / CHCNAV / FJDynamics");
+  });
+
+  buildMap(); render();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
