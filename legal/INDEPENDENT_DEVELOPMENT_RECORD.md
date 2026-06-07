@@ -151,6 +151,17 @@ Connectix 등에서 호환 목적 인터페이스 분석은 적법으로 인정)
 - AgmoUI.jsx → Kotlin Compose 변환 (UI 자체 작성)
 - AGMO의 Qt6 UI와 무관하게 독립적으로 디자인·구현
 
+### 2026-06-07
+- AGMO Solution ver1 앱 디컴파일 기능 분석 (GNSS 경로 / 듀얼안테나 / CAN 콜백 / 주행흐름)
+- 목적: farmmachine 실기기 미동작 원인 규명 — 인터페이스/프로토콜 사실만 추출
+- 확인(인터페이스 사양, 코드 비복제):
+  - GNSS 칩 = u-blox 계열 (sysfs `sunxi-gps/.../nstandby_state` 변수명 UBLOX로 확정) → NMEA+UBX
+  - CAN = libsysmcu.so 채널 API (250k, big-endian id 패킹, onCallback(int,byte[]) static 역호출, 필터 비트마스크 CAN=2)
+  - 경로 = RDDF (LatLng+speed+implement, 한국 TM 평면, 탭구분, AES256 옵션)
+  - 조향루프·GNSS 파서는 Qt C++ native(.so) — 소스 비추출
+- 산출물: apk-analysis/AGMO_VER1_FUNCTIONAL_ANALYSIS.md (clean-room 핸드오프 리포트)
+- 기록: AGMO 소스/리소스 표현 복제 없음. 리포트 내 코드 스니펫은 전부 farmmachine 자체 구현 제안.
+
 ### [다음 작업일]
 - (여기에 계속 기록)
 
