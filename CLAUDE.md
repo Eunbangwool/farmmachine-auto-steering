@@ -156,8 +156,10 @@ class CanSpec:
 - **대상 앱 = AGMO Solution v1.6.7** (AGMO 태블릿 기본앱). **AgNav = CHCNAV 앱**(별개, 혼동 금지)
 - **clean-room 원칙**: AGMO 디컴파일 리소스/문자열/드로어블/스크린샷을 **레포에 커밋 금지**
   (public repo + findings 정책). 화면을 보고 레이아웃/색/배치/흐름만 자체 HTML로 재현.
-- **디자인 시스템**: 밝은 회색 패널(#e9ecee)/흰 카드, **틸 강조 #2f9d8e**(헤더·토글ON·버튼·활성아이콘),
-  빨강 #e8472b(경고/종료), 원근 그리드 필드, 상단 라이트 상태바, Noto Sans KR
+- **디자인 시스템(디컴파일 colors.xml 확인값)**: 밝은 회색 패널(#eaeaea=white_gray)/흰 카드,
+  **AGMO 틸 강조 `agmo_green #226b5d`**(헤더·토글ON·버튼·활성아이콘) + 밝은 액센트 `agmo_green_light #00b973`,
+  텍스트 #333(dark_gray)·선 #dddddd(light_gray), 빨강 경고, 원근 그리드 필드, 상단 라이트 상태바, Noto Sans KR
+  > AGMO 디컴파일 res/xml 자체는 커밋 금지(clean-room). 색 hex값만 CSS 토큰으로 반영함.
 - **화면 구성**:
   1. 스플래시(AGMO 로고 + 트랙터가 진행바 위, %)
   2. 사용자 동의 안내(약관 + 체크 + 확인)
