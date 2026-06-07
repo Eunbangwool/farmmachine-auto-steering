@@ -461,7 +461,9 @@ function openDetail(key){
     const sr=(k,on)=>`<div class="row"><span class="k">${k}</span><div style="display:flex;align-items:center"><span class="statlabel ${on?'on':''}">${on?'ON':'OFF'}</span><div class="tg ${on?'on':''} ro"></div></div></div>`;
     h=sr('네트워크',s.net)+sr('GPS',s.gps)+sr('RTK',s.rtk)+sr('IMU',s.imu)+sr('조향 모터',s.motor);
   }else if(key==='motortest'){
-    h=`<div style="font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:14px">
+    h=`<div id="canStat" style="text-align:center;font-weight:700;font-size:14px;padding:8px;
+         border-radius:8px;background:#f1f3f5;margin-bottom:12px">CAN 상태 확인 중…</div>
+       <div style="font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:14px">
          안테나 없이 <b>모터 회전</b>을 점검합니다. 버튼을 <b>누르고 있는 동안</b>만
          저속(±12RPM)으로 돌고, 떼면 즉시 정지합니다.<br>
          ⚠ 바퀴·조향 주변에 사람/장애물이 없는지 확인 후 시험하세요.</div>
@@ -576,6 +578,16 @@ function poll(){
   const t=$('tractorMain'); if(t) t.style.left=(50 + Math.max(-12,Math.min(12,S.xte*0.4)))+'%';
   // 시작 버튼 상태
   const sb=$('btnStart'); if(sb) sb.classList.toggle('go',S.engaged);
+  // 모터 점검 화면 열려있으면 CAN 상태 갱신
+  const cs=$('canStat');
+  if(cs && BR && BR.canStatus){
+    try{
+      const c=JSON.parse(BR.canStatus());
+      if(c.canReady){ cs.textContent='CAN: 연결됨 ✓ (모터 제어 가능)'; cs.style.background='var(--brand-lt)'; cs.style.color='var(--brand-dk)'; }
+      else if(!c.vanmcu){ cs.textContent='CAN: libsysmcu.so 미탑재 (비-Apollo 기기)'; cs.style.background='#fdeede'; cs.style.color='#b9760f'; }
+      else { cs.textContent='CAN: 채널 열기 실패 — 권한(device-owner) 확인 필요'; cs.style.background='#fdeede'; cs.style.color='var(--danger)'; }
+    }catch(e){ cs.textContent='CAN: 상태 불명(브리지 미연결)'; }
+  } else if(cs){ cs.textContent='CAN: 데모 모드(실 기기 아님)'; }
 }
 
 // ───────── 부팅 시퀀스 ─────────

@@ -36,7 +36,12 @@ class ApolloCanBridge(
 
     // VanMcu 수신 콜백 → 이 큐 → 접속 클라이언트(rxThread)로 relay
     private val rxQueue = LinkedBlockingQueue<Pair<Int, ByteArray>>(512)
-    @Volatile private var canReady = false
+
+    // UI/진단용 상태 (JsBridge.canStatus() 가 읽음)
+    companion object {
+        @Volatile var canReady = false          // libsysmcu.so CAN 채널 오픈 성공
+        @Volatile var clientConnected = false   // Python ApolloCanBus 접속 여부
+    }
 
     fun start() {
         if (running) return
@@ -86,6 +91,7 @@ class ApolloCanBridge(
 
     private fun handle(sock: Socket) {
         sock.tcpNoDelay = true
+        clientConnected = true
         val inp = DataInputStream(sock.getInputStream())
         val out = sock.getOutputStream()
 
@@ -123,6 +129,7 @@ class ApolloCanBridge(
                 }
             }
         } finally {
+            clientConnected = false
             rxThread.interrupt(); hbThread.interrupt()
         }
     }

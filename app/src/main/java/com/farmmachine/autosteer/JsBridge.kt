@@ -33,6 +33,14 @@ class JsBridge {
     @JavascriptInterface fun setVendor(key: String): String = SteerController.setVendor(key)
     @JavascriptInterface fun motorJog(permille: Int): String = SteerController.motorJog(permille)
 
+    /** CAN 하드웨어 상태 (모터 점검 화면 표시용). logcat 없이 확인. */
+    @JavascriptInterface fun canStatus(): String {
+        val vm = com.van.jni.VanMcu.available
+        val ready = com.farmmachine.autosteer.can.ApolloCanBridge.canReady
+        val conn = com.farmmachine.autosteer.can.ApolloCanBridge.clientConnected
+        return """{"vanmcu":$vm,"canReady":$ready,"connected":$conn}"""
+    }
+
     @JavascriptInterface
     fun setAbLine(ax: Double, ay: Double, bx: Double, by: Double,
                   width: Double, passes: Int, speed: Double) =
