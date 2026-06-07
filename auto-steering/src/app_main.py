@@ -266,7 +266,9 @@ class Controller:
         self._gnss_client = fc.F9pUsbClient(
             port=str(port), baudrate=baud, source=src,
             on_rtk=lambda la, lo, q: self.sys.on_rtk(la, lo, q, source=src),
-            on_heading=self.sys.on_heading)
+            on_heading=self.sys.on_heading,
+            on_heading_meas=self.sys.on_heading_meas,   # 무빙베이스 RELPOSNED(방법 1·3·4)
+            on_velocity=self.sys.on_velocity)           # 진로각 보조(방법 5)
         ok = False
         try:
             ok = self._gnss_client.start()

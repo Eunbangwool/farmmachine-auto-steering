@@ -982,6 +982,40 @@ class StateEstimator:
         self.x = self.x + (K @ resid.reshape(1, 1)).flatten()
         self.P = (np.eye(5) - K @ H) @ self.P
 
+    def update_heading_adaptive(self, heading_rad: float, sigma_rad: float):
+        """
+        heading 단독 측정 — **에폭별 측정노이즈 R=σ²**.
+        무빙베이스 RTK(UBX-NAV-RELPOSNED)의 accHeading(에폭별 헤딩 정확도)을 그대로
+        반영해, 고정 R 대신 매 측정의 신뢰도에 맞춰 칼만 이득을 조절한다(방법 1·3).
+        update_heading 과 동일한 식이되 R 만 인자로 구성.
+        """
+        np = self.np
+        heading = self.params.imu_offset.correct_yaw(heading_rad)
+        R = np.array([[sigma_rad * sigma_rad]])
+        H = np.array([[0, 0, 1, 0, 0]])
+        resid = np.array([_wrap(heading - self.x[2])])
+        S = H @ self.P @ H.T + R
+        K = self.P @ H.T @ np.linalg.inv(S)
+        self.x = self.x + (K @ resid.reshape(1, 1)).flatten()
+        self.P = (np.eye(5) - K @ H) @ self.P
+
+    def update_cog(self, course_rad: float, sigma_rad: float,
+                   beta_rad: float = 0.0):
+        """
+        진로각(COG) 보조 측정 — heading KF 갱신(방법 5).
+        측정값 = course - beta(횡슬립). beta=0 이면 COG=heading 가정.
+        저속·정지에서는 호출부(on_velocity)가 게이트한다.
+        """
+        np = self.np
+        meas = _wrap(course_rad - beta_rad)
+        R = np.array([[sigma_rad * sigma_rad]])
+        H = np.array([[0, 0, 1, 0, 0]])
+        resid = np.array([_wrap(meas - self.x[2])])
+        S = H @ self.P @ H.T + R
+        K = self.P @ H.T @ np.linalg.inv(S)
+        self.x = self.x + (K @ resid.reshape(1, 1)).flatten()
+        self.P = (np.eye(5) - K @ H) @ self.P
+
     def update_rate(self, angular_vel: float, fwd_accel: float, dt: float,
                     raw_roll: float = 0.0, raw_pitch: float = 0.0):
         """
@@ -1854,6 +1888,21 @@ class AutoSteerSystem:
         self._engaged  = False
         self._imu_fed  = False        # IMU 입력 여부 — 없으면 control_step 이 predict
         self.heading_bias_deg = 0.0   # 듀얼안테나 베이스라인 yaw 바이어스(HeadingCalibrator)
+
+        # 무빙베이스 RTK 헤딩(방법 1·3·4) — 에폭별 적응형 R + fix 게이팅
+        self.max_hdg_acc_deg    = 0.6   # 이보다 거친 헤딩은 거부(σ 상한)
+        self.accept_float_heading = False  # carrSoln=float(1) 헤딩 수용 여부
+        self.phase_floor_m      = 0.005  # 베이스라인 위상오차 하한(과신뢰 방지)
+        self.max_hdg_coast_s    = 2.0   # 헤딩 미갱신 허용시간(초) — 초과 시 degraded
+        self._hdg_meas_active   = False  # on_heading_meas 수신 시작 여부
+        self._hdg_last_accept_t = 0.0
+        self.heading_degraded   = False
+        # 진로각(COG) 보조(방법 5)
+        self.cog_min_speed = 1.0    # m/s 미만은 진로각 신뢰불가 → 무시
+        self.cog_sigma_deg = 3.0    # COG 측정 표준편차(도)
+        self.k_slip        = 0.0    # 횡슬립 모델 계수(heavy/sand 에서 상향)
+        # 가속도 기반 roll 보완(옵션, IMU 가속도 있을 때만)
+        self._rp = None
         self._target_idx = 0
         self._prev_angle   = 0.0
         self._prev_angle_t = time.time()
@@ -2045,6 +2094,72 @@ class AutoSteerSystem:
         self.heading_bias_deg = float(bias_deg)
         log.info(f"헤딩 바이어스 적용: {self.heading_bias_deg:+.2f}°")
 
+    def on_heading_meas(self, meas: dict):
+        """
+        무빙베이스 RTK 헤딩 측정(UBX-NAV-RELPOSNED, f9p_client.parse_relposned)을
+        fix 게이팅 + 에폭별 적응형 R 로 EKF 에 반영(방법 1·3). 베이스라인 down 성분으로
+        차체 틸트(횡baseline=roll)를 유도해 경사 보정에 공급(방법 4).
+
+        meas dict 키: heading_deg, acc_deg, baseline_m, rel_d_m,
+                      fix_ok, valid, heading_valid, carr_soln(0/1/2)
+        """
+        self._hdg_meas_active = True
+        carr = int(meas.get("carr_soln", 0))
+        fixed = (carr == 2)
+        floaty = (carr == 1)
+        acc = float(meas.get("acc_deg", 99.0))
+
+        # 게이팅: fix·valid·heading_valid + 정확도 상한. float 은 옵션.
+        ok = (meas.get("fix_ok") and meas.get("valid") and meas.get("heading_valid")
+              and acc <= self.max_hdg_acc_deg
+              and (fixed or (floaty and self.accept_float_heading)))
+        if not ok:
+            return   # 헤딩 미갱신 → EKF 는 predict 로 coast
+
+        # 마운팅 바이어스(기존 HeadingCalibrator) 재사용 → 수학각 변환
+        corrected = float(meas["heading_deg"]) - self.heading_bias_deg
+        baseline = float(meas.get("baseline_m", 0.0)) or 1.0
+        # σ 하한: 베이스라인 길이에 따른 위상오차 하한(과신뢰 방지)
+        floor_deg = math.degrees(math.atan2(self.phase_floor_m, baseline))
+        sigma = math.radians(max(acc, floor_deg))
+        self.estimator.update_heading_adaptive(
+            math.radians(90.0 - corrected), sigma)
+        self._hdg_last_accept_t = time.time()
+
+        # 방법 4: 베이스라인 틸트 → roll(횡baseline 가정) → 경사 보정에 공급
+        rel_d = meas.get("rel_d_m")
+        if rel_d is not None and baseline > 0.1 and self._rp is None:
+            ratio = max(-1.0, min(1.0, -float(rel_d) / baseline))
+            self.estimator._current_roll = math.asin(ratio)
+
+    def on_velocity(self, course_deg: float, speed_mps: float):
+        """
+        GNSS 속도벡터(NMEA VTG/RMC) 진로각 보조(방법 5).
+        저속에서는 진로각이 신뢰불가 → 무시. 횡슬립(beta)은 lateral_accel≈v·yawrate
+        모델로 보정(k_slip). 직진/일반에선 k_slip=0(=순수 COG).
+        """
+        if speed_mps < self.cog_min_speed:
+            return
+        st = self.estimator.get_state()
+        lat_acc = speed_mps * st.angular_vel
+        beta = self.k_slip * lat_acc / max(speed_mps, self.cog_min_speed)
+        course_math = math.radians(90.0 - float(course_deg))
+        self.estimator.update_cog(course_math, math.radians(self.cog_sigma_deg),
+                                  beta_rad=beta)
+
+    def on_accel(self, ay: float, az: float, roll_rate: float = 0.0,
+                 dt: float = 0.02, lin_acc: float = 0.0, yaw_rate: float = 0.0):
+        """
+        (옵션) IMU 가속도가 있을 때 가속도 기반 roll 보완필터로 경사 보정 정밀화(방법 4).
+        원심가속 오염 배제: 직진·저가속 구간에서만 가속도 보정 반영.
+        호출되면 베이스라인 틸트보다 우선(_rp 활성).
+        """
+        if self._rp is None:
+            from calibration import RollPitchEstimator
+            self._rp = RollPitchEstimator()
+        roll = self._rp.update(ay, az, roll_rate, dt, lin_acc, yaw_rate)
+        self.estimator._current_roll = roll
+
     def get_implement_position(self) -> tuple:
         """
         파라미터 4: 현재 작업기 위치 반환.
@@ -2156,7 +2271,19 @@ class AutoSteerSystem:
             "speed_mps": state.speed,
             "pos": (state.x, state.y),
             "heading_deg": math.degrees(state.heading),
+            "heading_degraded": self._heading_degraded(),
         }
+
+    def _heading_degraded(self) -> bool:
+        """무빙베이스 헤딩이 max_hdg_coast_s 이상 미수용 → degraded(자이로-only 경고)."""
+        if not self._hdg_meas_active:
+            return False
+        deg = (time.time() - self._hdg_last_accept_t) > self.max_hdg_coast_s
+        if deg and not self.heading_degraded:
+            log.warning("헤딩 측정 미수용 지속 → degraded(자이로/예측 의존). "
+                        "RTK fix/스카이뷰 확인.")
+        self.heading_degraded = deg
+        return deg
 
     # ── 모드 전환 ───────────────────────────────────
     def engage(self) -> bool:

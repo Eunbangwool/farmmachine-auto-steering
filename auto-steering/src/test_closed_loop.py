@@ -129,6 +129,130 @@ def test_heading_calibration():
     assert abs((hd - 90 + 180) % 360 - 180) < 1.0, f"보정 후 heading 오차: {hd}"
 
 
+def _relposned(heading_deg, acc_deg, baseline_m=1.0, rel_d_m=0.0,
+               fix_ok=True, valid=True, heading_valid=True, carr=2,
+               version=1):
+    """테스트용 UBX-NAV-RELPOSNED 프레임 합성(체크섬 포함)."""
+    import struct, f9p_client as fc
+    n = 64 if version == 1 else 40
+    payload = bytearray(n)
+    payload[0] = version
+    if version == 1:
+        struct.pack_into("<i", payload, 16, int(round(rel_d_m * 100)))      # relPosD cm
+        struct.pack_into("<i", payload, 20, int(round(baseline_m * 100)))   # relPosLength cm
+        struct.pack_into("<i", payload, 24, int(round(heading_deg * 1e5)))  # relPosHeading
+        struct.pack_into("<I", payload, 52, int(round(acc_deg * 1e5)))      # accHeading
+        flags = 0
+        if fix_ok: flags |= 0x01
+        if valid: flags |= 0x04
+        flags |= (carr & 0x03) << 3
+        if heading_valid: flags |= 0x100
+        struct.pack_into("<I", payload, 60, flags)
+    body = bytes([0x01, 0x3C, n & 0xFF, (n >> 8) & 0xFF]) + bytes(payload)
+    cka, ckb = fc._ubx_checksum(body)
+    return b"\xb5\x62" + body + bytes([cka, ckb])
+
+
+def test_parse_relposned():
+    """무빙베이스 RELPOSNED 파싱 + 체크섬/버전 가드."""
+    import f9p_client as fc
+    f = _relposned(123.456, 0.25, baseline_m=1.5, rel_d_m=-0.26, carr=2)
+    m = fc.parse_relposned(f)
+    assert m is not None, "정상 프레임 파싱 실패"
+    assert abs(m["heading_deg"] - 123.456) < 1e-3, m["heading_deg"]
+    assert abs(m["acc_deg"] - 0.25) < 1e-3, m["acc_deg"]
+    assert abs(m["baseline_m"] - 1.5) < 1e-3, m["baseline_m"]
+    assert m["fix_ok"] and m["valid"] and m["heading_valid"] and m["carr_soln"] == 2
+    print(f"  RELPOSNED 파싱 OK: heading={m['heading_deg']:.3f}° acc={m['acc_deg']:.3f}° "
+          f"baseline={m['baseline_m']:.2f}m carr={m['carr_soln']}")
+    bad = bytearray(_relposned(10.0, 0.2)); bad[-1] ^= 0xFF      # 체크섬 손상
+    assert fc.parse_relposned(bytes(bad)) is None, "체크섬 오류인데 파싱됨"
+    assert fc.parse_relposned(_relposned(10.0, 0.2, version=0)) is None, "v0(40B) 거부 안됨"
+    print("  손상 체크섬 / v0 거부 OK")
+
+
+def test_adaptive_heading_R():
+    """accHeading(에폭별 정확도)로 R 조절 — 저-σ 측정이 더 크게 반영."""
+    sys = _make_sys()
+    e = sys.estimator
+    def one(sigma_deg):
+        e.x[:] = 0.0
+        e.P = e.np.eye(5) * 0.1; e.P[2, 2] = 0.001
+        e.update_heading_adaptive(math.radians(45.0), math.radians(sigma_deg))
+        return e.x[2]
+    low = one(0.2); high = one(2.0)
+    print(f"  acc=0.2° → {math.degrees(low):.1f}° vs acc=2.0° → {math.degrees(high):.1f}° "
+          f"(목표 45°)")
+    assert low > high, "저-σ 가 더 크게 반영되지 않음"
+    assert abs(math.degrees(low) - 45.0) < 6.0, "저-σ 측정이 목표에 못 미침"
+
+
+def test_heading_gating():
+    """fix 게이팅: fixed/유효만 수용, float·invalid·과대σ 는 헤딩 미갱신."""
+    sys = _make_sys()
+    e = sys.estimator
+    def feed(**kw):
+        e.x[2] = 0.0; e.P = e.np.eye(5) * 0.1
+        m = dict(heading_deg=45.0, acc_deg=0.2, baseline_m=1.0, rel_d_m=0.0,
+                 fix_ok=True, valid=True, heading_valid=True, carr_soln=2)
+        m.update(kw); sys.on_heading_meas(m)
+        return abs(e.x[2])
+    assert feed() > 0.1, "fixed 유효 헤딩이 수용 안됨"
+    assert feed(carr_soln=1) < 1e-9, "float 헤딩이 거부 안됨"
+    assert feed(carr_soln=0) < 1e-9, "비RTK 헤딩이 거부 안됨"
+    assert feed(valid=False) < 1e-9, "relPosValid=False 거부 안됨"
+    assert feed(heading_valid=False) < 1e-9, "headingValid=False 거부 안됨"
+    assert feed(acc_deg=2.0) < 1e-9, "과대 정확도(2°) 거부 안됨"
+    print("  fixed 수용 / float·invalid·과대σ 거부 OK")
+
+
+def test_tilt_compensation():
+    """방법 4: RELPOSNED 베이스라인 down 성분 → 차체 틸트(roll) → 경사보정에 공급."""
+    sys = _make_sys()
+    # rel_d=-0.1736m, baseline=1.0m → tilt = asin(0.1736) = 10°
+    sys.on_heading_meas(dict(heading_deg=0.0, acc_deg=0.2, baseline_m=1.0,
+                             rel_d_m=-0.1736, fix_ok=True, valid=True,
+                             heading_valid=True, carr_soln=2))
+    roll = math.degrees(sys.estimator._current_roll)
+    print(f"  베이스라인 틸트 → roll={roll:.2f}° (기대 10°)")
+    assert abs(roll - 10.0) < 0.5, f"틸트 유도 오차: {roll}"
+    # 경사보정 배선 확인: roll 설정 시 update_rtk 가 횡방향 보정을 반영
+    from calibration import RollPitchEstimator
+    rp = RollPitchEstimator()
+    g = 9.80665
+    for _ in range(200):                       # 정적: 10° 기운 중력벡터
+        r = rp.update(ay=g*math.sin(math.radians(10)), az=g*math.cos(math.radians(10)),
+                      lin_acc=0.0, yaw_rate=0.0, dt=0.02)
+    print(f"  RollPitchEstimator 정적 roll={math.degrees(r):.2f}° (기대 10°)")
+    assert abs(math.degrees(r) - 10.0) < 1.0, f"가속도 roll 추정 오차: {math.degrees(r)}"
+    # 회전 중(높은 yaw rate)에는 가속도 보정 무시 → 자이로만
+    r2 = rp.update(ay=g, az=0.0, lin_acc=0.0, yaw_rate=1.0, dt=0.02)
+    assert abs(math.degrees(r2) - 10.0) < 1.5, "원심가속 오염 배제 실패"
+    print("  원심가속 구간 가속도-보정 배제 OK")
+
+
+def test_cog_aiding():
+    """방법 5: 진로각(COG) 보조 — 잡음 수렴 + 슬립(beta) 보정 시 진짜 차체헤딩 추종."""
+    import random
+    random.seed(3)
+    sys = _make_sys(); e = sys.estimator
+    e.x[:] = 0.0
+    for _ in range(80):                        # 북향(math 90°) 잡음 COG
+        e.predict(0.05)
+        e.update_cog(math.radians(90.0) + random.gauss(0, 0.05), math.radians(3.0))
+    hd = math.degrees(e.x[2]) % 360.0
+    print(f"  잡음 COG 수렴 → {hd:.1f}° (기대 90°)")
+    assert abs((hd - 90 + 180) % 360 - 180) < 5.0, f"COG 수렴 실패: {hd}"
+    # 슬립: course = heading + beta. beta 를 주면 EKF 가 진짜 heading 추종
+    e.x[:] = 0.0; e.P = e.np.eye(5) * 0.1
+    TRUE = math.radians(90.0); BETA = math.radians(8.0)
+    for _ in range(120):
+        e.update_cog(TRUE + BETA, math.radians(1.0), beta_rad=BETA)
+    hd2 = math.degrees(e.x[2]) % 360.0
+    print(f"  슬립 8° 보정 후 → {hd2:.1f}° (진짜 차체헤딩 90°, 진로각 98° 아님)")
+    assert abs((hd2 - 90 + 180) % 360 - 180) < 2.0, f"슬립 보정 실패: {hd2}"
+
+
 if __name__ == "__main__":
     print("[1] HDT 나침반→수학각 변환")
     test_heading_convention()
@@ -138,5 +262,15 @@ if __name__ == "__main__":
     test_dual_imu_fusion()
     print("[4] ver1 헤딩 바이어스 캘리브(20m 직선)")
     test_heading_calibration()
-    print("\n  ✓ GNSS(NMEA)→EKF 입력 경로 검증 통과 — 헤딩 변환/위치 추종/무IMU predict. "
-          "(조향 수렴은 sitl_sim 6/6)")
+    print("[5] 무빙베이스 RELPOSNED 파싱(방법 1)")
+    test_parse_relposned()
+    print("[6] 에폭별 적응형 R(방법 3)")
+    test_adaptive_heading_R()
+    print("[7] fix 게이팅(방법 3)")
+    test_heading_gating()
+    print("[8] 베이스라인 틸트 보상 + roll 추정(방법 4)")
+    test_tilt_compensation()
+    print("[9] 진로각(COG) 보조 + 슬립 보정(방법 5)")
+    test_cog_aiding()
+    print("\n  ✓ GNSS(NMEA/UBX)→EKF 입력 경로 검증 통과 — 헤딩 변환/위치 추종/무IMU predict "
+          "+ 무빙베이스 헤딩(적응형R·게이팅·틸트)·COG보조. (조향 수렴은 sitl_sim 6/6)")

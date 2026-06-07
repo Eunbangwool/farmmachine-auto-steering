@@ -37,7 +37,8 @@ parse_gga() 는 의존성 없이 단독 테스트 가능.
 from __future__ import annotations
 import threading
 import logging
-from typing import Callable, Optional, Tuple
+import struct
+from typing import Callable, Optional, Tuple, Dict
 
 log = logging.getLogger("f9p")
 
@@ -129,6 +130,141 @@ def parse_hdt(line: str) -> Optional[float]:
     return hdg
 
 
+def _ubx_checksum(body: bytes) -> Tuple[int, int]:
+    """UBX 8-bit Fletcher 체크섬 (class+id+len+payload 구간)."""
+    ck_a = ck_b = 0
+    for b in body:
+        ck_a = (ck_a + b) & 0xFF
+        ck_b = (ck_b + ck_a) & 0xFF
+    return ck_a, ck_b
+
+
+def parse_relposned(frame: bytes) -> Optional[Dict]:
+    """
+    무빙베이스 RTK 헤딩 프레임(UBX-NAV-RELPOSNED, class 0x01 / id 0x3C) 파싱.
+
+    듀얼안테나(AGMO ver1) 헤딩을 NMEA-HDT(반올림·저레이트) 대신 바이너리로 받아
+    에폭마다 **헤딩 + 정확도(accHeading) + 베이스라인 길이 + fix 플래그**를 추출.
+    → AutoSteerSystem.on_heading_meas() 에서 적응형 R + fix 게이팅 + 틸트보상에 사용.
+
+    frame: 완전한 UBX 메시지(b5 62 cls id len_lo len_hi payload ck_a ck_b).
+    v1 페이로드(64B, relPosHeading 포함)만 허용. v0(40B)·길이불일치·체크섬오류 → None.
+    """
+    if len(frame) < 8 or frame[0] != 0xB5 or frame[1] != 0x62:
+        return None
+    if frame[2] != 0x01 or frame[3] != 0x3C:      # NAV-RELPOSNED
+        return None
+    length = frame[4] | (frame[5] << 8)
+    if length != 64:                               # v1(64B)만; v0(40B)엔 헤딩 없음
+        return None
+    if len(frame) < 6 + length + 2:
+        return None
+    payload = frame[6:6 + length]
+    ck_a, ck_b = _ubx_checksum(frame[2:6 + length])
+    if ck_a != frame[6 + length] or ck_b != frame[7 + length]:
+        return None
+
+    relPosD       = struct.unpack_from("<i", payload, 16)[0]   # cm
+    relPosLength  = struct.unpack_from("<i", payload, 20)[0]   # cm
+    relPosHeading = struct.unpack_from("<i", payload, 24)[0]   # 1e-5 deg
+    relPosHPD     = struct.unpack_from("<b", payload, 34)[0]   # 0.1 mm
+    relPosHPLen   = struct.unpack_from("<b", payload, 35)[0]   # 0.1 mm
+    accHeading    = struct.unpack_from("<I", payload, 52)[0]   # 1e-5 deg
+    flags         = struct.unpack_from("<I", payload, 60)[0]
+
+    baseline_m = relPosLength * 0.01 + relPosHPLen * 0.0001
+    rel_d_m    = relPosD * 0.01 + relPosHPD * 0.0001
+    return {
+        "heading_deg":   relPosHeading * 1e-5,
+        "acc_deg":       accHeading * 1e-5,
+        "baseline_m":    baseline_m,
+        "rel_d_m":       rel_d_m,
+        "fix_ok":        bool(flags & 0x01),         # gnssFixOK
+        "valid":         bool(flags & 0x04),         # relPosValid
+        "carr_soln":     (flags >> 3) & 0x03,        # 0 none/1 float/2 fixed
+        "heading_valid": bool(flags & 0x100),        # relPosHeadingValid
+    }
+
+
+def parse_vtg(line: str) -> Optional[Tuple[float, float]]:
+    """
+    NMEA VTG → (진로각 course[deg, 북=0], 속도[m/s]). 실패/정지 시 None.
+        $xxVTG,course,T,courseM,M,knots,N,kmh,K,mode*CS
+    진로각(COG) 보조(방법 5)에 사용.
+    """
+    if "VTG" not in line:
+        return None
+    if not _nmea_checksum_ok(line):
+        return None
+    f = line.split("*", 1)[0].split(",")
+    if len(f) < 8:
+        return None
+    try:
+        course = float(f[1]) % 360.0 if f[1] else None
+        kmh = float(f[7]) if f[7] else None
+    except ValueError:
+        return None
+    if course is None or kmh is None:
+        return None
+    return (course, kmh / 3.6)
+
+
+class _StreamFramer:
+    """
+    혼재(NMEA/UBX/RTCM3) 바이트 스트림을 프레이밍해 콜백으로 분배.
+    F9pUsbClient 바이트 읽기 경로에서 사용(바이너리 UBX-RELPOSNED 수신용).
+    프레이밍 규칙은 GNSS 스니퍼(SniffReport._parse)와 동일.
+    """
+    MAX_BUF = 8192
+
+    def __init__(self, on_nmea: Optional[Callable[[str], None]] = None,
+                 on_ubx: Optional[Callable[[bytes], None]] = None):
+        self.on_nmea = on_nmea
+        self.on_ubx = on_ubx
+        self._buf = bytearray()
+
+    def feed_bytes(self, data: bytes):
+        self._buf.extend(data)
+        buf = self._buf
+        while buf:
+            fmt = detect_format(bytes(buf[:2]))
+            if fmt == "nmea":
+                nl = buf.find(b"\n")
+                if nl < 0:
+                    if len(buf) > self.MAX_BUF:
+                        buf.clear()
+                    break
+                line = bytes(buf[:nl + 1]); del buf[:nl + 1]
+                if self.on_nmea:
+                    try: self.on_nmea(line.decode("ascii", errors="ignore"))
+                    except Exception: pass
+            elif fmt == "ubx":
+                if len(buf) < 6:
+                    break
+                length = buf[4] | (buf[5] << 8)
+                frame_len = 6 + length + 2
+                if frame_len > self.MAX_BUF:
+                    del buf[0]; continue
+                if len(buf) < frame_len:
+                    break
+                frame = bytes(buf[:frame_len]); del buf[:frame_len]
+                if self.on_ubx:
+                    try: self.on_ubx(frame)
+                    except Exception: pass
+            elif fmt == "rtcm3":
+                if len(buf) < 3:
+                    break
+                length = ((buf[1] & 0x03) << 8) | buf[2]
+                frame_len = 3 + length + 3
+                if frame_len > self.MAX_BUF:
+                    del buf[0]; continue
+                if len(buf) < frame_len:
+                    break
+                del buf[:frame_len]
+            else:
+                del buf[0]                       # resync: 한 바이트 버림
+
+
 class F9pUsbClient:
     """
     F9P USB 시리얼에서 NMEA를 읽어 GGA를 파싱하고 on_rtk 콜백을 호출.
@@ -142,6 +278,8 @@ class F9pUsbClient:
                  on_rtk: Optional[Callable[[float, float, int], None]] = None,
                  on_fix_change: Optional[Callable[[int], None]] = None,
                  on_heading: Optional[Callable[[float], None]] = None,
+                 on_heading_meas: Optional[Callable[[Dict], None]] = None,
+                 on_velocity: Optional[Callable[[float, float], None]] = None,
                  read_timeout: float = 1.0,
                  source: str = "f9p"):
         self.port = port
@@ -149,6 +287,8 @@ class F9pUsbClient:
         self.on_rtk = on_rtk
         self.on_fix_change = on_fix_change      # 품질 변화 시 알림(옵션)
         self.on_heading = on_heading            # HDT 진헤딩(도) 콜백 — 듀얼/INS 공통
+        self.on_heading_meas = on_heading_meas  # 무빙베이스 RELPOSNED dict(방법 1·3·4)
+        self.on_velocity = on_velocity          # VTG (course_deg, speed_mps)(방법 5)
         self.read_timeout = read_timeout
         self.source = source                    # GnssArbiter 소스 라벨
 
@@ -201,19 +341,24 @@ class F9pUsbClient:
 
     # ── 읽기 루프 ───────────────────────────────────────────────
     def _loop(self):
+        # 바이트 단위 read + 프레이머: NMEA(텍스트)와 UBX(바이너리 RELPOSNED)를 함께 처리.
+        framer = _StreamFramer(on_nmea=self.feed, on_ubx=self._on_ubx)
         while self._running and self._ser is not None:
             try:
-                raw = self._ser.readline()
+                n = getattr(self._ser, "in_waiting", 0) or 1
+                raw = self._ser.read(n)
             except Exception as e:
                 log.warning(f"F9P 읽기 오류: {e}")
                 continue
             if not raw:
                 continue
-            try:
-                line = raw.decode("ascii", errors="ignore")
-            except Exception:
-                continue
-            self.feed(line)
+            framer.feed_bytes(raw)
+
+    def _on_ubx(self, frame: bytes):
+        """UBX 프레임 → RELPOSNED 면 헤딩 측정 dict 콜백(방법 1·3·4)."""
+        m = parse_relposned(frame)
+        if m is not None and self.on_heading_meas:
+            self.on_heading_meas(m)
 
     def feed(self, line: str):
         """
@@ -225,6 +370,12 @@ class F9pUsbClient:
             hdg = parse_hdt(line)
             if hdg is not None and self.on_heading:
                 self.on_heading(hdg)
+            return
+        # 진로각(VTG) — GNSS 속도벡터 보조(방법 5)
+        if "VTG" in line:
+            v = parse_vtg(line)
+            if v is not None and self.on_velocity:
+                self.on_velocity(v[0], v[1])
             return
         fix = parse_gga(line)
         if fix is None:

@@ -195,6 +195,33 @@ class HeadingCalibrator:
                         f"heading bias {bias:+.2f}° (dist {self._dist:.1f}m, R={R:.3f})")
 
 
+class RollPitchEstimator:
+    """
+    가속도 기반 roll 추정 + (있으면) 자이로 보완필터 — 경사 보정(파라미터 2) 정밀화.
+
+    원심가속 오염 배제: 차가 직진·저가속(|선가속도|·|yaw rate| 작음)일 때만 가속도로
+    중력방향 roll 을 보정하고, 그 외 구간은 자이로(roll rate) 적분으로 유지.
+    IMU 원시 가속도가 있을 때만 의미가 있다(없으면 베이스라인 틸트만 사용).
+    """
+    def __init__(self, alpha: float = 0.98,
+                 max_lin_acc: float = 0.5, max_yaw_rate: float = 0.1):
+        self.alpha = alpha            # 자이로:가속도 가중(고레이트 신뢰)
+        self.max_lin_acc = max_lin_acc
+        self.max_yaw_rate = max_yaw_rate
+        self.roll = 0.0
+
+    def update(self, ay: float, az: float, roll_rate: float = 0.0,
+               dt: float = 0.02, lin_acc: float = 0.0,
+               yaw_rate: float = 0.0) -> float:
+        # 1) 자이로 적분(고레이트 평활)
+        self.roll = _wrap(self.roll + roll_rate * dt)
+        # 2) 정적(직진·저가속) 구간에서만 가속도 중력방향으로 보정
+        if abs(lin_acc) <= self.max_lin_acc and abs(yaw_rate) <= self.max_yaw_rate:
+            acc_roll = math.atan2(ay, az)
+            self.roll = _wrap(self.alpha * self.roll + (1.0 - self.alpha) * acc_roll)
+        return self.roll
+
+
 def estimate_from_log(samples: List[dict]) -> dict:
     """
     주행 로그 일괄 추정 헬퍼.

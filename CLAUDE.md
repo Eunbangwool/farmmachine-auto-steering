@@ -170,6 +170,15 @@ class CanSpec:
   - **헤딩 바이어스 캘리브**(중심 치우침 해결): `calibration.HeadingCalibrator` — 직선 ~20m 주행 중
     (보고heading vs GPS 진로각) 원형평균 = 베이스라인 yaw 바이어스 → `set_heading_bias`/on_heading 보정.
     app_main: `start_heading_calib()` 후 직선 주행하면 자동 산출·적용. (테스트: +5° 복원 R=1.0)
+  - **PA-3급 헤딩 업그레이드(✅ 방법 1·3·4·5, 자이로바이어스 6상태=방법2는 제외)**: 듀얼안테나 ver1 을
+    단일안테나 INS(PA-3) 수준으로. (1) **무빙베이스 RTK 헤딩**: HDT 스칼라 대신 **UBX-NAV-RELPOSNED**
+    (`f9p_client.parse_relposned`, `_StreamFramer` 바이트경로) — 에폭별 헤딩+`accHeading`+베이스라인+fix플래그.
+    (3) **적응형 R + fix 게이팅**: `StateEstimator.update_heading_adaptive(σ)` + `AutoSteerSystem.on_heading_meas`
+    가 `carrSoln==fixed && valid && acc≤max_hdg_acc_deg(0.6°)` 만 수용(아니면 predict coast, `heading_degraded` 플래그).
+    (4) **베이스라인 틸트→roll** 경사보정 공급 + `calibration.RollPitchEstimator`(가속도 roll, 원심오염 배제) `on_accel`.
+    (5) **진로각(COG) 보조**: `parse_vtg`→`on_velocity`→`update_cog`(횡슬립 beta 모델, 저속 게이트).
+    배선: `app_main.start_gnss` 가 `on_heading_meas`/`on_velocity` 연결. 검증: `test_closed_loop.py` [5]~[9].
+    ★ 전제: F9P 무빙베이스(안테나 2개) 구성 시 RELPOSNED 출력 — 없으면 HDT 폴백.
 - **CHCNAV 성능 튜닝(✅ A)**: `vendor_profiles.CHCNAV_TUNING`(AgNav 문서값) → `select_vendor` 가
   `TrackingParams` 에 적용. `curve_coefficient` 도 예측항에 실제 반영(이전엔 미사용). 최종 갭은
   실하드웨어 `tuning.py`+`MotorResponseProbe` 튜닝 + 동일 PA-3 신호품질.
