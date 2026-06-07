@@ -271,7 +271,12 @@ class CanSpec:
 - `VENDOR_PROFILES` 레지스트리:
   - **agmo** ✅ `can_verified=True` — Keya KY170(250k) 확정 + AGMO GNSS(추정)
   - **chcnav** ★ `can_verified=False` — PA-3 GNSS+INS 확정 / 모터 CAN 미확정
-  - **fjd** ★ `can_verified=False` — AT2 dome(추정) / 모터 CAN 미확정
+  - **fjd** ★ `can_verified=False` — AT2 GNSS+INS(매뉴얼 확인) / 모터 CAN 미확정
+    - GNSS+INS: 멀티밴드(GPS L1/L2/L5·GLONASS·BDS·Galileo·SBAS), gyro 0.1°/s, accel 0.5mg,
+      roll/pitch 0.2°(heading 정확도 매뉴얼 미기재→0.4° 추정), 9–36V, IP66. 별도 자세센서(200Hz,<0.1°,IP67)
+    - 조향=**전동 스티어링휠(컬럼형, 스플라인 슬리브)** — 최대토크 20Nm@12V/30Nm@24V, 12·24V, IP65.
+      AGMO Keya(인라인) 와 **모터 형식 자체가 다름**(인라인 조향축 모터 ≠ 핸들 구동). 보정=UHF 라디오(410–470/902–928MHz)
+    - 출처: AT2 HW 설치매뉴얼 6.1 스펙표(사실 데이터만 추출, clean-room). 모터 CAN 프로토콜은 별도 입수 필요
 - `apply_vendor(key)` → `field_config.apply_canspec()` 로 CanSpec 런타임 활성화
 - `AutoSteerSystem.select_vendor(key)` → CanSpec + GnssArbiter 우선순위 + EKF 튜닝 + 알고리즘 적용.
   **`can_verified=False` 면 `engage()` 거부**(조향 출력 비활성, GNSS·표시는 동작) = 안전장치

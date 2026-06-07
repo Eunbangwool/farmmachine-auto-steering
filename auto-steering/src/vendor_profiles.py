@@ -50,11 +50,16 @@ AGMO_V2_INS = GnssReceiverSpec(
     rtcm="RTCM3.x", heading_source="ins",
 )
 
-# FJDynamics AT2 dome — GNSS+INS 스마트안테나. ★ 실제 스펙 미확인(추정값)
+# FJDynamics AT2 — GNSS+INS 스마트 수신기 (AT2 HW 설치매뉴얼 6.1 스펙표 확인값).
+#   멀티밴드: GPS L1C/A·L1C·L2P(W)·L2C·L5 / GLONASS L1·L2 / BDS B1I·B2I·B3I·B1C·B2a
+#            / Galileo E1·E5a·E5b / SBAS. 9–36V, <300mA, IP66.
+#   내장 IMU: 자이로 정확도 0.1°/s, 가속도 0.5mg → roll/pitch 0.2°(확인값).
+#   ★ heading 정확도는 매뉴얼 미기재 → 0.4° 추정(roll/pitch 0.2°·PA-3 대비 보수적).
+#   별도 자세센서(attitude sensor 5V·200Hz·분해능<0.1°·IP67)도 보유 → roll/pitch 보강 가능.
 FJD_AT2 = GnssReceiverSpec(
-    name="FJDynamics AT2 dome (추정)", can_bitrate=250_000, serial_baud=115_200,
+    name="FJDynamics AT2 GNSS+INS", can_bitrate=250_000, serial_baud=115_200,
     nmea_rate_hz=10.0, imu_rate_hz=100.0,
-    heading_acc_deg=0.5, rollpitch_acc_deg=0.2, vel_acc_mps=0.05,
+    heading_acc_deg=0.4, rollpitch_acc_deg=0.2, vel_acc_mps=0.05,
     rtcm="RTCM3.x", heading_source="ins",
 )
 
@@ -166,16 +171,19 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
     ),
     "fjd": VendorProfile(
         key="fjd", display_name="FJDynamics",
-        tagline="AT2 dome · FJD 전동조향",
+        tagline="AT2 GNSS+INS · 전동 스티어링휠",
         can_verified=False,
         canspec=_placeholder_canspec(250_000),
         gnss_primary=FJD_AT2, gnss_backup=UBLOX_F9P,
         gnss_priority=("fjd", "f9p"),
         default_algo="implement",
         uses_was=False,    # WAS 장착 선택 가능, 없어도 동작 → 기본 미사용
-        notes="AT2 GNSS+INS(추정). 앵글센서(WAS) 선택(없어도 자동조향 가능). "
-              "모터 CAN 프로토콜 ★미확정 — FJD 문서/버스 캡처(can_tools) 후 "
-              "canspec 채울 것(현재 조향 비활성).",
+        notes="AT2 GNSS+INS(매뉴얼 확인: 멀티밴드, gyro 0.1°/s, roll/pitch 0.2°). "
+              "조향=전동 스티어링휠(컬럼형) — 최대토크 20Nm@12V / 30Nm@24V, 12·24V, "
+              "스플라인 슬리브로 핸들 결합. AGMO Keya(인라인) 와 모터 형식 자체가 다름. "
+              "보정신호=UHF 라디오(410–470 / 902–928MHz). 앵글센서(WAS) 선택(없어도 동작). "
+              "모터 CAN 프로토콜 ★미확정 — FJD 문서/버스 캡처(can_tools) 후 canspec "
+              "채울 것(현재 조향 비활성).",
     ),
 }
 
