@@ -168,6 +168,14 @@ class F9pUsbClient:
             self._ser = None
         log.info("F9P 클라이언트 종료")
 
+    def write_rtcm(self, data: bytes):
+        """NTRIP 으로 받은 RTCM 보정신호를 수신기(F9P) 시리얼에 주입."""
+        if self._ser is not None:
+            try:
+                self._ser.write(data)
+            except Exception as e:
+                log.debug(f"RTCM write 실패: {e}")
+
     # ── 읽기 루프 ───────────────────────────────────────────────
     def _loop(self):
         while self._running and self._ser is not None:

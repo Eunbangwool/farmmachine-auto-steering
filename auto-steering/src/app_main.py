@@ -59,6 +59,7 @@ class Controller:
         self._last: dict = {}
         self._lock = threading.Lock()
         self._jog_on = False          # 모터 조그 활성 여부(Enable 시퀀스 추적)
+        self._ntrip = None            # NTRIP 클라이언트(RTK 보정신호)
 
         if vendor:
             self.set_vendor(vendor)
@@ -144,6 +145,36 @@ class Controller:
             log.warning(f"motor_jog 실패: {e}")
             return "error"
 
+    # ── NTRIP (RTK 보정신호) ───────────────────────────────────
+    def ntrip_connect(self, host, port, mount, user="", pw=""):
+        """NTRIP caster 접속. 받은 RTCM 은 (연결돼 있으면) GNSS 수신기로 전달."""
+        import ntrip_client
+        self.ntrip_disconnect()
+        def on_rtcm(data):
+            c = getattr(self, "_gnss_client", None)   # 안테나/F9P 연결 시 보정 주입
+            if c is not None and hasattr(c, "write_rtcm"):
+                try: c.write_rtcm(data)
+                except Exception: pass
+        try:
+            self._ntrip = ntrip_client.NtripClient(
+                str(host), int(port), str(mount), str(user), str(pw), on_rtcm=on_rtcm)
+            self._ntrip.start()
+            log.info(f"NTRIP 접속 시도: {host}:{port}/{mount}")
+            return "ok"
+        except Exception as e:
+            log.warning(f"ntrip_connect 실패: {e}")
+            return f"error:{e}"
+
+    def ntrip_disconnect(self):
+        if self._ntrip:
+            self._ntrip.stop(); self._ntrip = None
+        return "ok"
+
+    def ntrip_status(self):
+        if self._ntrip:
+            return self._ntrip.status()
+        return {"connected": False, "bytes": 0, "error": "", "host": "", "port": 0, "mount": ""}
+
     # ── 센서 입력 (bridge 모드에서 GNSS/IMU 브릿지가 호출) ───────
     def on_rtk(self, lat, lon, quality, source="pa3"):
         if self.demo:
@@ -228,6 +259,11 @@ def engage():           return _ctrl.engage() if _ctrl else False
 def disengage():        _ctrl and _ctrl.disengage()
 def estop():            _ctrl and _ctrl.estop()
 def motor_jog(permille): return _ctrl.motor_jog(permille) if _ctrl else "no-ctrl"
+def ntrip_connect(host, port, mount, user="", pw=""):
+    return _ctrl.ntrip_connect(host, port, mount, user, pw) if _ctrl else "no-ctrl"
+def ntrip_disconnect(): return _ctrl.ntrip_disconnect() if _ctrl else "no-ctrl"
+def ntrip_status():     return json.dumps(_ctrl.ntrip_status() if _ctrl else
+                                          {"connected": False, "bytes": 0, "error": ""}, ensure_ascii=False)
 def on_rtk(lat, lon, quality, source="pa3"):  _ctrl and _ctrl.on_rtk(lat, lon, quality, source)
 def on_imu(h, av, acc, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_imu(h, av, acc, roll, pitch)
 def status_json():      return _ctrl.status_json() if _ctrl else "{}"

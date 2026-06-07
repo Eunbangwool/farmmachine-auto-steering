@@ -29,6 +29,14 @@ object SteerController {
     fun setVendor(key: String): String =
         try { api().callAttr("set_vendor", key).toString() } catch (e: Throwable) { "" }
 
+    /** NTRIP(RTK 보정신호) 접속/해제/상태. */
+    fun ntripConnect(host: String, port: Int, mount: String, user: String, pw: String): String =
+        try { api().callAttr("ntrip_connect", host, port, mount, user, pw).toString() } catch (e: Throwable) { "error" }
+    fun ntripDisconnect(): String =
+        try { api().callAttr("ntrip_disconnect").toString() } catch (e: Throwable) { "error" }
+    fun ntripStatus(): String =
+        try { api().callAttr("ntrip_status").toString() } catch (e: Throwable) { "{}" }
+
     fun setAbLine(ax: Double, ay: Double, bx: Double, by: Double,
                   width: Double, passes: Int, speed: Double) = safe {
         api().callAttr("set_ab_line", ax, ay, bx, by, width, passes, speed)
