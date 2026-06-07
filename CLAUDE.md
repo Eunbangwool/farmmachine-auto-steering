@@ -144,6 +144,21 @@ class CanSpec:
 
 ---
 
+## 헤딩(자세) 소스 — ★ 두 아키텍처 모두 지원 (오너 확인)
+
+> 자율조향엔 위치뿐 아니라 **헤딩(차량 방향)+roll/pitch**가 필수(모든 추종 알고리즘이 `state.heading` 사용).
+> 모터 하트비트(조향각)가 없어도 **헤딩만 있으면** GNSS로 폐루프가 닫힌다 → 헤딩 소스가 핵심 피드백.
+
+- **ver1 (듀얼안테나 + IMU)**: heading=두 안테나 baseline, 각속도/자세=별도 IMU. `heading_source="dual"`
+- **ver2 / CHCNAV NX510 / FJD (GNSS+INS 스마트안테나)**: 수신기가 heading/자세 융합 출력. `heading_source="ins"`
+- 코드: `GnssReceiverSpec.heading_source`("ins"/"dual"/"none") + `VendorProfile.gnss_alt`(AGMO ver1/ver2 둘 다 등록).
+  AGMO 프로파일: primary=ver2(INS), alt=ver1(dual). CHCNAV/FJD=ins. F9P 단독=none.
+- **공통 경로**: 둘 다 진헤딩을 NMEA **HDT** 로 출력 → `f9p_client.parse_hdt`/`on_heading` → `on_imu` → EKF.
+  (`tune_for_receiver` 가 heading_acc 로 EKF R 자동 튜닝.) roll/pitch 는 수신기 proprietary(추후 벤더별 파싱).
+- F9P 단독(none)은 헤딩 소스 없음 → 듀얼/IMU 필요.
+
+---
+
 ## GNSS 수신기 & 소스 이중화 (결정: PA-3 주 + F9P 백업)
 
 ### CHCNAV PA-3 스마트 안테나 (NX510 설치 안테나, 데이터시트)

@@ -108,6 +108,27 @@ def parse_gga(line: str) -> Optional[Tuple[float, float, int]]:
     return (lat, lon, quality)
 
 
+def parse_hdt(line: str) -> Optional[float]:
+    """
+    헤딩 문장 → 진북 기준 heading(도). 실패 시 None.
+    듀얼안테나(AGMO ver1)·INS 스마트안테나(ver2/NX510/FJD) 모두 진헤딩을 HDT 로 출력:
+        $xxHDT,123.4,T*CS   (T=True)
+    """
+    line = line.strip()
+    if "HDT" not in line:
+        return None
+    if not _nmea_checksum_ok(line):
+        return None
+    f = line.split("*", 1)[0].split(",")
+    if len(f) < 2 or not f[1]:
+        return None
+    try:
+        hdg = float(f[1]) % 360.0
+    except ValueError:
+        return None
+    return hdg
+
+
 class F9pUsbClient:
     """
     F9P USB 시리얼에서 NMEA를 읽어 GGA를 파싱하고 on_rtk 콜백을 호출.
@@ -120,12 +141,14 @@ class F9pUsbClient:
                  baudrate: int = 38400,
                  on_rtk: Optional[Callable[[float, float, int], None]] = None,
                  on_fix_change: Optional[Callable[[int], None]] = None,
+                 on_heading: Optional[Callable[[float], None]] = None,
                  read_timeout: float = 1.0,
                  source: str = "f9p"):
         self.port = port
         self.baudrate = baudrate
         self.on_rtk = on_rtk
         self.on_fix_change = on_fix_change      # 품질 변화 시 알림(옵션)
+        self.on_heading = on_heading            # HDT 진헤딩(도) 콜백 — 듀얼/INS 공통
         self.read_timeout = read_timeout
         self.source = source                    # GnssArbiter 소스 라벨
 
@@ -195,8 +218,14 @@ class F9pUsbClient:
     def feed(self, line: str):
         """
         한 줄(NMEA 문장)을 처리. 테스트/리플레이에서 직접 호출 가능.
-        하드웨어 없이도 parse_gga + 콜백 경로를 검증할 수 있다.
+        하드웨어 없이도 parse_gga/parse_hdt + 콜백 경로를 검증할 수 있다.
         """
+        # 진헤딩(HDT) — 듀얼안테나(ver1)·INS 스마트안테나(ver2/NX510/FJD) 공통
+        if "HDT" in line:
+            hdg = parse_hdt(line)
+            if hdg is not None and self.on_heading:
+                self.on_heading(hdg)
+            return
         fix = parse_gga(line)
         if fix is None:
             return

@@ -35,20 +35,27 @@ from autosteer_core import GnssReceiverSpec, CHCNAV_PA3, UBLOX_F9P
 #  벤더 GNSS 스펙 (CHCNAV_PA3 / UBLOX_F9P 는 autosteer_core 재사용)
 # ═══════════════════════════════════════════════════════════════
 
-# AGMO 자율주행 키트 수신기 — ★ 실제 스펙 미확인(보수적 추정값)
-AGMO_GNSS = GnssReceiverSpec(
-    name="내장 GNSS (추정)", can_bitrate=500_000, serial_baud=115_200,
+# AGMO ver1 — 듀얼안테나 + IMU (heading=베이스라인, 각속도/자세=IMU). ★ 추정값
+AGMO_V1_DUAL = GnssReceiverSpec(
+    name="AGMO ver1 (듀얼안테나+IMU)", can_bitrate=500_000, serial_baud=115_200,
     nmea_rate_hz=10.0, imu_rate_hz=100.0,
-    heading_acc_deg=0.5, rollpitch_acc_deg=0.2, vel_acc_mps=0.05,
-    rtcm="RTCM3.x",
+    heading_acc_deg=0.3, rollpitch_acc_deg=0.2, vel_acc_mps=0.05,
+    rtcm="RTCM3.x", heading_source="dual",
+)
+# AGMO ver2 — GNSS+INS 스마트안테나 (CHCNAV NX510 동급). ★ 추정값
+AGMO_V2_INS = GnssReceiverSpec(
+    name="AGMO ver2 (GNSS+INS 스마트안테나)", can_bitrate=500_000, serial_baud=115_200,
+    nmea_rate_hz=10.0, imu_rate_hz=100.0,
+    heading_acc_deg=0.4, rollpitch_acc_deg=0.2, vel_acc_mps=0.05,
+    rtcm="RTCM3.x", heading_source="ins",
 )
 
-# FJDynamics AT2 dome — GNSS+INS. ★ 실제 스펙 미확인(추정값)
+# FJDynamics AT2 dome — GNSS+INS 스마트안테나. ★ 실제 스펙 미확인(추정값)
 FJD_AT2 = GnssReceiverSpec(
     name="FJDynamics AT2 dome (추정)", can_bitrate=250_000, serial_baud=115_200,
     nmea_rate_hz=10.0, imu_rate_hz=100.0,
     heading_acc_deg=0.5, rollpitch_acc_deg=0.2, vel_acc_mps=0.05,
-    rtcm="RTCM3.x",
+    rtcm="RTCM3.x", heading_source="ins",
 )
 
 
@@ -111,6 +118,8 @@ class VendorProfile:
     #   AGMO: 항상 False(WAS 미사용 알고리즘 — Keya 하트비트 누적각으로 조향각 추정)
     #   CHCNAV/FJD: WAS 장착 선택 가능하나 없어도 동작 → 기본 False
     uses_was:      bool = False
+    # 대체 안테나(헤딩 소스 다른 버전). AGMO 처럼 ver1(듀얼)/ver2(INS) 둘 다 지원 시.
+    gnss_alt:      Optional[GnssReceiverSpec] = None
 
 
 VENDOR_PROFILES: Dict[str, VendorProfile] = {
@@ -119,12 +128,14 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
         tagline="Apollo 10 Pro · Keya 조향모터",
         can_verified=True,
         canspec=KEYA_CANSPEC,
-        gnss_primary=AGMO_GNSS, gnss_backup=UBLOX_F9P,
+        gnss_primary=AGMO_V2_INS, gnss_backup=UBLOX_F9P,
         gnss_priority=("agmo", "f9p"),
         default_algo="implement",
         uses_was=False,    # AGMO = WAS 미사용(모터 인코더 피드백)
+        gnss_alt=AGMO_V1_DUAL,   # ver1(듀얼안테나+IMU) — ver2(INS)와 둘 다 지원
         notes="Keya KY170 매뉴얼 V2.4 프로토콜 확정(250k 속도제어, 확장프레임). "
               "앵글센서 미사용 — 조향각은 Keya 하트비트 누적각으로 추정. "
+              "안테나: ver1=듀얼안테나+IMU / ver2=GNSS+INS 스마트안테나(둘 다 지원). "
               "GNSS 스펙은 추정값 — 현장 확인.",
     ),
     "chcnav": VendorProfile(
@@ -172,6 +183,8 @@ def list_vendors() -> List[dict]:
         "gnss":         p.gnss_primary.name,
         "bitrate":      p.canspec.get("CAN_BITRATE"),
         "uses_was":     p.uses_was,
+        "heading_source": p.gnss_primary.heading_source,
+        "gnss_alt":     (p.gnss_alt.name if p.gnss_alt else None),
         "notes":        p.notes,
     } for p in VENDOR_PROFILES.values()]
 

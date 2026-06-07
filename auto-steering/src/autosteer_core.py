@@ -699,30 +699,33 @@ class GnssReceiverSpec:
     serial_baud:       int      # bps (NMEA-0183 출력)
     nmea_rate_hz:      float    # 위치 출력 주기
     imu_rate_hz:       float    # IMU 출력 주기 (0 = 내장 IMU 없음)
-    heading_acc_deg:   float    # INS heading 정확도 (≈1σ, 0 = INS 없음)
+    heading_acc_deg:   float    # heading 정확도 (≈1σ, 0 = heading 소스 없음)
     rollpitch_acc_deg: float
     vel_acc_mps:       float
     rtcm:              str      # 지원 차분 포맷
+    # 헤딩 소스 종류 — 둘 다 동일 on_imu 경로로 EKF 에 융합(아래 참고):
+    #   "ins"  : GNSS+INS 스마트안테나가 heading/자세 융합 출력 (PA-3/NX510/FJD/AGMO ver2)
+    #   "dual" : 듀얼안테나 baseline heading + 별도 IMU 각속도/자세 (AGMO ver1)
+    #   "none" : heading 소스 없음 (F9P 단독 — 별도 IMU/듀얼 필요)
+    heading_source:    str = "none"
 
 
-# CHCNAV PA-3 스마트 안테나 (NX510 설치 안테나, 데이터시트 확인값)
-#   - CAN 2포트 @500kb/s, RS232 2포트 ≤115200bps, NMEA-0183
-#   - 내장 IMU 100Hz: heading<0.3°, roll/pitch<0.1°, 속도 0.03m/s
-#   - 차분 RTCM3.2/3.3, 출력 ≤10Hz / 내부 50Hz
-#   - "OEM CAN/serial 프로토콜 커스터마이즈 제공" → CanSpec 입수 경로
+# ── GNSS+INS 스마트안테나 (단일 안테나, heading/자세 융합 출력) ──
+# CHCNAV PA-3 (NX510 설치 안테나, 데이터시트). FJD AT2 / AGMO ver2 동급.
+#   - CAN 2포트 @500kb/s, RS232 ≤115200bps, NMEA-0183 + 내장 IMU 100Hz
 CHCNAV_PA3 = GnssReceiverSpec(
     name="CHCNAV PA-3", can_bitrate=500_000, serial_baud=115_200,
     nmea_rate_hz=10.0, imu_rate_hz=100.0,
     heading_acc_deg=0.3, rollpitch_acc_deg=0.1, vel_acc_mps=0.03,
-    rtcm="RTCM3.2/3.3",
+    rtcm="RTCM3.2/3.3", heading_source="ins",
 )
 
-# 본인 u-blox ZED-F9P (RTK 보드, 내장 IMU 없음 → 별도 IMU 융합 필요)
+# 본인 u-blox ZED-F9P (RTK 보드, 내장 IMU/INS 없음 → 듀얼안테나 or 별도 IMU 필요)
 UBLOX_F9P = GnssReceiverSpec(
     name="u-blox ZED-F9P", can_bitrate=0, serial_baud=38_400,
     nmea_rate_hz=10.0, imu_rate_hz=0.0,
     heading_acc_deg=0.0, rollpitch_acc_deg=0.0, vel_acc_mps=0.05,
-    rtcm="RTCM3.x",
+    rtcm="RTCM3.x", heading_source="none",
 )
 
 
