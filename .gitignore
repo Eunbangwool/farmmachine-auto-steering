@@ -12,3 +12,23 @@ local.properties
 *.iml
 .cxx/
 captures/
+
+# ── 준법: 디컴파일/리버스엔지니어링 산출물·민감 분석물 커밋 금지 (clean-room) ──
+# AGMO/타사 앱 분석 결과는 public repo 에 절대 올리지 않는다. (CLAUDE.md 정책)
+apk-analysis/findings/
+**/findings/
+*.apk
+*.aab
+*.dex
+*.smali
+**/smali/
+**/smali_*/
+# 디컴파일 도구 출력 폴더 (apktool/jadx)
+decompile/
+decompiled/
+**/jadx-output/
+**/apktool-output/
+# 분석용 스크린샷/캡처
+screenshots/
+**/screenshots/
+reference-shots/
