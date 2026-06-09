@@ -42,6 +42,16 @@ object SteerController {
         try { api().callAttr("start_mount_diag").toString() } catch (e: Throwable) { "error" }
     fun mountDiagStatus(): String =
         try { api().callAttr("mount_diag_status").toString() } catch (e: Throwable) { "{}" }
+
+    /** GNSS 1단계(AGMO ver1 내부 UART): 전원ON → 포트탐지 → 무빙베이스설정 → 시작. */
+    fun gnssPowerOn(): String =
+        try { api().callAttr("gnss_power_on").toString() } catch (e: Throwable) { "error" }
+    fun scanGnss(window: Double): String =
+        try { api().callAttr("scan_gnss", window).toString() } catch (e: Throwable) { "{}" }
+    fun configureMovingBase(port: String, baud: Int): String =
+        try { api().callAttr("configure_moving_base", port, baud).toString() } catch (e: Throwable) { "error" }
+    fun startGnss(port: String, baud: Int): String =
+        try { api().callAttr("start_gnss", port, baud).toString() } catch (e: Throwable) { "error" }
     fun setDeadman(pressed: Boolean) = safe { api().callAttr("set_deadman", pressed) }
     fun setProfile(name: String) = safe { api().callAttr("set_profile", name) }
 

@@ -458,6 +458,7 @@ const MENU = [
   {key:'vehicle', label:'차량 정보', ic:'M3 13h18v5H3zM6 13V8h7l4 5'},
   {key:'optim', label:'최적화', ic:'M4 6l6 6-6 6M14 6l6 6-6 6'},
   {key:'rtk', label:'RTK 보정 신호', ic:'M5 19a9 9 0 019-9M5 19a5 5 0 015-5M5 19h.01'},
+  {key:'gnss', label:'GNSS(안테나)', ic:'M12 2v4M12 18v4M2 12h4M18 12h4M12 8a4 4 0 100 8 4 4 0 000-8z'},
   {key:'tuning', label:'주행 튜닝', ic:'M6 4v16M6 8h6M18 4v16M12 16h6'},
   {key:'system', label:'시스템 상태', ic:'M12 3v9M7 6a8 8 0 1010 0'},
   {key:'motortest', label:'모터 점검', ic:'M12 3v6M12 3a9 9 0 109 9'},
@@ -472,7 +473,7 @@ function renderSetList(sel){
 function toggleRow(k,on,ro){ return `<div class="row"><span class="k">${k}</span><div class="tg ${on?'on':''} ${ro?'ro':''}"></div></div>`; }
 function openDetail(key){
   renderSetList(key);
-  const T={user:'사용자 정보',vehicle:'차량 정보',optim:'최적화',rtk:'RTK 보정 신호',system:'시스템 상태',motortest:'모터 점검',tuning:'주행 튜닝'};
+  const T={user:'사용자 정보',vehicle:'차량 정보',optim:'최적화',rtk:'RTK 보정 신호',gnss:'GNSS(안테나)',system:'시스템 상태',motortest:'모터 점검',tuning:'주행 튜닝'};
   $('detailTitle').textContent=T[key];
   let h='';
   if(key==='user'){
@@ -515,6 +516,23 @@ function openDetail(key){
       +`<button class="pill" id="ntConnect">연결</button>`
       +`<button class="pill" id="ntDisc" style="background:var(--off);margin-top:8px">해제</button>`
       +`<div id="ntStat" style="text-align:center;font-size:12px;color:var(--sub);margin-top:12px">상태 확인 중…</div>`;
+  }else if(key==='gnss'){
+    h=`<div style="font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:10px">
+         자율조향 1단계 = <b>AGMO ver1 안테나(내부 UART)</b>. 순서대로 진행하세요.<br>
+         (USB는 레벨러 전용 — 여기 아님)</div>
+       <button class="pill" id="gPwr">① 전원 ON (내부 u-blox)</button>
+       <button class="pill" id="gScan" style="margin-top:8px">② 포트 자동 탐지 (수 초 소요)</button>
+       <div id="gScanR" style="font-size:12px;color:var(--sub);margin:8px 0;white-space:pre-line">—</div>
+       <div class="row"><span class="k">포트</span><input class="nti" id="gPort" value="/dev/ttyS1"
+            autocapitalize="off" autocorrect="off" spellcheck="false"/></div>
+       <div class="row"><span class="k">보레이트(0=자동)</span><input class="nti" id="gBaud" value="0"/></div>
+       <button class="pill" id="gCfg" style="margin-top:8px">③ 무빙베이스 설정(듀얼헤딩 RELPOSNED)</button>
+       <button class="pill" id="gStart" style="margin-top:8px">④ GNSS 시작</button>
+       <div id="gStat" style="text-align:center;font-size:12px;color:var(--sub);margin-top:12px">상태 확인 중…</div>
+       <div style="border-top:1px solid var(--line,#ddd);margin:14px 0 8px"></div>
+       <div style="font-size:13px;color:var(--sub)">듀얼안테나 base/rover·부호 진단 (직선 ~15m 주행, 끝에 우측으로 살짝 기울임)</div>
+       <button class="pill" id="gDiag" style="background:var(--off);margin-top:8px">마운트 진단 시작</button>
+       <div id="gDiagR" style="font-size:12px;color:var(--sub);margin-top:8px">미실행</div>`;
   }else if(key==='system'){
     const s=S.sys;
     const sr=(k,on)=>`<div class="row"><span class="k">${k}</span><div style="display:flex;align-items:center"><span class="statlabel ${on?'on':''}">${on?'ON':'OFF'}</span><div class="tg ${on?'on':''} ro"></div></div></div>`;
@@ -581,6 +599,20 @@ function wireDetail(key){
       const m=b.dataset.mode; if(BR&&BR.setProfile){try{BR.setProfile(m);}catch(e){}}
       $$('.modebtn').forEach(x=>x.classList.remove('sel')); b.classList.add('sel');
       toast('주행 모드: '+b.textContent); });
+  } else if(key==='gnss'){
+    const port=()=>(($('gPort')&&$('gPort').value)||'/dev/ttyS1').trim();
+    const baud=()=>parseInt(($('gBaud')&&$('gBaud').value)||'0',10)||0;
+    $('gPwr')&&($('gPwr').onclick=()=>{ let r='-'; if(BR&&BR.gnssPowerOn){try{r=BR.gnssPowerOn();}catch(e){}} toast('전원 ON: '+r); });
+    $('gScan')&&($('gScan').onclick=()=>{ const el=$('gScanR'); if(el) el.textContent='탐지 중… (수 초)';
+      setTimeout(()=>{ let best=null, txt='탐지 결과 없음';
+        if(BR&&BR.scanGnss){ try{ const o=JSON.parse(BR.scanGnss(1.0)); best=o.best;
+          txt=(o.ports||[]).map(p=>p.port+': '+(p.found?('OK '+(p.baud||'')+' '+((p.formats||[]).join('/'))):'없음')).join('\n')||'포트 없음';
+        }catch(e){ txt='데모/오류'; } }
+        if(best&&$('gPort')) $('gPort').value=best.port;
+        if(el) el.textContent=(best?('✓ 추천 '+best.port+' @'+best.baud+'\n'):'')+txt; }, 60); });
+    $('gCfg')&&($('gCfg').onclick=()=>{ let r='-'; if(BR&&BR.configureMovingBase){try{r=BR.configureMovingBase(port(),baud());}catch(e){}} toast('무빙베이스 설정: '+r); });
+    $('gStart')&&($('gStart').onclick=()=>{ let r='-'; if(BR&&BR.startGnss){try{r=BR.startGnss(port(),baud());}catch(e){}} toast('GNSS 시작: '+r); });
+    $('gDiag')&&($('gDiag').onclick=()=>{ if(BR&&BR.startMountDiag){try{BR.startMountDiag();}catch(e){}} toast('마운트 진단 시작 — 직선 15m 주행'); });
   }
 }
 
@@ -710,6 +742,9 @@ function poll(){
       S.sys.gps = !!st.active_gnss; S.sys.rtk = (st.safety!=='RTK_LOW'&&st.safety!=='RTK_LOST'&&!!st.active_gnss);
       S.sys.imu = !!st.active_gnss; S.sys.motor = (st.can_available!==false) && S.motorVerified;
       if(typeof st.line_no==='number') S.line=st.line_no;
+      S.activeGnss = st.active_gnss || null;
+      S.headingDeg = (typeof st.heading_deg==='number') ? st.heading_deg : null;
+      S.headingDegraded = !!st.heading_degraded;
       // 미확정 벤더 배너
       const w=$('motorWarn');
       if(st.motor_verified===false){ w.classList.add('on');
@@ -748,6 +783,19 @@ function poll(){
       ns.style.color = n.connected ? 'var(--brand)' : 'var(--danger)';
     }catch(e){}
   } else if(ns){ ns.textContent='데모 모드(실 기기 아님)'; }
+  // GNSS 화면 열려있으면 상태/진단 갱신
+  const gs=$('gStat');
+  if(gs){ gs.textContent='소스: '+(S.activeGnss||'-')
+      +' · heading '+(S.headingDeg!=null?Math.round(S.headingDeg)+'°':'-')
+      +(S.headingDegraded?' ⚠열화':'')
+      +' · 오차 '+(typeof S.xte==='number'?Math.round(S.xte):'-')+'cm'; }
+  const gd=$('gDiagR');
+  if(gd && BR && BR.mountDiagStatus){ try{ const c=JSON.parse(BR.mountDiagStatus());
+    gd.textContent = (c.active===false||c.active===undefined) ? '미실행'
+      : ('진행 '+Math.round((c.progress||0)*100)+'% · base='+(c.base_antenna||'-')
+         +' · offset='+(c.rec_baseline_offset_deg!=null?c.rec_baseline_offset_deg+'°':'-')
+         +' · roll='+(c.rec_dual_roll_sign!=null?(c.rec_dual_roll_sign>0?'+1':'-1'):'-'));
+  }catch(e){} }
   // 모터 하트비트(피드백) 표시
   const hi=$('hbInfo');
   if(hi){

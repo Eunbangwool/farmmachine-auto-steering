@@ -40,6 +40,10 @@ class JsBridge {
     @JavascriptInterface fun headingCalibStatus(): String = SteerController.headingCalibStatus()
     @JavascriptInterface fun startMountDiag(): String = SteerController.startMountDiag()
     @JavascriptInterface fun mountDiagStatus(): String = SteerController.mountDiagStatus()
+    @JavascriptInterface fun gnssPowerOn(): String = SteerController.gnssPowerOn()
+    @JavascriptInterface fun scanGnss(window: Double): String = SteerController.scanGnss(window)
+    @JavascriptInterface fun configureMovingBase(port: String, baud: Int): String = SteerController.configureMovingBase(port, baud)
+    @JavascriptInterface fun startGnss(port: String, baud: Int): String = SteerController.startGnss(port, baud)
 
     /** CAN 하드웨어 상태 (모터 점검 화면 표시용). logcat 없이 확인. */
     @JavascriptInterface fun canStatus(): String {
