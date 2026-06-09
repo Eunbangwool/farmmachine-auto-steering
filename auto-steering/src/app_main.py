@@ -44,14 +44,16 @@ class Controller:
         if self.demo:
             # 데모: SITL 폐루프(자전거모델 + 가상 RTK/IMU). 실제 알고리즘이 UI 를 구동.
             import sitl_sim
-            self.sys = sitl_sim.build_system(algo="implement", profile="normal",
+            self.sys = sitl_sim.build_system(algo="pure_pursuit", profile="normal",
                                              realistic=True)
             self.sim = sitl_sim.Simulator(self.sys, KUBOTA_MR1157,
                                           target_speed=1.2, yaw_tau=0.25)
         else:
             self.bus = ApolloCanBus(backend="bridge", host=host, port=port,
                                     on_state=lambda s: log.info(f"CAN {s}"))
-            self.sys = AutoSteerSystem(self.bus, params=KUBOTA_MR1157, algo="implement")
+            # ★ 기본 = pure_pursuit (안정·SITL 수렴 검증). implement 는 후방참조점 발산
+            #   이슈로 재설계 전까지 비활성(set_algorithm("implement")로 수동 선택은 가능).
+            self.sys = AutoSteerSystem(self.bus, params=KUBOTA_MR1157, algo="pure_pursuit")
             self.sys.set_profile("normal")
 
         self._running = False
@@ -205,7 +207,9 @@ class Controller:
         """휠베이스(m) 변경 + 추종기 재구성."""
         try:
             self.sys.params.wheelbase = float(m)
-            self.sys.set_algorithm("implement", self.sys.params.wheelbase)
+            # 현재 알고리즘 보존(implement 강제 금지 — 발산 이슈)
+            self.sys.set_algorithm(getattr(self.sys, "_algo", "pure_pursuit"),
+                                   self.sys.params.wheelbase)
             return "ok"
         except Exception as e:
             log.warning(f"set_wheelbase 실패: {e}"); return "error"

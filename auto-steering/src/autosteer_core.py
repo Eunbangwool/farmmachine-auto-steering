@@ -1976,6 +1976,7 @@ class AutoSteerSystem:
           "stanley"      — 직선 정밀 중요
           "implement"    — 쟁기/균평: 작업기 기준 제어 + 3모드 프로파일 적용
         """
+        self._algo = algo            # 현재 알고리즘명(set_wheelbase 등이 보존용으로 사용)
         if algo == "stanley":
             self.follower = Stanley(wheelbase)
         elif algo == "implement":

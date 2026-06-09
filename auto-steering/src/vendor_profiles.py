@@ -154,7 +154,7 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
         canspec=KEYA_CANSPEC,
         gnss_primary=AGMO_V2_INS, gnss_backup=UBLOX_F9P,
         gnss_priority=("agmo", "f9p"),
-        default_algo="implement",
+        default_algo="pure_pursuit",   # 임시: implement 발산 이슈→재설계 후 복귀
         uses_was=False,    # AGMO = WAS 미사용(모터 인코더 피드백)
         gnss_alt=AGMO_V1_DUAL,   # ver1(듀얼안테나+IMU) — ver2(INS)와 둘 다 지원
         notes="Keya KY170 매뉴얼 V2.4 프로토콜 확정(250k 속도제어, 확장프레임). "
@@ -169,7 +169,7 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
         canspec=_placeholder_canspec(500_000),   # PA-3 버스 500k (데이터시트)
         gnss_primary=CHCNAV_PA3, gnss_backup=UBLOX_F9P,
         gnss_priority=("pa3", "f9p"),
-        default_algo="implement",
+        default_algo="pure_pursuit",   # 임시: implement 발산 이슈→재설계 후 복귀
         uses_was=False,    # WAS 장착 선택 가능, 없어도 동작 → 기본 미사용
         tracking=CHCNAV_TUNING,   # AgNav 문서 추종값 명시 적용
         notes="PA-3 GNSS+INS 확정. 앵글센서(WAS) 선택(없어도 자동조향 가능). "
@@ -183,7 +183,7 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
         canspec=_placeholder_canspec(250_000),
         gnss_primary=FJD_AT2, gnss_backup=UBLOX_F9P,
         gnss_priority=("fjd", "f9p"),
-        default_algo="implement",
+        default_algo="pure_pursuit",   # 임시: implement 발산 이슈→재설계 후 복귀
         uses_was=False,    # WAS 장착 선택 가능, 없어도 동작 → 기본 미사용
         notes="AT2 GNSS+INS(매뉴얼 확인: 멀티밴드, gyro 0.1°/s, roll/pitch 0.2°). "
               "조향=전동 스티어링휠(컬럼형) — 최대토크 20Nm@12V / 30Nm@24V, 12·24V, "
