@@ -1113,7 +1113,8 @@ class Stanley(PathFollower):
         idx, cross, ph = self._nearest(fx, fy, path)
         h_err = _wrap(ph - state.heading)
         cross_term = math.atan2(self.k * cross, self.ks + state.speed)
-        delta = h_err - cross_term
+        # cross>0 = 경로 우측 → 좌(+δ)로 복귀해야 함. (부호: SITL 오프셋 수렴 검증)
+        delta = h_err + cross_term
         return max(-MAX_STEER_RAD, min(MAX_STEER_RAD, delta))
 
     def _nearest(self, x, y, path):

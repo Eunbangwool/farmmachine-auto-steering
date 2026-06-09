@@ -79,6 +79,13 @@ ImplementReferenced  — 쟁기/균평 등 작업기 부하 큰 작업 ★
 - 오차 계산 기준 = 안테나가 아닌 **작업기 위치**
 - 수식: `δ = k_heading×h_err - atan2(k×e_impl, v+ks) - k_pred×e_pred + Ackermann보정`
 
+> ⚠ **검증 발견(2026-06, SITL 오프셋 수렴 테스트)**: **Stanley 크로스트랙 부호가 반전**돼 있어 라인서
+> 멀어지는 방향으로 조향 → **수정 완료**(`delta = h_err + cross_term`, 0.8m→0.02m 수렴 확인).
+> **PurePursuit 는 정상**(기하 기반). **★ ImplementReferenced(현재 기본 알고리즘)는 오프셋에서 발산**
+> (0.1m 에서도 -6m): 작업기=**후방 참조점**이라 비최소위상 → 단순 P 제어로는 불안정(부호 뒤집어도 동일).
+> 예측리드/감쇠 재설계 필요 = 별도 작업. **임시로 안정적인 `pure_pursuit`/`stanley` 사용 권장.**
+> 회귀가드: `test_closed_loop.py` [12] 오프셋 수렴 테스트 추가(이 테스트 부재로 부호버그 미검출됐었음).
+
 ### Layer 4: CAN 모터 제어
 - `SteeringActuator`: 위치 P → 각속도 PI + 마찰 FF 이중 루프
 - `ApolloCanInterface`: ✅ SocketCAN 구현 (python-can 우선 → raw socket 폴백, 하드웨어 없으면 available=False)

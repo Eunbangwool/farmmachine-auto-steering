@@ -290,6 +290,25 @@ def test_cog_aiding():
     assert abs((hd2 - 90 + 180) % 360 - 180) < 2.0, f"슬립 보정 실패: {hd2}"
 
 
+def test_offset_convergence():
+    """
+    횡오프셋에서 라인 복귀 수렴 — 크로스트랙 '부호' 회귀 가드.
+    (이 테스트 부재로 Stanley 부호반전이 그동안 미검출됐음.)
+    ★ implement 는 작업기(후방점) 비최소위상 불안정으로 오프셋 발산 → 별도 이슈, 여기서 제외.
+    """
+    import sitl_sim
+    for algo in ("pure_pursuit", "stanley"):
+        sys_ = sitl_sim.build_system(algo=algo, profile="normal", realistic=True)
+        sim = sitl_sim.Simulator(sys_, sitl_sim.KUBOTA_MR1157,
+                                 target_speed=1.2, yaw_tau=0.2)
+        sim.model.x = 0.8                       # 라인(x=0)에서 0.8m 횡오프셋
+        for _ in range(700):
+            if not sim.step(0.02)["engaged"]:
+                break
+        print(f"  {algo:13s} 0.8m → {sim.model.x:+.3f}m")
+        assert abs(sim.model.x) < 0.2, f"{algo} 라인 복귀 실패(부호 의심): {sim.model.x:+.2f}m"
+
+
 def test_ubx_cfg_builder():
     """UBX-CFG 빌더 — 체크섬 정합 + 무빙베이스 시퀀스에 RELPOSNED 활성 포함."""
     import f9p_client as fc
@@ -347,9 +366,11 @@ if __name__ == "__main__":
     test_mount_diagnostic()
     print("[11] 진로각(COG) 보조 + 슬립 보정(방법 5)")
     test_cog_aiding()
-    print("[12] UBX-CFG 빌더 + 무빙베이스 heading 활성 시퀀스")
+    print("[12] 오프셋 라인복귀 수렴(크로스트랙 부호 가드)")
+    test_offset_convergence()
+    print("[13] UBX-CFG 빌더 + 무빙베이스 heading 활성 시퀀스")
     test_ubx_cfg_builder()
-    print("[13] 내부 UART 포트 스캔(안전성)")
+    print("[14] 내부 UART 포트 스캔(안전성)")
     test_scan_ports_safe()
     print("\n  ✓ GNSS(NMEA/UBX)→EKF 입력 경로 검증 통과 — 헤딩 변환/위치 추종/무IMU predict "
           "+ 무빙베이스 헤딩(적응형R·게이팅·틸트)·COG보조. (조향 수렴은 sitl_sim 6/6)")
