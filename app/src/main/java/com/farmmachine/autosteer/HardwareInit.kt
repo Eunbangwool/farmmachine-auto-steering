@@ -35,13 +35,14 @@ object HardwareInit {
                 log.append("bcast:$action ")
             } catch (e: Throwable) { Log.w(TAG, "broadcast $action 실패: ${e.message}") }
         }
-        // 2) libsysmcu.so 네이티브 GPIO(OutputSet) — CAN 과 같은 .so 경로
+        // 2) libsysmcu.so 네이티브 GPIO(OutputSet) — GNSS 전원만. CAN 핀은 건드리지 않음
+        //    (이번 세션 heartbeat 수신=CAN 트랜시버 이미 정상 → OutputSet 으로 흔들 위험 회피).
         if (VanMcu.available) {
             var ok = 0
-            for (p in GNSS_PINS + CAN_PINS + intArrayOf(RS485_EN)) {
+            for (p in GNSS_PINS + intArrayOf(RS485_EN)) {
                 try { if (VanMcu.OutputSet(p, 1)) ok++ } catch (e: Throwable) { /* 심볼 없음 등 */ }
             }
-            log.append("OutputSet ok=$ok ")
+            log.append("OutputSet(GNSS) ok=$ok ")
         } else {
             log.append("VanMcu 미탑재 ")
         }

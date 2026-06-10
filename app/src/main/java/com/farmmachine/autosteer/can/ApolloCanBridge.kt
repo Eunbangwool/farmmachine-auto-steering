@@ -100,9 +100,11 @@ class ApolloCanBridge(
                 VanMcu.setCallback(VanMcu.CAN)
                 Log.i(TAG, "CAN RX 콜백 ON (filter=CAN)")
             } else {
+                // ★ 모터가 돌던 버전은 setCallback 이 시그니처 불일치로 '호출 안 됨' 상태였다.
+                //   setCallback(0) 을 호출하면 .so 가 CAN 처리를 통째로 끌 수 있어 TX(모터)까지
+                //   죽을 수 있다(전 채널/RX 무동작과 일치) → 기본은 setCallback 을 건드리지 않는다.
                 VanMcu.setOnCanListener(null)
-                VanMcu.setCallback(0)
-                Log.i(TAG, "CAN RX OFF (TX 전용 — 모터 회전 우선)")
+                Log.i(TAG, "CAN RX OFF (TX 전용 — setCallback 미호출, 모터 회전 우선)")
             }
         } catch (e: Throwable) {
             Log.w(TAG, "CAN RX 설정 무시(TX 는 동작): ${e.message}")
