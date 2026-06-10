@@ -171,6 +171,10 @@ class Controller:
                 str(host), int(port), str(mount), str(user), str(pw), on_rtcm=on_rtcm)
             self._ntrip.start()
             log.info(f"NTRIP 접속 시도: {host}:{port}/{mount}")
+            # ⑤ GNSS 가 아직 안 시작됐으면 RTCM 을 흘려보낼 대상(_gnss_client)이 없어
+            #    보정이 수신기에 전달되지 않는다 → 사용자에게 순서 경고.
+            if getattr(self, "_gnss_client", None) is None:
+                return "ok-gnss먼저"   # caster 접속됨, 단 GNSS 시작 전이라 RTCM 미전달
             return "ok"
         except Exception as e:
             log.warning(f"ntrip_connect 실패: {e}")
@@ -402,6 +406,12 @@ def boot(backend: str = "bridge", host: str = "127.0.0.1", port: int = 47100,
     global _ctrl
     if _ctrl is None:
         logging.basicConfig(level=logging.INFO)
+        # ★ 실차(bridge)에서 벤더 미지정이면 오너 기본 스택(AGMO/Keya)으로 부팅.
+        #   → select_vendor 가 actuator.speed_control=True(cmd_speed 경로) 활성.
+        #   (벤더 미선택 시 speed_control=False → placeholder _send_motor 로 모터 무반응)
+        #   UI 시작화면에서 set_vendor 로 런타임 변경 가능.
+        if vendor is None and backend == "bridge":
+            vendor = "agmo"
         _ctrl = Controller(backend=backend, host=host, port=port, vendor=vendor)
         _ctrl.start()
     return "ok"

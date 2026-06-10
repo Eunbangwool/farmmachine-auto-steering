@@ -342,7 +342,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
       </div>
       <button class="startbtn" id="btnStart">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><circle cx="12" cy="13" r="2"/><path d="M12 5V11M6 17l4-2.5M18 17l-4-2.5M9 3.5h6"/></svg>
-        주행 시작
+        주행 (누르고 유지)
       </button>
     </div>
   </div>
@@ -632,7 +632,8 @@ function readNtripForm(){
   const c={}; document.querySelectorAll('.nti').forEach(i=>c[i.dataset.k]=(i.value||'').trim()); return c;
 }
 function ntripConnect(c){
-  if(BR&&BR.ntripConnect){ try{ BR.ntripConnect(c.host, parseInt(c.port||'2101',10), c.mount, c.user, c.pw); }catch(e){} }
+  if(BR&&BR.ntripConnect){ try{ const r=BR.ntripConnect(c.host, parseInt(c.port||'2101',10), c.mount, c.user, c.pw);
+    toast('RTK 보정: '+(r==='ok'?'접속':r==='ok-gnss먼저'?'접속됨 — 먼저 GNSS를 시작해야 보정이 전달됩니다':(''+r))); }catch(e){} }
 }
 function wireNtrip(){
   const cn=$('ntConnect'), dc=$('ntDisc');
@@ -713,18 +714,32 @@ $('pathX').onclick=()=>setModal('pathModal',false);
 $('pathBack').onclick=()=>{ setModal('pathModal',false); setModal('modeModal',true); };
 function gotoWork(){ setModal('pathModal',false); if(BR&&BR.setDemoAbLine){try{BR.setDemoAbLine();}catch(e){}} show('work'); }
 $('pathNew').onclick=gotoWork; $('pathOld').onclick=gotoWork;
-$('btnEnd').onclick=()=>{ if(BR&&BR.disengage){try{BR.disengage();}catch(e){}} show('main'); };
-$('btnStart').onclick=()=>{
+$('btnEnd').onclick=()=>{ if(BR&&BR.setDeadman){try{BR.setDeadman(false);}catch(e){}} if(BR&&BR.disengage){try{BR.disengage();}catch(e){}} show('main'); };
+// ★ 데드맨(홀드투런): "주행" 버튼을 누르고 있는 동안만 조향이 활성. 떼면 즉시 정지.
+//   안전상 deadman 이 false 면 control_step 이 매 주기 자동 disengage 한다.
+//   (물리 데드맨 스위치/시트센서가 생기면 그쪽에서 setDeadman 을 호출하도록 교체)
+function startEngage(){
+  if(BR&&BR.setDeadman){try{BR.setDeadman(true);}catch(e){}}
   let ok=false; if(BR&&BR.engage){try{ ok=BR.engage(); }catch(e){}} else { ok=S.sensorOk; }
-  if(!ok){ // 엔게이지 거부 → 경고 다이얼로그
+  if(!ok){ // 엔게이지 거부 → 데드맨 해제 + 경고 다이얼로그
+    if(BR&&BR.setDeadman){try{BR.setDeadman(false);}catch(e){}}
     const items=[]; if(!S.sys.gps) items.push('GPS 연결이 원활하지 않습니다');
     if(!S.sys.imu) items.push('IMU 연결이 원활하지 않습니다');
     if(!S.motorVerified) items.push((S.vendorName||'이 제조사')+' 모터 CAN 프로토콜이 미확정입니다');
     if(!items.length) items.push('자율주행을 시작할 수 없습니다');
     $('warnList').innerHTML=items.map(t=>`<li>${t}</li>`).join(''); setModal('warn',true);
   }
-};
-$('warnClose').onclick=()=>{ if(BR&&BR.disengage){try{BR.disengage();}catch(e){}} setModal('warn',false); };
+}
+function stopEngage(){
+  if(BR&&BR.setDeadman){try{BR.setDeadman(false);}catch(e){}}
+  if(BR&&BR.disengage){try{BR.disengage();}catch(e){}}
+}
+(function(){ const bs=$('btnStart'); if(!bs) return;
+  bs.addEventListener('pointerdown', e=>{ e.preventDefault(); startEngage(); });
+  ['pointerup','pointercancel','pointerleave'].forEach(ev=>
+    bs.addEventListener(ev, e=>{ e.preventDefault(); stopEngage(); }));
+})();
+$('warnClose').onclick=()=>{ if(BR&&BR.setDeadman){try{BR.setDeadman(false);}catch(e){}} if(BR&&BR.disengage){try{BR.disengage();}catch(e){}} setModal('warn',false); };
 
 // ───────── 상태 폴링 ─────────
 function poll(){

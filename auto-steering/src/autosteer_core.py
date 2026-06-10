@@ -1487,6 +1487,7 @@ class SteeringActuator:
         # 실모터(Keya) 속도제어 모드: True 면 cmd_speed(SDO)로 직접 구동(무WAS).
         # 부호 규약(현장 확정): +permille=좌회전, -permille=우회전.
         self.speed_control     = False
+        self._speed_enabled    = False    # Keya 드라이브 Enable 상태(첫 명령 전 CMD_ENABLE 필요)
         self.steer_permille_max = 400     # 조향 속도 상한(‰) — CanSpec.STEER_SPEED_MAX
         self._est_angle        = 0.0      # 하트비트 없을 때 명령속도 적분 추정 조향각(rad)
 
@@ -1657,6 +1658,12 @@ class SteeringActuator:
             self._est_angle = max(-1.05, min(1.05, self._est_angle + actual_rate * dt))
             with self._lock:
                 self._measured_angle = self._est_angle
+        # ★ Keya 드라이브는 cmd_speed 전에 CMD_ENABLE 을 받아야 회전한다(안 그러면
+        #   Disabled 상태로 0RPM). 첫 비-0 명령 직전에 한 번 Enable(워치독은 control_step
+        #   의 주기적 cmd_speed 재전송이 유지). disable() 에서 플래그 해제.
+        if not self._speed_enabled:
+            self.can.send(CanSpec.MOTOR_CMD_ID, CanSpec.CMD_ENABLE)
+            self._speed_enabled = True
         self._send_speed(permille)
         return float(permille)
 
@@ -1692,6 +1699,7 @@ class SteeringActuator:
         if self.speed_control:
             self.can.send(CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(0))
             self.can.send(CanSpec.MOTOR_CMD_ID, CanSpec.CMD_DISABLE)
+            self._speed_enabled = False
             self._vel_integral = 0.0
             return
         data = bytearray(8)
