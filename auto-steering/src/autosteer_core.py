@@ -1889,6 +1889,9 @@ class AutoSteerSystem:
                  vendor:       str                  = None):
         self.params    = params or KUBOTA_MR1157
         self.estimator = StateEstimator(self.params)
+        # EKF 는 GNSS 콜백 스레드(on_rtk/heading/gyro…)와 50Hz 루프(control_step predict)
+        # 양쪽에서 접근 → 동시 mutate 방지용 재진입 락(짧은 임계영역).
+        self._ekf_lock = threading.RLock()
         self.actuator  = SteeringActuator(can, motor_params=motor_params)
         self.safety    = SafetyMonitor(max_speed_mps)
         self.path: List[Waypoint] = []
@@ -2059,7 +2062,8 @@ class AutoSteerSystem:
             return
         s_lat, s_lon, s_quality, s_src = sel
         self._active_gnss = s_src
-        self.estimator.update_rtk(s_lat, s_lon, s_quality)
+        with self._ekf_lock:
+            self.estimator.update_rtk(s_lat, s_lon, s_quality)
         self.safety.update_rtk(s_quality)
 
     def rtk_callback(self, source: str):
@@ -2079,9 +2083,10 @@ class AutoSteerSystem:
         파라미터 5(IMU 오프셋) 보정은 StateEstimator 내부에서 자동 적용.
         raw_roll, raw_pitch를 전달하면 경사 보정(파라미터 2)도 연동됨.
         """
-        self.estimator.predict(dt)
-        self.estimator.update_imu(raw_heading, ang_vel, fwd_accel, dt,
-                                   raw_roll, raw_pitch)
+        with self._ekf_lock:
+            self.estimator.predict(dt)
+            self.estimator.update_imu(raw_heading, ang_vel, fwd_accel, dt,
+                                       raw_roll, raw_pitch)
         self._imu_fed = True            # IMU 가 predict 담당(control_step 중복 방지)
 
     def on_gyro(self, ang_vel: float, fwd_accel: float = 0.0, dt: float = 0.02,
@@ -2091,8 +2096,9 @@ class AutoSteerSystem:
         듀얼안테나 ver1 구성: on_heading(듀얼 절대 heading) + on_gyro(IMU 레이트) 동시 공급
         → EKF 가 절대 heading + 고레이트 평활을 융합(스네이크/지연 억제, INS급 헤딩).
         """
-        self.estimator.predict(dt)
-        self.estimator.update_rate(ang_vel, fwd_accel, dt, raw_roll, raw_pitch)
+        with self._ekf_lock:
+            self.estimator.predict(dt)
+            self.estimator.update_rate(ang_vel, fwd_accel, dt, raw_roll, raw_pitch)
         self._imu_fed = True
 
     def on_heading(self, heading_deg: float):
@@ -2103,7 +2109,8 @@ class AutoSteerSystem:
         """
         # 듀얼안테나 베이스라인 바이어스 보정(ver1, HeadingCalibrator) → 수학각 변환
         corrected = float(heading_deg) - self.heading_bias_deg
-        self.estimator.update_heading(math.radians(90.0 - corrected))
+        with self._ekf_lock:
+            self.estimator.update_heading(math.radians(90.0 - corrected))
 
     def set_heading_bias(self, bias_deg: float):
         """듀얼안테나 헤딩 바이어스(나침반°) 설정 — HeadingCalibrator.finish().value."""
@@ -2140,16 +2147,16 @@ class AutoSteerSystem:
         # σ 하한: 베이스라인 길이에 따른 위상오차 하한(과신뢰 방지)
         floor_deg = math.degrees(math.atan2(self.phase_floor_m, baseline))
         sigma = math.radians(max(acc, floor_deg))
-        self.estimator.update_heading_adaptive(
-            math.radians(90.0 - corrected), sigma)
-        self._hdg_last_accept_t = time.time()
-
-        # 방법 4: 가로 베이스라인 down성분 → roll(우측하강=+). 경사 보정에 공급.
-        # base=좌/rover=우 이므로 relPosD>0 = 우 안테나 하강 = 우측 하강(roll+).
         rel_d = meas.get("rel_d_m")
-        if rel_d is not None and baseline > 0.1 and self._rp is None:
-            ratio = max(-1.0, min(1.0, float(rel_d) / baseline))
-            self.estimator._current_roll = self.dual_roll_sign * math.asin(ratio)
+        with self._ekf_lock:
+            self.estimator.update_heading_adaptive(
+                math.radians(90.0 - corrected), sigma)
+            # 방법 4: 가로 베이스라인 down성분 → roll(우측하강=+). 경사 보정에 공급.
+            # base=좌/rover=우 이므로 relPosD>0 = 우 안테나 하강 = 우측 하강(roll+).
+            if rel_d is not None and baseline > 0.1 and self._rp is None:
+                ratio = max(-1.0, min(1.0, float(rel_d) / baseline))
+                self.estimator._current_roll = self.dual_roll_sign * math.asin(ratio)
+        self._hdg_last_accept_t = time.time()
 
     def on_velocity(self, course_deg: float, speed_mps: float):
         """
@@ -2159,12 +2166,13 @@ class AutoSteerSystem:
         """
         if speed_mps < self.cog_min_speed:
             return
-        st = self.estimator.get_state()
-        lat_acc = speed_mps * st.angular_vel
-        beta = self.k_slip * lat_acc / max(speed_mps, self.cog_min_speed)
-        course_math = math.radians(90.0 - float(course_deg))
-        self.estimator.update_cog(course_math, math.radians(self.cog_sigma_deg),
-                                  beta_rad=beta)
+        with self._ekf_lock:
+            st = self.estimator.get_state()
+            lat_acc = speed_mps * st.angular_vel
+            beta = self.k_slip * lat_acc / max(speed_mps, self.cog_min_speed)
+            course_math = math.radians(90.0 - float(course_deg))
+            self.estimator.update_cog(course_math, math.radians(self.cog_sigma_deg),
+                                      beta_rad=beta)
 
     def on_accel(self, ay: float, az: float, roll_rate: float = 0.0,
                  dt: float = 0.02, lin_acc: float = 0.0, yaw_rate: float = 0.0):
@@ -2177,7 +2185,8 @@ class AutoSteerSystem:
             from calibration import RollPitchEstimator
             self._rp = RollPitchEstimator()
         roll = self._rp.update(ay, az, roll_rate, dt, lin_acc, yaw_rate)
-        self.estimator._current_roll = roll
+        with self._ekf_lock:
+            self.estimator._current_roll = roll
 
     def get_implement_position(self) -> tuple:
         """
@@ -2201,12 +2210,14 @@ class AutoSteerSystem:
           motor_cmd, xte_m, progress, waypoint_section
         """
         # IMU 가 없으면(GNSS-only) EKF 전파를 제어주기로 수행. IMU 있으면 on_imu 가 담당.
-        if not self._imu_fed:
-            self.estimator.predict(dt)
+        # 콜백 스레드(on_rtk/heading/gyro)와의 동시 mutate 방지 위해 락 안에서 predict+read.
+        with self._ekf_lock:
+            if not self._imu_fed:
+                self.estimator.predict(dt)
+            state = self.estimator.get_state()
         self._imu_fed = False
 
         self.actuator.process_can_recv()
-        state = self.estimator.get_state()
 
         # 앵글센서 각속도 계산 (미분)
         measured = self.actuator.get_measured_angle()
@@ -2310,6 +2321,11 @@ class AutoSteerSystem:
             vn = self.vendor.display_name if self.vendor else "?"
             log.warning(f"engage 거부: [{vn}] 모터 CAN 프로토콜 미확정")
             return False
+        # ★ 신선한 안전검사: 50Hz 루프의 캐시 상태에 의존하면 setDeadman(true) 직후
+        #   engage 가 직전 DEADMAN 상태로 잘못 거부될 수 있음(홀드투런 경쟁). 즉시 재평가.
+        with self._ekf_lock:
+            spd = self.estimator.get_state().speed
+        self.safety.check(spd)
         if not self.safety.is_safe:
             log.warning(f"engage 거부: {self.safety.state.name}")
             return False
