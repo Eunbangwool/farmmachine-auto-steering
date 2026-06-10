@@ -70,4 +70,10 @@ class JsBridge {
         SteerController.setAbLine(ax, ay, bx, by, width, passes, speed)
 
     @JavascriptInterface fun setDemoAbLine() = SteerController.setDemoAbLine()
+
+    /** ⑥ 현장 AB 라인: 현재 위치 마킹(A/B) → 평행 패스 생성. */
+    @JavascriptInterface fun markAb(which: String): String = SteerController.markAb(which)
+    @JavascriptInterface fun buildAb(width: Double, passes: Int, speed: Double): String =
+        SteerController.buildAb(width, passes, speed)
+    @JavascriptInterface fun abStatus(): String = SteerController.abStatus()
 }

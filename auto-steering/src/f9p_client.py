@@ -35,6 +35,7 @@ parse_gga() 는 의존성 없이 단독 테스트 가능.
 """
 
 from __future__ import annotations
+import math
 import threading
 import logging
 import struct
@@ -186,6 +187,45 @@ def parse_relposned(frame: bytes) -> Optional[Dict]:
     }
 
 
+def parse_esf_meas(frame: bytes) -> Optional[Dict]:
+    """
+    안테나 IMU 측정 프레임(UBX-ESF-MEAS, class 0x10 / id 0x02) 파싱.
+
+    ★ IMU 는 **안테나(돔)에 내장**되고 진행 정면(forward) 고정 장착 → 센서축이
+      차량축과 그대로 정렬(별도 거치 캘리브 불필요). 자이로 Z = 차량 yaw rate.
+    AGMO ver1 돔이 u-blox ADR/UDR 계열이면 ESF-MEAS 를 낸다. 안 나오면(별도 IMU
+      칩이 UART 로 노출 안 되면) 이 파서는 호출 안 됨(폐루프는 듀얼안테나 heading 이
+      이미 닫으므로 무영향). 실제 출력 여부는 현장 sniff(UBX class 0x10) 로 확인.
+
+    반환 키(있는 것만): gyro_z_dps(deg/s), gyro_y_dps, gyro_x_dps, ax/ay/az(m/s²).
+    """
+    if len(frame) < 8 or frame[2] != 0x10 or frame[3] != 0x02:
+        return None
+    n = frame[4] | (frame[5] << 8)
+    payload = frame[6:6 + n]
+    if len(payload) < 8:
+        return None
+    flags = payload[4] | (payload[5] << 8)
+    num = (flags >> 11) & 0x1F
+    out: Dict = {}
+    off = 8
+    for _ in range(num):
+        if off + 4 > len(payload):
+            break
+        raw = struct.unpack_from("<I", payload, off)[0]; off += 4
+        dtype = (raw >> 24) & 0x3F
+        val = raw & 0xFFFFFF
+        if val & 0x800000:                 # 24비트 부호 확장
+            val -= 0x1000000
+        if   dtype == 5:  out["gyro_z_dps"] = val * (2 ** -12)   # yaw rate deg/s
+        elif dtype == 13: out["gyro_y_dps"] = val * (2 ** -12)
+        elif dtype == 14: out["gyro_x_dps"] = val * (2 ** -12)
+        elif dtype == 16: out["ax"] = val * (2 ** -10)           # m/s²
+        elif dtype == 17: out["ay"] = val * (2 ** -10)
+        elif dtype == 18: out["az"] = val * (2 ** -10)
+    return out or None
+
+
 def parse_vtg(line: str) -> Optional[Tuple[float, float]]:
     """
     NMEA VTG → (진로각 course[deg, 북=0], 속도[m/s]). 실패/정지 시 None.
@@ -280,6 +320,8 @@ class F9pUsbClient:
                  on_heading: Optional[Callable[[float], None]] = None,
                  on_heading_meas: Optional[Callable[[Dict], None]] = None,
                  on_velocity: Optional[Callable[[float, float], None]] = None,
+                 on_gyro: Optional[Callable[[float], None]] = None,
+                 on_accel: Optional[Callable[[float, float], None]] = None,
                  read_timeout: float = 1.0,
                  source: str = "f9p"):
         self.port = port
@@ -289,6 +331,8 @@ class F9pUsbClient:
         self.on_heading = on_heading            # HDT 진헤딩(도) 콜백 — 듀얼/INS 공통
         self.on_heading_meas = on_heading_meas  # 무빙베이스 RELPOSNED dict(방법 1·3·4)
         self.on_velocity = on_velocity          # VTG (course_deg, speed_mps)(방법 5)
+        self.on_gyro = on_gyro                  # 안테나 IMU yaw rate(rad/s) — UBX-ESF-MEAS
+        self.on_accel = on_accel                # 안테나 IMU 가속도(ay, az) — roll 보정
         self.read_timeout = read_timeout
         self.source = source                    # GnssArbiter 소스 라벨
 
@@ -355,10 +399,20 @@ class F9pUsbClient:
             framer.feed_bytes(raw)
 
     def _on_ubx(self, frame: bytes):
-        """UBX 프레임 → RELPOSNED 면 헤딩 측정 dict 콜백(방법 1·3·4)."""
+        """UBX 프레임 분배: RELPOSNED(헤딩, 방법1·3·4) / ESF-MEAS(안테나 IMU)."""
         m = parse_relposned(frame)
-        if m is not None and self.on_heading_meas:
-            self.on_heading_meas(m)
+        if m is not None:
+            if self.on_heading_meas:
+                self.on_heading_meas(m)
+            return
+        # 안테나 IMU(정면 고정) — 자이로 Z=차량 yaw rate, 가속도→roll 보정.
+        e = parse_esf_meas(frame)
+        if e is not None:
+            gz = e.get("gyro_z_dps")
+            if gz is not None and self.on_gyro:
+                self.on_gyro(math.radians(gz))
+            if self.on_accel and ("ay" in e or "az" in e):
+                self.on_accel(e.get("ay", 0.0), e.get("az", 9.81))
 
     def feed(self, line: str):
         """
@@ -726,6 +780,7 @@ def moving_base_heading_cfg(meas_ms: int = 100):
         ubx_cfg_msg(_NAV,  0x12, 1),   # NAV-VELNED — 진로각(COG, 방법5)
         ubx_cfg_msg(_NMEA, 0x00, 1),   # NMEA GGA — 위치(parse_gga)
         ubx_cfg_msg(_NMEA, 0x05, 1),   # NMEA VTG — 진로각/속도(parse_vtg)
+        ubx_cfg_msg(0x10,  0x02, 1),   # ESF-MEAS — 안테나 IMU(자이로/가속도). ADR/UDR 돔만 출력
         ubx_cfg_msg(_NMEA, 0x01, 0),   # GLL off
         ubx_cfg_msg(_NMEA, 0x02, 0),   # GSA off
         ubx_cfg_msg(_NMEA, 0x03, 0),   # GSV off

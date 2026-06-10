@@ -380,6 +380,20 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
     </div>
   </div>
 
+  <!-- ══ 새 AB 직선 경로 (현장 A/B 마킹) ══ -->
+  <div class="modal" id="abModal">
+    <span class="back" id="abBack">‹ 뒤로가기</span><span class="x" id="abX">×</span>
+    <div class="mt">새 AB 직선 경로</div>
+    <div style="display:flex;flex-direction:column;gap:12px;max-width:520px;margin:0 auto;width:100%">
+      <div class="row"><span class="k">A 지점</span><span class="v" id="abAv">미설정</span><button class="pill" id="abMarkA">A 찍기 (현재 위치)</button></div>
+      <div class="row"><span class="k">B 지점</span><span class="v" id="abBv">미설정</span><button class="pill" id="abMarkB">B 찍기 (현재 위치)</button></div>
+      <div class="row"><span class="k">작업 폭(m)</span><input class="nti" id="abW" value="3.0"></div>
+      <div class="row"><span class="k">패스 수</span><input class="nti" id="abP" value="4"></div>
+      <button class="pill" id="abBuild" style="background:var(--brand);color:#fff;margin-top:8px">경로 생성 → 주행화면</button>
+      <div id="abHint" style="font-size:12px;color:var(--sub)">A 지점에서 한 번, B 지점까지 이동해 한 번 찍은 뒤 생성하세요. (A↔B ≥ 1m, 헤딩·위치 fix 필요)</div>
+    </div>
+  </div>
+
   <!-- ══ 비정상 작동 경고 ══ -->
   <div class="modal" id="warn">
     <div class="card">
@@ -713,7 +727,24 @@ document.querySelectorAll('#modeModal .choice').forEach(c=>c.onclick=()=>{ setMo
 $('pathX').onclick=()=>setModal('pathModal',false);
 $('pathBack').onclick=()=>{ setModal('pathModal',false); setModal('modeModal',true); };
 function gotoWork(){ setModal('pathModal',false); if(BR&&BR.setDemoAbLine){try{BR.setDemoAbLine();}catch(e){}} show('work'); }
-$('pathNew').onclick=gotoWork; $('pathOld').onclick=gotoWork;
+// ⑥ 새 경로 = 현장 A/B 마킹. 기존 경로 = 데모 라인(빠른 확인용 폴백).
+function refreshAb(){ if(!(BR&&BR.abStatus)) return;
+  try{ const s=JSON.parse(BR.abStatus()||'{}');
+    $('abAv').textContent=s.a?('('+s.a[0].toFixed(1)+', '+s.a[1].toFixed(1)+')'):'미설정';
+    $('abBv').textContent=s.b?('('+s.b[0].toFixed(1)+', '+s.b[1].toFixed(1)+')'):'미설정'; }catch(e){} }
+$('pathNew').onclick=()=>{ setModal('pathModal',false); setModal('abModal',true); refreshAb(); };
+$('pathOld').onclick=gotoWork;
+$('abX').onclick=()=>setModal('abModal',false);
+$('abBack').onclick=()=>{ setModal('abModal',false); setModal('pathModal',true); };
+$('abMarkA').onclick=()=>{ if(BR&&BR.markAb){try{BR.markAb('a');}catch(e){}} refreshAb(); toast('A 지점 마킹'); };
+$('abMarkB').onclick=()=>{ if(BR&&BR.markAb){try{BR.markAb('b');}catch(e){}} refreshAb(); toast('B 지점 마킹'); };
+$('abBuild').onclick=()=>{
+  const w=parseFloat(($('abW')&&$('abW').value)||'3')||3, p=parseInt(($('abP')&&$('abP').value)||'4',10)||4;
+  let r='need-ab'; if(BR&&BR.buildAb){try{ r=BR.buildAb(w,p,1.2); }catch(e){ r='error'; }}
+  else { r='ok'; }   // 브라우저 데모
+  if(r==='ok'){ setModal('abModal',false); show('work'); }
+  else { toast(r==='need-ab'?'A·B 두 지점을 먼저 찍으세요':r==='too-short'?'A↔B 거리가 너무 가깝습니다(≥1m)':('경로 생성 실패: '+r)); }
+};
 $('btnEnd').onclick=()=>{ if(BR&&BR.setDeadman){try{BR.setDeadman(false);}catch(e){}} if(BR&&BR.disengage){try{BR.disengage();}catch(e){}} show('main'); };
 // ★ 데드맨(홀드투런): "주행" 버튼을 누르고 있는 동안만 조향이 활성. 떼면 즉시 정지.
 //   안전상 deadman 이 false 면 control_step 이 매 주기 자동 disengage 한다.

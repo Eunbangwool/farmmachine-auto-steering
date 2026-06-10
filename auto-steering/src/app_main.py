@@ -22,6 +22,7 @@ CPython 에서도 backend="mock" 으로 그대로 구동/검증된다(아래 __m
 
 from __future__ import annotations
 import json
+import math
 import threading
 import time
 import logging
@@ -66,6 +67,8 @@ class Controller:
         self._hcal = None             # 헤딩 바이어스 캘리브레이터(ver1, 진행 중일 때만)
         self._mdiag = None            # 듀얼 마운트(base/rover·부호) 진단기(진행 중일 때만)
         self._sections = 4            # 작업 섹션 수(표시)
+        self._ab_a = None             # ⑥ 현장에서 찍은 AB 라인 A점(east,north)
+        self._ab_b = None             # ⑥ B점
 
         if vendor:
             self.set_vendor(vendor)
@@ -231,6 +234,47 @@ class Controller:
         self.sys.on_imu(float(heading), float(ang_vel), float(fwd_accel),
                         self._dt, float(roll), float(pitch))
 
+    def on_gyro(self, ang_vel, fwd_accel=0.0, roll=0.0, pitch=0.0):
+        """IMU 각속도(yaw rate, rad/s) — 듀얼안테나 절대heading 과 융합(스네이크 억제).
+        ★ 태블릿 SensorManager 는 장착방향 미지 → opt-in(ImuBridge 기본 off). 도메 IMU 선호."""
+        if self.demo:
+            return
+        self.sys.on_gyro(float(ang_vel), float(fwd_accel), self._dt,
+                         float(roll), float(pitch))
+
+    def on_accel(self, ay, az, roll_rate=0.0, lin_acc=0.0, yaw_rate=0.0):
+        """IMU 가속도(roll 보완필터, 경사 보정). 원심오염 배제는 코어에서 처리."""
+        if self.demo:
+            return
+        self.sys.on_accel(float(ay), float(az), float(roll_rate), self._dt,
+                          float(lin_acc), float(yaw_rate))
+
+    # ── ⑥ 현장 AB 라인: 현재 GNSS 위치를 A/B 로 마킹 → 평행 패스 생성 ──
+    def mark_ab(self, which):
+        """현재 차량(EKF) 위치를 A('a') 또는 B('b') 점으로 기록."""
+        st = self.sys.estimator.get_state()
+        pt = (round(st.x, 3), round(st.y, 3))
+        if str(which).lower().startswith("a"):
+            self._ab_a = pt
+        else:
+            self._ab_b = pt
+        return json.dumps({"a": self._ab_a, "b": self._ab_b}, ensure_ascii=False)
+
+    def build_ab(self, width=3.0, passes=4, speed=1.2):
+        """찍어둔 A·B 로 AB 직선 경로 생성. A/B 미설정·너무 가까우면 거부."""
+        if not self._ab_a or not self._ab_b:
+            return "need-ab"
+        if math.hypot(self._ab_b[0]-self._ab_a[0],
+                      self._ab_b[1]-self._ab_a[1]) < 1.0:
+            return "too-short"   # A↔B ≥ 1m 필요(방향 산출)
+        self.set_ab_line(self._ab_a[0], self._ab_a[1],
+                         self._ab_b[0], self._ab_b[1],
+                         float(width), int(passes), float(speed))
+        return "ok"
+
+    def ab_status(self):
+        return json.dumps({"a": self._ab_a, "b": self._ab_b}, ensure_ascii=False)
+
     def on_heading(self, compass_deg):
         """INS/듀얼안테나 진헤딩(나침반°). Kotlin GNSS 브릿지가 직접 푸시할 때."""
         if self.demo:
@@ -292,6 +336,19 @@ class Controller:
     _GNSS_PWR_SYSFS = (
         "/sys/class/misc/sunxi-gps/rf-ctrl/gnss_pwren_state",          # GNSS 전원 enable
         "/sys/devices/virtual/misc/sunxi-gps/rf-ctrl/nstandby_state",  # u-blox standby 해제
+        # 추가 후보(태블릿/커널 빌드별 상이) — best-effort 로 같이 시도
+        "/sys/class/misc/sunxi-gps/rf-ctrl/power_state",
+        "/sys/class/misc/sunxi-gps/rf-ctrl/standby_state",
+        "/sys/class/misc/gps/rf-ctrl/gnss_pwren_state",
+        "/sys/class/misc/gnss/rf-ctrl/gnss_pwren_state",
+    )
+    # 알려진 경로가 다 실패하면 /sys 에서 후보 노드를 글롭으로 찾아 시도(경로명만 사실, clean-room)
+    _GNSS_PWR_GLOBS = (
+        "/sys/class/misc/*gps*/rf-ctrl/*pwren*",
+        "/sys/class/misc/*gps*/rf-ctrl/*standby*",
+        "/sys/class/misc/*gnss*/rf-ctrl/*pwren*",
+        "/sys/class/misc/*gnss*/rf-ctrl/*standby*",
+        "/sys/devices/**/sunxi-gps/rf-ctrl/*state",
     )
 
     def scan_gnss(self, window=1.5):
@@ -322,14 +379,36 @@ class Controller:
         """AGMO ver1 내부 u-blox 전원/standby ON (best-effort sysfs write)."""
         if self.demo:
             return "demo"
-        done = []
-        for p in self._GNSS_PWR_SYSFS:
+        def _try(path):
             try:
-                with open(p, "w") as f:
+                with open(path, "w") as f:
                     f.write("1")
-                done.append(p)
+                return True
             except Exception as e:
-                log.info(f"GNSS 전원 sysfs 쓰기 불가({p}): {e} — 권한/플랫폼 현장 확인")
+                log.info(f"GNSS 전원 sysfs 쓰기 불가({path}): {e} — 권한/플랫폼 현장 확인")
+                return False
+
+        done = [p for p in self._GNSS_PWR_SYSFS if _try(p)]
+        # 알려진 경로가 모두 실패하면 글롭으로 후보 노드를 찾아 추가 시도
+        if not done:
+            import glob
+            cand = []
+            for g in self._GNSS_PWR_GLOBS:
+                try: cand += glob.glob(g, recursive=True)
+                except Exception: pass
+            seen = set()
+            for p in cand:
+                if p in seen:
+                    continue
+                seen.add(p)
+                if _try(p):
+                    done.append(p)
+            if cand and not done:
+                log.info(f"GNSS 전원 후보 노드 발견했으나 쓰기 실패(권한?): {sorted(seen)}")
+            elif not cand:
+                log.info("GNSS 전원 sysfs 노드를 못 찾음 — 안테나가 외부전원일 수 있음(포트탐지로 확인)")
+        if done:
+            log.info(f"GNSS 전원 ON 성공: {done}")
         return "ok" if done else "no-sysfs"
 
     def start_gnss(self, port="/dev/ttyS1", baud=0):
@@ -352,7 +431,9 @@ class Controller:
             on_rtk=lambda la, lo, q: self.sys.on_rtk(la, lo, q, source=src),
             on_heading=self.sys.on_heading,
             on_heading_meas=self._on_heading_meas,      # 무빙베이스 RELPOSNED(방법 1·3·4) + 마운트 진단
-            on_velocity=self.sys.on_velocity)           # 진로각 보조(방법 5)
+            on_velocity=self.sys.on_velocity,           # 진로각 보조(방법 5)
+            on_gyro=self.on_gyro,                       # 안테나 IMU yaw rate(UBX-ESF-MEAS) → 듀얼heading 융합
+            on_accel=lambda ay, az: self.on_accel(ay, az))  # 안테나 IMU 가속도 → roll 보정
         ok = False
         try:
             ok = self._gnss_client.start()
@@ -461,6 +542,11 @@ def scan_gnss(window=1.5): return json.dumps(_ctrl.scan_gnss(window) if _ctrl el
 def configure_moving_base(port="/dev/ttyS1", baud=0): return _ctrl.configure_moving_base(port, baud) if _ctrl else "no-ctrl"
 def on_rtk(lat, lon, quality, source="pa3"):  _ctrl and _ctrl.on_rtk(lat, lon, quality, source)
 def on_imu(h, av, acc, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_imu(h, av, acc, roll, pitch)
+def on_gyro(av, acc=0.0, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_gyro(av, acc, roll, pitch)
+def on_accel(ay, az, roll_rate=0.0, lin_acc=0.0, yaw_rate=0.0):  _ctrl and _ctrl.on_accel(ay, az, roll_rate, lin_acc, yaw_rate)
+def mark_ab(which):     return _ctrl.mark_ab(which) if _ctrl else "no-ctrl"
+def build_ab(width=3.0, passes=4, speed=1.2): return _ctrl.build_ab(width, passes, speed) if _ctrl else "no-ctrl"
+def ab_status():        return _ctrl.ab_status() if _ctrl else "{}"
 def status_json():      return _ctrl.status_json() if _ctrl else "{}"
 
 

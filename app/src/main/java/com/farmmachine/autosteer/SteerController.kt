@@ -81,6 +81,14 @@ object SteerController {
         api().callAttr("set_ab_line", 0.0, 0.0, 0.0, 40.0, 3.0, 4, 1.2)
     }
 
+    /** ⑥ 현장 AB 라인: 현재 위치를 A('a')/B('b') 로 마킹 → 평행 패스 생성. */
+    fun markAb(which: String): String =
+        try { api().callAttr("mark_ab", which).toString() } catch (e: Throwable) { "error" }
+    fun buildAb(width: Double, passes: Int, speed: Double): String =
+        try { api().callAttr("build_ab", width, passes, speed).toString() } catch (e: Throwable) { "error" }
+    fun abStatus(): String =
+        try { api().callAttr("ab_status").toString() } catch (e: Throwable) { "{}" }
+
     private inline fun safe(block: () -> Unit) {
         try { block() } catch (_: Throwable) {}
     }
