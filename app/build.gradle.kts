@@ -51,8 +51,12 @@ android {
 chaquopy {
     defaultConfig {
         version = "3.11"
-        // EKF(numpy) 필요. pyserial 은 USB-serial 브릿지 붙일 때 사용.
-        pip { install("numpy") }
+        // EKF(numpy) 필요. pyserial = GNSS 시리얼(내부 UART/USB) 수신 필수
+        //   — 빠지면 scan/configure/start 가 전부 "no-pyserial" 로 실패해 GNSS 불능.
+        pip {
+            install("numpy")
+            install("pyserial")
+        }
         // Chaquopy 진입점은 앱에서 Python.getModule("app_main") 으로 직접 호출.
     }
     // 자율조향 Python 소스 = 상위 auto-steering/src (복사 없이 직접 참조).
