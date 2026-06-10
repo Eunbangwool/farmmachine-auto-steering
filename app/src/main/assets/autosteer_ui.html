@@ -498,10 +498,14 @@ function openDetail(key){
        ${toggleRow('경로 이탈 자동 중지',false)}
        <div class="ver"><span class="mk">◭</span><div>자율주행<br><span style="font-size:11px">v0.1</span></div></div>`;
   }else if(key==='vehicle'){
-    h=`<div class="tabs"><div class="t sel">1</div><div class="t">2</div><div class="t">3</div></div>
-       <div style="text-align:center;padding:18px 0">${TRACTOR_SVG.replace('width="48" height="54"','width="150" height="120"')}</div>
-       <div class="row"><span class="k">휠 베이스 길이</span><span class="val">2.47 m</span></div>
-       <button class="pill">변경하기</button>`;
+    h=`<div style="text-align:center;padding:8px 0">${TRACTOR_SVG.replace('width="48" height="54"','width="130" height="104"')}</div>
+       <div class="row"><span class="k">휠베이스 (앞↔뒤차축, m)</span><input class="nti" id="vpWB" value="2.47" inputmode="decimal"></div>
+       <div class="row"><span class="k">안테나 높이 (지면, m)</span><input class="nti" id="vpAH" value="2.73" inputmode="decimal"></div>
+       <div class="row"><span class="k">안테나↔뒤차축 (전방 +, m)</span><input class="nti" id="vpAA" value="-0.50" inputmode="decimal"></div>
+       <div class="row"><span class="k">안테나↔작업기 (후방 +, m)</span><input class="nti" id="vpAI" value="1.20" inputmode="decimal"></div>
+       <button class="pill" id="vpSave" style="background:var(--brand);color:#fff;margin-top:12px">차량 변수 저장 · 적용</button>
+       <div id="vpHint" style="font-size:12px;color:var(--sub);margin-top:10px;line-height:1.6">
+         ★ <b>휠베이스</b>와 <b>안테나↔뒤차축</b>은 줄자 실측 권장. 저장 시 즉시 조향 기하에 반영되고 다음 부팅에도 유지됩니다.</div>`;
   }else if(key==='optim'){
     const row=(act,l,r)=>`<div class="optrow" data-act="${act}"><span>${l}</span><span class="oa" id="oa_${act}">${r}</span></div>`;
     h=row('imuzero','IMU 영점 설정','실행')
@@ -594,12 +598,20 @@ function wireDetail(key){
   if(key==='user'){
     $$('.tg:not(.ro)').forEach(t=>t.onclick=()=>{ t.classList.toggle('on'); toast('설정 변경됨'); });
   } else if(key==='vehicle'){
-    $$('.tabs .t').forEach(tab=>tab.onclick=()=>{
-      $$('.tabs .t').forEach(x=>x.classList.remove('sel')); tab.classList.add('sel'); });
-    const ch=document.querySelector('#detailBody .pill');
-    if(ch) ch.onclick=()=>{ const v=prompt('휠 베이스 길이 (m)','2.47');
-      const f=parseFloat(v); if(!isNaN(f)&&f>0){ if(BR&&BR.setWheelbase){try{BR.setWheelbase(f);}catch(e){}}
-        const vv=document.querySelector('#detailBody .row .val'); if(vv) vv.textContent=f.toFixed(2)+' m'; toast('휠베이스 '+f.toFixed(2)+'m 적용'); } };
+    // 현재(또는 저장된) 차량 변수 로드 → 입력칸 채움
+    if(BR&&BR.getVehicleParams){ try{ const p=JSON.parse(BR.getVehicleParams()||'{}');
+      const set=(id,v)=>{ const e=$(id); if(e&&v!=null&&!isNaN(+v)) e.value=(+v).toFixed(2); };
+      set('vpWB',p.wheelbase); set('vpAH',p.antenna_height);
+      set('vpAA',p.antenna_to_axle); set('vpAI',p.antenna_to_impl);
+    }catch(e){} }
+    const sv=$('vpSave');
+    if(sv) sv.onclick=()=>{
+      const g=(id,d)=>{ const f=parseFloat($(id)&&$(id).value); return isNaN(f)?d:f; };
+      const wb=g('vpWB',2.47), ah=g('vpAH',2.73), aa=g('vpAA',-0.5), ai=g('vpAI',1.2);
+      if(!(wb>0)){ toast('휠베이스는 0보다 커야 합니다'); return; }
+      if(BR&&BR.setVehicleParams){ try{ BR.setVehicleParams(wb,ah,aa,ai); }catch(e){} }
+      toast('차량 변수 저장·적용됨 (휠베이스 '+wb.toFixed(2)+'m)');
+    };
   } else if(key==='optim'){
     $$('.optrow').forEach(r=>r.onclick=()=>{
       const a=r.dataset.act;

@@ -36,6 +36,11 @@ class JsBridge {
     @JavascriptInterface fun nudge(cm: Int): String = SteerController.nudge(cm)
     @JavascriptInterface fun setSectionCount(n: Int): String = SteerController.setSectionCount(n)
     @JavascriptInterface fun setWheelbase(m: Double): String = SteerController.setWheelbase(m)
+    /** 차량 변수(실측값) 조회/입력. */
+    @JavascriptInterface fun getVehicleParams(): String = SteerController.getVehicleParams()
+    @JavascriptInterface fun setVehicleParams(wheelbase: Double, antennaHeight: Double,
+                                              antennaToAxle: Double, antennaToImpl: Double): String =
+        SteerController.setVehicleParams(wheelbase, antennaHeight, antennaToAxle, antennaToImpl)
     @JavascriptInterface fun startHeadingCalib(): String = SteerController.startHeadingCalib()
     @JavascriptInterface fun headingCalibStatus(): String = SteerController.headingCalibStatus()
     @JavascriptInterface fun startMountDiag(): String = SteerController.startMountDiag()

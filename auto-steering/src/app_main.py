@@ -23,6 +23,7 @@ CPython 에서도 backend="mock" 으로 그대로 구동/검증된다(아래 __m
 from __future__ import annotations
 import json
 import math
+import os
 import threading
 import time
 import logging
@@ -36,8 +37,10 @@ log = logging.getLogger("app_main")
 class Controller:
     def __init__(self, backend: str = "bridge",
                  host: str = "127.0.0.1", port: int = 47100,
-                 hz: float = 50.0, vendor: str = None):
+                 hz: float = 50.0, vendor: str = None,
+                 config_dir: str = None):
         self._dt = 1.0 / hz
+        self._config_dir = config_dir   # 차량변수 영속화 디렉토리(Android filesDir)
         self.demo = (backend == "mock")
         self.bus = None
         self.sim = None
@@ -71,6 +74,7 @@ class Controller:
         self._ab_b = None             # ⑥ B점
         self._gnss_job = {"op": None, "running": False, "result": None}  # 비동기 GNSS 작업
 
+        self._load_params()           # 저장된 차량변수 있으면 먼저 반영(휠베이스→알고리즘)
         if vendor:
             self.set_vendor(vendor)
 
@@ -218,9 +222,75 @@ class Controller:
             # 현재 알고리즘 보존(implement 강제 금지 — 발산 이슈)
             self.sys.set_algorithm(getattr(self.sys, "_algo", "pure_pursuit"),
                                    self.sys.params.wheelbase)
+            self._save_params()
             return "ok"
         except Exception as e:
             log.warning(f"set_wheelbase 실패: {e}"); return "error"
+
+    # ── 차량 변수 (실측값) 입력/조회/영속화 ───────────────────────
+    PARAM_KEYS = ("wheelbase", "antenna_height", "antenna_to_axle",
+                  "antenna_to_impl", "hitch_to_impl", "front_track_width",
+                  "max_was_deg")
+
+    def get_params(self):
+        """현재 TractorParams(차량 변수) JSON."""
+        p = self.sys.params
+        return json.dumps({k: getattr(p, k, None) for k in self.PARAM_KEYS},
+                          ensure_ascii=False)
+
+    def set_vehicle_params(self, wheelbase, antenna_height,
+                           antenna_to_axle, antenna_to_impl):
+        """UI 입력(휠베이스·안테나높이·안테나↔뒤차축·안테나↔작업기) → 즉시 반영+저장."""
+        p = self.sys.params
+        for name, val in (("wheelbase", wheelbase),
+                          ("antenna_height", antenna_height),
+                          ("antenna_to_axle", antenna_to_axle),
+                          ("antenna_to_impl", antenna_to_impl)):
+            try:
+                if val is not None:
+                    setattr(p, name, float(val))
+            except Exception as e:
+                log.warning(f"파라미터 {name} 적용 실패: {e}")
+        # 휠베이스는 조향 기하에 직접 영향 → 알고리즘 재구성
+        try:
+            self.sys.set_algorithm(getattr(self.sys, "_algo", "pure_pursuit"),
+                                   p.wheelbase)
+        except Exception as e:
+            log.warning(f"알고리즘 재구성 실패: {e}")
+        self._save_params()
+        log.info(f"차량 변수 적용: wb={p.wheelbase} ah={p.antenna_height} "
+                 f"aa={p.antenna_to_axle} ai={p.antenna_to_impl}")
+        return self.get_params()
+
+    def _params_path(self):
+        if not self._config_dir:
+            return None
+        return os.path.join(self._config_dir, "tractor_params.json")
+
+    def _save_params(self):
+        path = self._params_path()
+        if not path:
+            return
+        try:
+            p = self.sys.params
+            with open(path, "w") as f:
+                json.dump({k: getattr(p, k, None) for k in self.PARAM_KEYS}, f)
+        except Exception as e:
+            log.warning(f"차량변수 저장 실패: {e}")
+
+    def _load_params(self):
+        path = self._params_path()
+        if not path or not os.path.exists(path):
+            return
+        try:
+            with open(path) as f:
+                d = json.load(f)
+            for k, v in d.items():
+                if k in self.PARAM_KEYS and v is not None and hasattr(self.sys.params, k):
+                    setattr(self.sys.params, k, float(v))
+            log.info(f"저장된 차량변수 로드: {d}")
+        except Exception as e:
+            log.warning(f"차량변수 로드 실패: {e}")
 
     # ── 센서 입력 (bridge 모드에서 GNSS/IMU 브릿지가 호출) ───────
     def on_rtk(self, lat, lon, quality, source="pa3"):
@@ -519,7 +589,8 @@ class Controller:
 _ctrl: "Controller | None" = None
 
 
-def boot(backend: str = "bridge", host: str = "127.0.0.1", port: int = 47100,
+def boot(backend: str = "bridge", config_dir: str = None,
+         host: str = "127.0.0.1", port: int = 47100,
          vendor: str = None):
     global _ctrl
     if _ctrl is None:
@@ -530,7 +601,8 @@ def boot(backend: str = "bridge", host: str = "127.0.0.1", port: int = 47100,
         #   UI 시작화면에서 set_vendor 로 런타임 변경 가능.
         if vendor is None and backend == "bridge":
             vendor = "agmo"
-        _ctrl = Controller(backend=backend, host=host, port=port, vendor=vendor)
+        _ctrl = Controller(backend=backend, host=host, port=port, vendor=vendor,
+                           config_dir=config_dir)
         _ctrl.start()
     return "ok"
 
@@ -563,6 +635,9 @@ def motor_center():      return _ctrl.motor_center() if _ctrl else "no-ctrl"
 def nudge(cm):           return _ctrl.nudge(cm) if _ctrl else "no-ctrl"
 def set_section_count(n): return _ctrl.set_section_count(n) if _ctrl else str(n)
 def set_wheelbase(m):    return _ctrl.set_wheelbase(m) if _ctrl else "no-ctrl"
+def get_params():        return _ctrl.get_params() if _ctrl else "{}"
+def set_vehicle_params(wheelbase, antenna_height, antenna_to_axle, antenna_to_impl):
+    return _ctrl.set_vehicle_params(wheelbase, antenna_height, antenna_to_axle, antenna_to_impl) if _ctrl else "{}"
 def ntrip_connect(host, port, mount, user="", pw=""):
     return _ctrl.ntrip_connect(host, port, mount, user, pw) if _ctrl else "no-ctrl"
 def ntrip_disconnect(): return _ctrl.ntrip_disconnect() if _ctrl else "no-ctrl"

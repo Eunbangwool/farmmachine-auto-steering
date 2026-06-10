@@ -30,6 +30,12 @@ object SteerController {
         try { api().callAttr("set_section_count", n).toString() } catch (e: Throwable) { "" }
     fun setWheelbase(m: Double): String =
         try { api().callAttr("set_wheelbase", m).toString() } catch (e: Throwable) { "error" }
+    fun getVehicleParams(): String =
+        try { api().callAttr("get_params").toString() } catch (e: Throwable) { "{}" }
+    fun setVehicleParams(wheelbase: Double, antennaHeight: Double,
+                         antennaToAxle: Double, antennaToImpl: Double): String =
+        try { api().callAttr("set_vehicle_params", wheelbase, antennaHeight,
+                             antennaToAxle, antennaToImpl).toString() } catch (e: Throwable) { "error" }
 
     /** ver1 헤딩 바이어스 캘리브(직선 ~20m). */
     fun startHeadingCalib(): String =

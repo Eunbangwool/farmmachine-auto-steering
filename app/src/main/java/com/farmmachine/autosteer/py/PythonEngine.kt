@@ -22,7 +22,9 @@ object PythonEngine {
     fun boot(context: Context, backend: String = "bridge") {
         ensureStarted(context)
         if (!booted) {
-            appMain().callAttr("boot", backend)
+            // 2번째 인자 = config_dir(filesDir): 차량 변수(tractor_params.json) 영속화 경로.
+            appMain().callAttr("boot", backend,
+                context.applicationContext.filesDir.absolutePath)
             booted = true
         }
     }
