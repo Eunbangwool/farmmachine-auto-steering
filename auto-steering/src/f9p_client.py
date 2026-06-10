@@ -764,20 +764,37 @@ def scan_ports(ports=None,
     """
     import glob as _glob
     if ports is None:
-        ports = sorted(set(_glob.glob("/dev/ttyS*") +
-                           _glob.glob("/dev/ttyUSB*") +
-                           _glob.glob("/dev/ttyACM*")))
+        # ★ Android(특히 RK3568)는 앱이 /dev 디렉토리 readdir 가 막혀 glob 이 빈 결과를
+        #   낼 수 있다. 그래도 **정확한 경로를 직접 열기는 허용**되는 경우가 많다(AGMO
+        #   비관리자 앱이 그렇게 동작). → glob 결과 + 하드코딩 후보를 합쳐 직접 open 시도.
+        globbed = (_glob.glob("/dev/ttyS*") + _glob.glob("/dev/ttyUSB*") +
+                   _glob.glob("/dev/ttyACM*") + _glob.glob("/dev/ttysWK*") +
+                   _glob.glob("/dev/ttyXRUSB*"))
+        cand = list(globbed)
+        for n in range(10):                      # RK3568 표준 UART
+            cand.append(f"/dev/ttyS{n}")
+        for pfx in ("ttysWK", "ttyXRUSB", "ttyHS", "ttyHSL", "ttyAS",
+                    "ttyUSB", "ttyACM", "ttysWCH"):   # 벤더별 시리얼 이름 변종
+            for n in range(4):
+                cand.append(f"/dev/{pfx}{n}")
+        ports = sorted(set(cand))
     results = []; best = None
     if not ports:
         return {"best": None, "ports": [], "note": "후보 tty 없음(/dev 접근 불가일 수 있음)"}
+    opened = 0; absent = 0
     for p in ports:
         baud, rep = detect_baudrate(p, candidates=bauds, window=window)
         if rep is None:
-            results.append({"port": p, "found": False, "score": 0}); continue
-        if getattr(rep, "open_error", None):
-            # 권한거부면 데이터 유무와 무관하게 우리 앱이 그 포트를 못 엶
-            results.append({"port": p, "found": False, "score": 0,
-                            "open_error": rep.open_error}); continue
+            continue
+        oe = getattr(rep, "open_error", None)
+        if oe:
+            # '장치 부재(No such file)'는 후보 탐색 노이즈 → 숨김. 권한거부 등만 노출.
+            low = oe.lower()
+            if "no such" in low or "errno 2" in low or "filenotfound" in low:
+                absent += 1; continue
+            results.append({"port": p, "found": False, "score": 0, "open_error": oe})
+            continue
+        opened += 1
         s = rep.summary()
         score = s["nmea_ok"] * 2 + s["ubx_frames"] + s["rtcm3_frames"]
         entry = {"port": p, "found": score > 0, "baud": baud, "score": score,
@@ -787,8 +804,12 @@ def scan_ports(ports=None,
         results.append(entry)
         if score > 0 and (best is None or score > best["score"]):
             best = entry
-    log.info(f"GNSS 포트 스캔: best={best['port'] if best else None}")
-    return {"best": best, "ports": results}
+    note = None
+    if not results:
+        note = (f"열린 포트 0 (후보 {len(ports)}개 모두 부재) — 장치 이름이 후보 밖이거나 미존재"
+                if opened == 0 else "열렸으나 GNSS 데이터 없음")
+    log.info(f"GNSS 포트 스캔: best={best['port'] if best else None} opened={opened} absent={absent}")
+    return {"best": best, "ports": results, "opened": opened, "absent": absent, "note": note}
 
 
 # ═══════════════════════════════════════════════════════════════

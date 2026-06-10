@@ -649,7 +649,10 @@ function wireDetail(key){
       if(!(BR&&BR.scanGnssAsync)){ if(el) el.textContent='데모(브리지 없음)'; return; }
       try{ BR.scanGnssAsync(1.0); }catch(e){}
       pollGnssJob((o)=>{ o=o||{}; const best=o.best||null;
-        const txt=(o.ports||[]).map(p=>p.port+': '+(p.found?('OK '+(p.baud||'')+' '+((p.formats||[]).join('/'))):(p.open_error?('✗ '+p.open_error):'데이터 없음'))).join('\n')||(o.note||o.error?('오류: '+(o.note||o.error)):'포트 없음');
+        const lines=(o.ports||[]).map(p=>p.port+': '+(p.found?('OK '+(p.baud||'')+' '+((p.formats||[]).join('/'))):(p.open_error?('✗ '+p.open_error):'데이터 없음')));
+        if(typeof o.opened==='number') lines.push('— 열림 '+o.opened+' · 부재 '+(o.absent||0));
+        if(o.note) lines.push(o.note);
+        const txt=lines.join('\n')||(o.error?('오류: '+o.error):'포트 없음');
         if(best&&$('gPort')) $('gPort').value=best.port;
         if(el) el.textContent=(best?('✓ 추천 '+best.port+' @'+best.baud+'\n'):'')+txt; }); });
     $('gCfg')&&($('gCfg').onclick=()=>{ toast('무빙베이스 설정 중…');
