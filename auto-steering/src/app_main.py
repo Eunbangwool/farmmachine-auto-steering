@@ -388,6 +388,23 @@ class Controller:
         self._hcal = HeadingCalibrator()
         return "ok"
 
+    def start_heading_calib_drive(self, length_m=20.0, width=3.0, speed=1.0):
+        """★ 헤딩 캘리브용 '전방 직선 자동생성' — 현재 위치/헤딩에서 length_m 앞으로 AB라인
+        생성 + 헤딩캘리브 동시 시작. 이후 engage(데드맨)로 그 직선을 autosteer 가 따라가면
+        사람 수동주행보다 곧게 달려 COG(진로각) 기준이 깨끗 → 헤딩 바이어스가 더 정확.
+        (듀얼안테나 절대헤딩이 처음부터 있어 bootstrap 문제 없음.)"""
+        st = self.sys.estimator.get_state()
+        h = st.heading
+        ax, ay = st.x, st.y
+        bx = ax + float(length_m) * math.cos(h)
+        by = ay + float(length_m) * math.sin(h)
+        self.set_ab_line(ax, ay, bx, by, float(width), 1, float(speed))
+        self.start_heading_calib()
+        log.info(f"헤딩 캘리브 자동직선 생성: ({ax:.1f},{ay:.1f})→({bx:.1f},{by:.1f}) {length_m}m")
+        return json.dumps({"a": [round(ax, 2), round(ay, 2)],
+                           "b": [round(bx, 2), round(by, 2)], "len": length_m},
+                          ensure_ascii=False)
+
     def heading_calib_status(self):
         if self._hcal is None:
             return {"active": False, "progress": 1.0, "bias_deg": self.sys.heading_bias_deg if not self.demo else 0.0}
@@ -732,6 +749,7 @@ def ntrip_status():     return json.dumps(_ctrl.ntrip_status() if _ctrl else
                                           {"connected": False, "bytes": 0, "error": ""}, ensure_ascii=False)
 def on_heading(compass_deg):  _ctrl and _ctrl.on_heading(compass_deg)
 def start_heading_calib():    return _ctrl.start_heading_calib() if _ctrl else "no-ctrl"
+def start_heading_calib_drive(length_m=20.0, width=3.0, speed=1.0): return _ctrl.start_heading_calib_drive(length_m, width, speed) if _ctrl else "no-ctrl"
 def heading_calib_status():   return json.dumps(_ctrl.heading_calib_status() if _ctrl else {"active": False}, ensure_ascii=False)
 def start_imu_calib():        return _ctrl.start_imu_calib() if _ctrl else "no-ctrl"
 def imu_calib_status():       return json.dumps(_ctrl.imu_calib_status() if _ctrl else {"active": False, "progress": 0.0}, ensure_ascii=False)

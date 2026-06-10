@@ -622,8 +622,9 @@ function wireDetail(key){
   } else if(key==='optim'){
     $$('.optrow').forEach(r=>r.onclick=()=>{
       const a=r.dataset.act;
-      if(a==='hcalib'){ if(BR&&BR.startHeadingCalib){try{BR.startHeadingCalib();}catch(e){}}
-        toast('헤딩 캘리브 시작 — 직선 20m 주행하세요'); }
+      if(a==='hcalib'){ if(BR&&BR.startHeadingCalibDrive){try{BR.startHeadingCalibDrive();}catch(e){}}
+        else if(BR&&BR.startHeadingCalib){try{BR.startHeadingCalib();}catch(e){}}
+        toast('전방 20m 직선 자동생성+헤딩캘리브 — 데드맨 누르고 주행하면 자동 보정'); }
       else if(a==='imuzero'){ if(BR&&BR.startImuCalib){try{BR.startImuCalib();}catch(e){}}
         toast('IMU 영점 시작 — 평지 정차 후 30초 유지 (IMU 데이터 들어와야 진행)'); }
       else toast(({gpscenter:'GPS 중심(안테나↔차축) 설정',

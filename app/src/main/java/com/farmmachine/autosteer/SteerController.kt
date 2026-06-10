@@ -40,6 +40,8 @@ object SteerController {
     /** ver1 헤딩 바이어스 캘리브(직선 ~20m). */
     fun startHeadingCalib(): String =
         try { api().callAttr("start_heading_calib").toString() } catch (e: Throwable) { "error" }
+    fun startHeadingCalibDrive(): String =
+        try { api().callAttr("start_heading_calib_drive").toString() } catch (e: Throwable) { "error" }
     fun headingCalibStatus(): String =
         try { api().callAttr("heading_calib_status").toString() } catch (e: Throwable) { "{}" }
     fun startImuCalib(): String =

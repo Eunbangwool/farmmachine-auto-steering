@@ -42,6 +42,7 @@ class JsBridge {
                                               antennaToAxle: Double, antennaToImpl: Double): String =
         SteerController.setVehicleParams(wheelbase, antennaHeight, antennaToAxle, antennaToImpl)
     @JavascriptInterface fun startHeadingCalib(): String = SteerController.startHeadingCalib()
+    @JavascriptInterface fun startHeadingCalibDrive(): String = SteerController.startHeadingCalibDrive()
     @JavascriptInterface fun headingCalibStatus(): String = SteerController.headingCalibStatus()
     @JavascriptInterface fun startImuCalib(): String = SteerController.startImuCalib()
     @JavascriptInterface fun imuCalibStatus(): String = SteerController.imuCalibStatus()
