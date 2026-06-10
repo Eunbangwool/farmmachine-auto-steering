@@ -616,16 +616,29 @@ function wireDetail(key){
   } else if(key==='gnss'){
     const port=()=>(($('gPort')&&$('gPort').value)||'/dev/ttyS1').trim();
     const baud=()=>parseInt(($('gBaud')&&$('gBaud').value)||'0',10)||0;
+    // ★ GNSS 작업(포트탐지/설정/시작)은 블로킹(탐지 수십 초)이라 비동기로 돌리고
+    //   gnssJobStatus() 를 폴링한다. 동기 호출은 WebView JS 스레드를 막아 화면이 멈춤.
+    function pollGnssJob(onDone){
+      const t=setInterval(()=>{
+        if(!(BR&&BR.gnssJobStatus)){ clearInterval(t); onDone(null); return; }
+        let j={}; try{ j=JSON.parse(BR.gnssJobStatus()||'{}'); }catch(e){}
+        if(!j.running){ clearInterval(t); onDone(j.result||{}); }
+      }, 400);
+    }
     $('gPwr')&&($('gPwr').onclick=()=>{ let r='-'; if(BR&&BR.gnssPowerOn){try{r=BR.gnssPowerOn();}catch(e){}} toast('전원 ON: '+r); });
-    $('gScan')&&($('gScan').onclick=()=>{ const el=$('gScanR'); if(el) el.textContent='탐지 중… (수 초)';
-      setTimeout(()=>{ let best=null, txt='탐지 결과 없음';
-        if(BR&&BR.scanGnss){ try{ const o=JSON.parse(BR.scanGnss(1.0)); best=o.best;
-          txt=(o.ports||[]).map(p=>p.port+': '+(p.found?('OK '+(p.baud||'')+' '+((p.formats||[]).join('/'))):'없음')).join('\n')||'포트 없음';
-        }catch(e){ txt='데모/오류'; } }
+    $('gScan')&&($('gScan').onclick=()=>{ const el=$('gScanR'); if(el) el.textContent='탐지 중… (수 초~수십 초 · 화면은 계속 동작합니다)';
+      if(!(BR&&BR.scanGnssAsync)){ if(el) el.textContent='데모(브리지 없음)'; return; }
+      try{ BR.scanGnssAsync(1.0); }catch(e){}
+      pollGnssJob((o)=>{ o=o||{}; const best=o.best||null;
+        const txt=(o.ports||[]).map(p=>p.port+': '+(p.found?('OK '+(p.baud||'')+' '+((p.formats||[]).join('/'))):'없음')).join('\n')||(o.error?('오류: '+o.error):'포트 없음');
         if(best&&$('gPort')) $('gPort').value=best.port;
-        if(el) el.textContent=(best?('✓ 추천 '+best.port+' @'+best.baud+'\n'):'')+txt; }, 60); });
-    $('gCfg')&&($('gCfg').onclick=()=>{ let r='-'; if(BR&&BR.configureMovingBase){try{r=BR.configureMovingBase(port(),baud());}catch(e){}} toast('무빙베이스 설정: '+r); });
-    $('gStart')&&($('gStart').onclick=()=>{ let r='-'; if(BR&&BR.startGnss){try{r=BR.startGnss(port(),baud());}catch(e){}} toast('GNSS 시작: '+r); });
+        if(el) el.textContent=(best?('✓ 추천 '+best.port+' @'+best.baud+'\n'):'')+txt; }); });
+    $('gCfg')&&($('gCfg').onclick=()=>{ toast('무빙베이스 설정 중…');
+      if(BR&&BR.configureMovingBaseAsync){ try{BR.configureMovingBaseAsync(port(),baud());}catch(e){} }
+      pollGnssJob((o)=>toast('무빙베이스 설정: '+((o&&o.result)||'-'))); });
+    $('gStart')&&($('gStart').onclick=()=>{ toast('GNSS 시작 중…');
+      if(BR&&BR.startGnssAsync){ try{BR.startGnssAsync(port(),baud());}catch(e){} }
+      pollGnssJob((o)=>toast('GNSS 시작: '+((o&&o.result)||'-'))); });
     $('gDiag')&&($('gDiag').onclick=()=>{ if(BR&&BR.startMountDiag){try{BR.startMountDiag();}catch(e){}} toast('마운트 진단 시작 — 직선 15m 주행'); });
   }
 }

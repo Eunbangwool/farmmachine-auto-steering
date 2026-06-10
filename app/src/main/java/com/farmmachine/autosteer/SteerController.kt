@@ -52,6 +52,16 @@ object SteerController {
         try { api().callAttr("configure_moving_base", port, baud).toString() } catch (e: Throwable) { "error" }
     fun startGnss(port: String, baud: Int): String =
         try { api().callAttr("start_gnss", port, baud).toString() } catch (e: Throwable) { "error" }
+
+    // 비동기(UI 프리즈 방지): 즉시 반환 → JS 가 gnssJobStatus() 폴링.
+    fun scanGnssAsync(window: Double): String =
+        try { api().callAttr("scan_gnss_async", window).toString() } catch (e: Throwable) { "{\"running\":false}" }
+    fun configureMovingBaseAsync(port: String, baud: Int): String =
+        try { api().callAttr("configure_moving_base_async", port, baud).toString() } catch (e: Throwable) { "{\"running\":false}" }
+    fun startGnssAsync(port: String, baud: Int): String =
+        try { api().callAttr("start_gnss_async", port, baud).toString() } catch (e: Throwable) { "{\"running\":false}" }
+    fun gnssJobStatus(): String =
+        try { api().callAttr("gnss_job_status").toString() } catch (e: Throwable) { "{\"running\":false,\"result\":null}" }
     fun setDeadman(pressed: Boolean) = safe { api().callAttr("set_deadman", pressed) }
     fun setProfile(name: String) = safe { api().callAttr("set_profile", name) }
 

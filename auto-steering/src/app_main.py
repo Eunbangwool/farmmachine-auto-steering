@@ -69,6 +69,7 @@ class Controller:
         self._sections = 4            # 작업 섹션 수(표시)
         self._ab_a = None             # ⑥ 현장에서 찍은 AB 라인 A점(east,north)
         self._ab_b = None             # ⑥ B점
+        self._gnss_job = {"op": None, "running": False, "result": None}  # 비동기 GNSS 작업
 
         if vendor:
             self.set_vendor(vendor)
@@ -443,6 +444,42 @@ class Controller:
             log.info("GNSS 미연결(안테나/포트 없음) — 연결되면 재시도/자동 동작")
         return "ok" if ok else "no-gnss"
 
+    # ── 비동기 GNSS 작업 (포트탐지/설정/시작은 블로킹 → UI 프리즈 방지) ──
+    #   scan_ports 는 포트×보레이트×window 로 수십 초 블로킹한다. JsBridge 호출은
+    #   WebView JS 스레드를 막아 화면이 멈추므로, 백그라운드 스레드에서 돌리고
+    #   UI 는 gnss_job_status() 를 폴링한다(한 번에 하나, 순차 사용에 적합).
+    def _run_async(self, op, fn):
+        if self._gnss_job.get("running"):
+            return json.dumps({"running": True, "op": self._gnss_job.get("op")})
+        self._gnss_job = {"op": op, "running": True, "result": None}
+
+        def _work():
+            try:
+                res = fn()
+            except Exception as e:
+                log.warning(f"GNSS 작업 실패({op}): {e}")
+                res = {"error": str(e)}
+            self._gnss_job = {"op": op, "running": False, "result": res}
+
+        threading.Thread(target=_work, daemon=True, name=f"gnss-{op}").start()
+        return json.dumps({"running": True, "op": op})
+
+    def gnss_job_status(self):
+        j = self._gnss_job
+        return json.dumps({"op": j.get("op"), "running": bool(j.get("running")),
+                           "result": j.get("result")}, ensure_ascii=False)
+
+    def scan_gnss_async(self, window=1.5):
+        return self._run_async("scan", lambda: self.scan_gnss(window))
+
+    def configure_moving_base_async(self, port="/dev/ttyS1", baud=0):
+        return self._run_async("configure",
+                               lambda: {"result": self.configure_moving_base(port, baud)})
+
+    def start_gnss_async(self, port="/dev/ttyS1", baud=0):
+        return self._run_async("start",
+                               lambda: {"result": self.start_gnss(port, baud)})
+
     # ── 제어 루프 (50Hz) ──────────────────────────────────────
     def _loop(self):
         while self._running:
@@ -539,6 +576,10 @@ def mount_diag_status():      return json.dumps(_ctrl.mount_diag_status() if _ct
 def start_gnss(port="/dev/ttyS1", baud=0): return _ctrl.start_gnss(port, baud) if _ctrl else "no-ctrl"
 def gnss_power_on():    return _ctrl.gnss_power_on() if _ctrl else "no-ctrl"
 def scan_gnss(window=1.5): return json.dumps(_ctrl.scan_gnss(window) if _ctrl else {"best": None, "ports": []}, ensure_ascii=False)
+def scan_gnss_async(window=1.5): return _ctrl.scan_gnss_async(window) if _ctrl else '{"running":false}'
+def configure_moving_base_async(port="/dev/ttyS1", baud=0): return _ctrl.configure_moving_base_async(port, baud) if _ctrl else '{"running":false}'
+def start_gnss_async(port="/dev/ttyS1", baud=0): return _ctrl.start_gnss_async(port, baud) if _ctrl else '{"running":false}'
+def gnss_job_status(): return _ctrl.gnss_job_status() if _ctrl else '{"running":false,"result":null}'
 def configure_moving_base(port="/dev/ttyS1", baud=0): return _ctrl.configure_moving_base(port, baud) if _ctrl else "no-ctrl"
 def on_rtk(lat, lon, quality, source="pa3"):  _ctrl and _ctrl.on_rtk(lat, lon, quality, source)
 def on_imu(h, av, acc, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_imu(h, av, acc, roll, pitch)

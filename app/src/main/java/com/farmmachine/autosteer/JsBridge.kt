@@ -44,6 +44,11 @@ class JsBridge {
     @JavascriptInterface fun scanGnss(window: Double): String = SteerController.scanGnss(window)
     @JavascriptInterface fun configureMovingBase(port: String, baud: Int): String = SteerController.configureMovingBase(port, baud)
     @JavascriptInterface fun startGnss(port: String, baud: Int): String = SteerController.startGnss(port, baud)
+    // 비동기(블로킹 방지) — UI 는 gnssJobStatus() 폴링. 포트탐지가 수십 초라 동기 호출은 화면을 멈춤.
+    @JavascriptInterface fun scanGnssAsync(window: Double): String = SteerController.scanGnssAsync(window)
+    @JavascriptInterface fun configureMovingBaseAsync(port: String, baud: Int): String = SteerController.configureMovingBaseAsync(port, baud)
+    @JavascriptInterface fun startGnssAsync(port: String, baud: Int): String = SteerController.startGnssAsync(port, baud)
+    @JavascriptInterface fun gnssJobStatus(): String = SteerController.gnssJobStatus()
 
     /** CAN 하드웨어 상태 (모터 점검 화면 표시용). logcat 없이 확인. */
     @JavascriptInterface fun canStatus(): String {
