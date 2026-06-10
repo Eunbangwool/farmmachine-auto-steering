@@ -69,6 +69,8 @@ class Controller:
         self._gnss_client = None      # GNSS NMEA 클라이언트(F9P/PA-3) — NTRIP RTCM 주입 대상
         self._hcal = None             # 헤딩 바이어스 캘리브레이터(ver1, 진행 중일 때만)
         self._mdiag = None            # 듀얼 마운트(base/rover·부호) 진단기(진행 중일 때만)
+        self._imu_cal = None          # IMU 영점 캘리브레이터(진행 중일 때만)
+        self._imu_cal_applied = False
         self._sections = 4            # 작업 섹션 수(표시)
         self._ab_a = None             # ⑥ 현장에서 찍은 AB 라인 A점(east,north)
         self._ab_b = None             # ⑥ B점
@@ -276,8 +278,12 @@ class Controller:
             return
         try:
             p = self.sys.params
+            d = {k: getattr(p, k, None) for k in self.PARAM_KEYS}
+            io = getattr(p, "imu_offset", None)   # 파라미터5: IMU 영점(roll/pitch/yaw)
+            if io is not None:
+                d["imu_offset"] = {"roll": io.roll, "pitch": io.pitch, "yaw": io.yaw}
             with open(path, "w") as f:
-                json.dump({k: getattr(p, k, None) for k in self.PARAM_KEYS}, f)
+                json.dump(d, f)
         except Exception as e:
             log.warning(f"차량변수 저장 실패: {e}")
 
@@ -291,6 +297,13 @@ class Controller:
             for k, v in d.items():
                 if k in self.PARAM_KEYS and v is not None and hasattr(self.sys.params, k):
                     setattr(self.sys.params, k, float(v))
+            io = d.get("imu_offset")
+            if io and hasattr(self.sys.params, "imu_offset"):
+                from autosteer_core import ImuOffset
+                self.sys.params.imu_offset = ImuOffset(
+                    roll=float(io.get("roll", 0.0)),
+                    pitch=float(io.get("pitch", 0.0)),
+                    yaw=float(io.get("yaw", 0.0)))
             log.info(f"저장된 차량변수 로드: {d}")
         except Exception as e:
             log.warning(f"차량변수 로드 실패: {e}")
@@ -307,6 +320,7 @@ class Controller:
             return
         self.sys.on_imu(float(heading), float(ang_vel), float(fwd_accel),
                         self._dt, float(roll), float(pitch))
+        self._imu_cal_feed(roll, pitch, math.radians(float(heading)))
 
     def on_gyro(self, ang_vel, fwd_accel=0.0, roll=0.0, pitch=0.0):
         """IMU 각속도(yaw rate, rad/s) — 듀얼안테나 절대heading 과 융합(스네이크 억제).
@@ -322,6 +336,8 @@ class Controller:
             return
         self.sys.on_accel(float(ay), float(az), float(roll_rate), self._dt,
                           float(lin_acc), float(yaw_rate))
+        # 가속도만 있는 IMU: 평지 정차 roll = atan2(ay, az) (pitch 는 ax 없어 0)
+        self._imu_cal_feed(math.atan2(float(ay), float(az)), 0.0, 0.0)
 
     # ── ⑥ 현장 AB 라인: 현재 GNSS 위치를 A/B 로 마킹 → 평행 패스 생성 ──
     def mark_ab(self, which):
@@ -377,6 +393,47 @@ class Controller:
             return {"active": False, "progress": 1.0, "bias_deg": self.sys.heading_bias_deg if not self.demo else 0.0}
         return {"active": True, "progress": round(self._hcal.progress, 3),
                 "bias_deg": self.sys.heading_bias_deg if not self.demo else 0.0}
+
+    # ── IMU 영점 캘리브 (파라미터5) — 평지 정차 30초 평균 → ImuOffset ──
+    #   ★ 배선만 미리 완성. IMU 데이터(on_imu roll/pitch 또는 on_accel ay/az)가
+    #   들어와야 실제로 진행됨. 이 기기(ApolloPro) IMU 읽기 경로 확정 후 데이터 유입.
+    def start_imu_calib(self):
+        """평지 정차 IMU 영점 캘리브 시작. 이후 on_imu/on_accel 샘플로 자동 누적·적용."""
+        from autosteer_core import ImuCalibrator
+        self._imu_cal = ImuCalibrator()
+        self._imu_cal.start()
+        self._imu_cal_applied = False
+        return "ok"
+
+    def _imu_cal_feed(self, roll, pitch, yaw=0.0):
+        """진행 중이면 IMU 샘플 누적. ready 시 finish→params.imu_offset 적용·저장."""
+        c = self._imu_cal
+        if c is None:
+            return
+        try:
+            c.add_sample(float(roll), float(pitch), float(yaw))
+        except Exception:
+            return
+        if c.ready:
+            off = c.finish()
+            self.sys.params.imu_offset = off
+            self._save_params()
+            self._imu_cal = None
+            self._imu_cal_applied = True
+            log.info(f"IMU 영점 적용·저장: roll={off.roll:+.4f} pitch={off.pitch:+.4f}")
+
+    def imu_calib_status(self):
+        p = getattr(self.sys.params, "imu_offset", None)
+        base = {"roll": p.roll if p else 0.0, "pitch": p.pitch if p else 0.0,
+                "yaw": p.yaw if p else 0.0}
+        c = self._imu_cal
+        if c is None:
+            base.update(active=False, progress=1.0 if self._imu_cal_applied else 0.0,
+                        applied=self._imu_cal_applied)
+        else:
+            base.update(active=True, progress=round(c.progress, 3),
+                        samples=len(c._roll), applied=False)
+        return base
 
     def _on_heading_meas(self, meas):
         """무빙베이스 RELPOSNED → EKF 반영 + (진행 중이면) 듀얼 마운트 진단 샘플 수집."""
@@ -676,6 +733,8 @@ def ntrip_status():     return json.dumps(_ctrl.ntrip_status() if _ctrl else
 def on_heading(compass_deg):  _ctrl and _ctrl.on_heading(compass_deg)
 def start_heading_calib():    return _ctrl.start_heading_calib() if _ctrl else "no-ctrl"
 def heading_calib_status():   return json.dumps(_ctrl.heading_calib_status() if _ctrl else {"active": False}, ensure_ascii=False)
+def start_imu_calib():        return _ctrl.start_imu_calib() if _ctrl else "no-ctrl"
+def imu_calib_status():       return json.dumps(_ctrl.imu_calib_status() if _ctrl else {"active": False, "progress": 0.0}, ensure_ascii=False)
 def start_mount_diag():       return _ctrl.start_mount_diag() if _ctrl else "no-ctrl"
 def mount_diag_status():      return json.dumps(_ctrl.mount_diag_status() if _ctrl else {"active": False}, ensure_ascii=False)
 def start_gnss(port="/dev/ttyHSL0", baud=0): return _ctrl.start_gnss(port, baud) if _ctrl else "no-ctrl"

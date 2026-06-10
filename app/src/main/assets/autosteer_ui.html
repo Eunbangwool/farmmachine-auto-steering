@@ -623,9 +623,10 @@ function wireDetail(key){
     $$('.optrow').forEach(r=>r.onclick=()=>{
       const a=r.dataset.act;
       if(a==='hcalib'){ if(BR&&BR.startHeadingCalib){try{BR.startHeadingCalib();}catch(e){}}
-        toast('헤딩 캘리브 시작 — 직선 20m 자동주행하세요'); }
-      else toast(({imuzero:'IMU 영점: 평지 정차 후 실행(안테나 연결 시)',
-                   gpscenter:'GPS 중심(안테나↔차축) 설정',
+        toast('헤딩 캘리브 시작 — 직선 20m 주행하세요'); }
+      else if(a==='imuzero'){ if(BR&&BR.startImuCalib){try{BR.startImuCalib();}catch(e){}}
+        toast('IMU 영점 시작 — 평지 정차 후 30초 유지 (IMU 데이터 들어와야 진행)'); }
+      else toast(({gpscenter:'GPS 중심(안테나↔차축) 설정',
                    turnspeed:'배속 선회(유턴 속도) 설정'})[a]||''); });
   } else if(key==='tuning'){
     $$('.modebtn').forEach(b=>b.onclick=()=>{
@@ -903,6 +904,11 @@ function poll(){
   if(hc && BR && BR.headingCalibStatus){ try{ const c=JSON.parse(BR.headingCalibStatus());
     hc.textContent = c.active ? ('수집 '+Math.round((c.progress||0)*100)+'%')
       : (Math.abs(c.bias_deg||0)>0.01 ? ('보정 '+Number(c.bias_deg).toFixed(2)+'°') : '시작'); }catch(e){} }
+  // IMU 영점 캘리브 진행률 (데이터 들어와야 progress 증가)
+  const ic=$('oa_imuzero');
+  if(ic && BR && BR.imuCalibStatus){ try{ const c=JSON.parse(BR.imuCalibStatus());
+    ic.textContent = c.active ? ('수집 '+Math.round((c.progress||0)*100)+'% ('+(c.samples||0)+')')
+      : (c.applied ? ('완료 roll '+(c.roll*57.2958).toFixed(1)+'°') : '실행'); }catch(e){} }
 }
 
 // ───────── 부팅 시퀀스 ─────────
