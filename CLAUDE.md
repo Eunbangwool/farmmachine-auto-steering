@@ -25,22 +25,25 @@
 
 **배경**: NX510(CHCNAV 자율조향)이 이미 설치되어 있으나, AgNav 앱을 본인 앱으로 교체하는 구조. 모터 회사와 모터 프로그램 보유. CAN 프로토콜은 AGMO 경유 입수 예정.
 
-**★ GNSS 경로(디컴파일 기능분석 확정, 2026-06 정정)**: 자율조향 GNSS는 **USB 아님**.
-**1단계 = AGMO ver1 안테나(루프 듀얼+IMU) → Apollo(=Apollo2/RK3568) 내부 UART(tty)**.
-**★ GNSS 수신기 = Unicore UM482**(듀얼안테나 RTK 헤딩 보드) — **u-blox 아님**(과거 "u-blox/
-Allwinner sunxi" 표기 폐기. u-blox 는 구형 대시캠 ApolloPro 변종이었음). 전원=RK3568 표준
-sysfs `/sys/class/gpio/gpioNN/value`: `UM482_PWREN(137)→GNSS_LNA_EN(101)→GNSS_RST_N(136)`.
-UM482 출력 = **NMEA(GGA/RMC/HDT) + Unicore 독자(#HEADINGA/$GxHPR)** — 헤딩을 보드가 직접 계산.
-이후 **CHCNAV PA-3/NX510(CAN 500k 또는 RS232)** 실험 후 추가. **USB 는 레벨러 안테나 전용.**
-> 상세: `apk-analysis/AGMO_VER1_FUNCTIONAL_ANALYSIS.md`(분석 브랜치). AGMO 조향루프·GNSS파서·
-> EKF 는 전부 Qt C++ **native .so** 라 Java 디컴파일에 없음 → 우리는 **자체 구현**(clean-room).
+**★ GNSS 경로(실기기 ADB+디컴파일 교차확인, 2026-06 재정정)**: 자율조향 GNSS는 **USB 아님**.
+통합앱 `com.agmo.autokit`은 **기기 변종 2개**를 지원(`com.cp.cputils`: Apollo2/ApolloPro/Spring,
+`ro.build.cp.version`으로 선택). **★ 오너 실기기 = `ApolloPro`(Qualcomm/MSM, ttyHSL UART)** —
+`ro.build.cp.version=CP_APOLLO-PRO_...` 확인. (Apollo2=RK3568+UM482 변종은 **다른 기기** — 이전
+"UM482/sysfs gpio 137" 표기는 그 변종 것이라 이 기기엔 무효였음. 헛다리의 진짜 원인.)
+- **ApolloPro(이 기기) 확정 사실**: GNSS = **u-blox 듀얼안테나 무빙베이스**, 출력 **NMEA**
+  (GNGGA/GNRMC/GPGGA/GPRMC, 헤딩=parseRover/parseMovingBaseNmea). 포트 = **`/dev/ttyHSL0`**
+  (libagmo-localizer strings). 전원 = **`/dev/gpio_dev` 매직코드** — `setUblox(1)=echo 100008`,
+  `setRs485(1)=100021`(NTRIP/RTCM). **sysfs gpio 아님.** `/dev/gpio_dev`·`/dev/ttyHSL0` 둘 다
+  **mode 666 → 일반 앱이 root 없이 전원ON+읽기 가능**(AGMO 무권한 동작과 일치). NTRIP 클라 내장.
+> 출처: 실기기 `adb`(getprop cp.version / ls -l /dev / dmesg / strings libagmo-localizer) +
+> `ApolloPro.java`(setUblox/setRs485). AGMO 조향루프·GNSS파서·EKF 는 Qt C++ **native .so**
+> (libagmo-localizer/tracking-controller) 라 Java 디컴파일엔 인터페이스만 → 우리는 **자체 구현**.
 
-**✅ 현장 1단계 도구(구현됨)**: `app_main.scan_gnss()`(=`f9p_client.scan_ports`) 내부 `/dev/ttyS*`
-자동 스니핑(비동기 잡, UI 프리즈 방지) → `start_gnss(port,baud)`. `gnss_power_on()` 가 위 GPIO
-시퀀스 best-effort ON(권한 없으면 `no-gpio` — AGMO 는 시스템서비스가 켬). **헤딩=UM482 `#HEADINGA`/
-`$GxHPR` → `f9p_client.parse_unicore_heading` → `on_heading_meas`(`dual_baseline_offset_deg=90`
-차감·적응형R·pitch→roll)**. `configure_moving_base`(UBX)는 **u-blox F9P 폴백 전용**(UM482 엔 불필요).
-검증: `parse_unicore_heading`(#HEADINGA/GPHPR) + `test_closed_loop.py`.
+**✅ 구현(app_main)**: `gnss_power_on()` = `/dev/gpio_dev`에 100008(+100021) 기록(ApolloPro;
+Apollo2 sysfs 는 폴백). `scan_gnss()` 가 `/dev/ttyHSL*` 등 후보를 **직접 open**(Android /dev
+readdir 차단 대응) → `start_gnss("/dev/ttyHSL0")`. NMEA(GGA/RMC) 파서는 `f9p_client` 기존 것.
+> ⚠ 집(수신기 미연결)에선 ttyHSL0 무음이라 검증 불가 — **현장에서** AGMO 동작 중 `lsof|grep ttyHSL`
+> 로 포트 최종확정 후, 우리 APK(gpio_dev 100008 + ttyHSL0)로 읽음. (단정 금지: 포트는 강한 후보)
 
 ### Monorepo 구조
 ```
