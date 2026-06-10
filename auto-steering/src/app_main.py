@@ -401,26 +401,39 @@ class Controller:
         r = self._mdiag.report(); r["active"] = True
         return r
 
-    # AGMO ver1 GNSS(u-blox)는 Apollo 내부 UART 직결 + sysfs GPIO 전원(Allwinner sunxi).
-    # 디컴파일 인터페이스 사실(경로만): 전원/standby 를 1 로 써서 켠다. 권한(device-owner/system)
-    # 없으면 best-effort 실패 → logcat 으로 현장 확인. (USB 안테나는 레벨러 전용 — 여기 해당 없음)
-    _GNSS_PWR_SYSFS = (
-        "/sys/class/misc/sunxi-gps/rf-ctrl/gnss_pwren_state",          # GNSS 전원 enable
-        "/sys/devices/virtual/misc/sunxi-gps/rf-ctrl/nstandby_state",  # u-blox standby 해제
-        # 추가 후보(태블릿/커널 빌드별 상이) — best-effort 로 같이 시도
-        "/sys/class/misc/sunxi-gps/rf-ctrl/power_state",
-        "/sys/class/misc/sunxi-gps/rf-ctrl/standby_state",
-        "/sys/class/misc/gps/rf-ctrl/gnss_pwren_state",
-        "/sys/class/misc/gnss/rf-ctrl/gnss_pwren_state",
-    )
-    # 알려진 경로가 다 실패하면 /sys 에서 후보 노드를 글롭으로 찾아 시도(경로명만 사실, clean-room)
-    _GNSS_PWR_GLOBS = (
-        "/sys/class/misc/*gps*/rf-ctrl/*pwren*",
-        "/sys/class/misc/*gps*/rf-ctrl/*standby*",
-        "/sys/class/misc/*gnss*/rf-ctrl/*pwren*",
-        "/sys/class/misc/*gnss*/rf-ctrl/*standby*",
-        "/sys/devices/**/sunxi-gps/rf-ctrl/*state",
-    )
+    # ★ Apollo2(RK3568) 하드웨어 전원 GPIO — 디컴파일 동작 사실(GPIO 번호만, clean-room).
+    #   GNSS = Unicore UM482 듀얼안테나 헤딩 보드(u-blox 아님). 표준 Linux sysfs
+    #   /sys/class/gpio/gpioNN/value 로 1 을 써서 켠다. 켜는 순서: 전원 → LNA → 리셋해제.
+    #   권한(시스템/root) 없으면 best-effort 실패 → logcat. (AGMO 는 별도 시스템서비스가 켬)
+    GPIO_UM482_PWREN  = 137   # GNSS(UM482) 보드 전원
+    GPIO_GNSS_LNA_EN  = 101   # 안테나 LNA 전원
+    GPIO_GNSS_RST_N   = 136   # GNSS 리셋(액티브 로우 → 1=해제)
+    GPIO_CAN_PWR_EN   = 61    # CAN 트랜시버 전원(공통)
+    GPIO_CAN_ON       = {0: 99, 1: 154, 2: 128}   # 채널별 CANx_ON enable
+    GPIO_RS485_EN     = 134   # RS-485(LoRa NTRIP) 전원
+
+    @staticmethod
+    def _gpio_set(num, value=1):
+        """RK3568 sysfs GPIO 출력. export→direction(out)→value. best-effort."""
+        base = f"/sys/class/gpio/gpio{num}"
+        try:
+            if not os.path.exists(base):
+                try:
+                    with open("/sys/class/gpio/export", "w") as f:
+                        f.write(str(num))
+                except Exception:
+                    pass
+            try:
+                with open(os.path.join(base, "direction"), "w") as f:
+                    f.write("out")
+            except Exception:
+                pass
+            with open(os.path.join(base, "value"), "w") as f:
+                f.write("1" if value else "0")
+            return True
+        except Exception as e:
+            log.info(f"GPIO{num} 설정 불가: {e} — 권한(시스템/root)·플랫폼 현장 확인")
+            return False
 
     def scan_gnss(self, window=1.5):
         """
@@ -447,40 +460,32 @@ class Controller:
         return fc.configure_serial(str(port), baud, fc.moving_base_heading_cfg())
 
     def gnss_power_on(self):
-        """AGMO ver1 내부 u-blox 전원/standby ON (best-effort sysfs write)."""
+        """AGMO ver1 GNSS(Unicore UM482) 전원 ON — RK3568 sysfs GPIO 시퀀스.
+        UM482_PWREN(137) → GNSS_LNA_EN(101) → GNSS_RST_N(136, 리셋해제). best-effort."""
         if self.demo:
             return "demo"
-        def _try(path):
-            try:
-                with open(path, "w") as f:
-                    f.write("1")
-                return True
-            except Exception as e:
-                log.info(f"GNSS 전원 sysfs 쓰기 불가({path}): {e} — 권한/플랫폼 현장 확인")
-                return False
+        ok = []
+        if self._gpio_set(self.GPIO_UM482_PWREN, 1): ok.append("PWREN")
+        if self._gpio_set(self.GPIO_GNSS_LNA_EN, 1): ok.append("LNA")
+        if self._gpio_set(self.GPIO_GNSS_RST_N, 1):  ok.append("RST_N")
+        if ok:
+            log.info(f"GNSS(UM482) 전원 GPIO ON: {ok}")
+            return "ok"
+        log.info("GNSS 전원 GPIO 쓰기 실패 — 권한(시스템/root) 또는 외부전원 가능성(포트탐지로 확인)")
+        return "no-gpio"
 
-        done = [p for p in self._GNSS_PWR_SYSFS if _try(p)]
-        # 알려진 경로가 모두 실패하면 글롭으로 후보 노드를 찾아 추가 시도
-        if not done:
-            import glob
-            cand = []
-            for g in self._GNSS_PWR_GLOBS:
-                try: cand += glob.glob(g, recursive=True)
-                except Exception: pass
-            seen = set()
-            for p in cand:
-                if p in seen:
-                    continue
-                seen.add(p)
-                if _try(p):
-                    done.append(p)
-            if cand and not done:
-                log.info(f"GNSS 전원 후보 노드 발견했으나 쓰기 실패(권한?): {sorted(seen)}")
-            elif not cand:
-                log.info("GNSS 전원 sysfs 노드를 못 찾음 — 안테나가 외부전원일 수 있음(포트탐지로 확인)")
-        if done:
-            log.info(f"GNSS 전원 ON 성공: {done}")
-        return "ok" if done else "no-sysfs"
+    def can_power_on(self, channel=0):
+        """CAN 트랜시버 전원 ON — CAN_PWR_EN(61) + 채널 CANx_ON. CanWrite 전 필요."""
+        if self.demo:
+            return "demo"
+        ok = []
+        if self._gpio_set(self.GPIO_CAN_PWR_EN, 1): ok.append("PWR_EN")
+        ch_gpio = self.GPIO_CAN_ON.get(int(channel))
+        if ch_gpio is not None and self._gpio_set(ch_gpio, 1): ok.append(f"CAN{channel}_ON")
+        if ok:
+            log.info(f"CAN 전원 GPIO ON: {ok}")
+            return "ok"
+        return "no-gpio"
 
     def start_gnss(self, port="/dev/ttyS1", baud=0):
         """
