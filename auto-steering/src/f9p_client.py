@@ -226,6 +226,51 @@ def parse_esf_meas(frame: bytes) -> Optional[Dict]:
     return out or None
 
 
+def parse_unicore_heading(line: str) -> Optional[Dict]:
+    """
+    Unicore UM482 듀얼안테나 헤딩 → on_heading_meas() 용 meas dict.
+
+    ★ AGMO ver1 GNSS = Unicore UM482(디컴파일 확정). ANT1=주(위치)/ANT2=헤딩 슬레이브.
+    보드가 ANT1→ANT2 베이스라인 방위를 출력 — 가로배치(base=좌/rover=우)면 차량heading+90°.
+    on_heading_meas 가 dual_baseline_offset_deg(90) 차감 + 적응형R + pitch→roll 처리.
+
+    지원: '#HEADINGA,...;sol,pos_type,len,heading,pitch,resv,hdg_std,pitch_std,...*CRC'
+          '$GxHPR,utc,heading,pitch,roll,...*cs'  (Unicore proprietary NMEA)
+    """
+    try:
+        s = line.strip()
+        if s.startswith("#HEADING"):
+            body = s.split(";", 1)[1] if ";" in s else s
+            body = body.split("*", 1)[0]
+            f = body.split(",")
+            sol_status = f[0].strip()
+            pos_type = f[1].strip().upper()
+            length = float(f[2]); heading = float(f[3]); pitch = float(f[4])
+            hdg_std = float(f[6]) if len(f) > 6 and f[6] else 1.0
+            carr = 2 if "INT" in pos_type else (1 if "FLOAT" in pos_type else 0)
+            valid = (sol_status.upper() == "SOL_COMPUTED")
+        elif "HPR" in s and s.startswith("$"):
+            f = s.split("*", 1)[0].split(",")
+            heading = float(f[2]); pitch = float(f[3]) if f[3] else 0.0
+            length = 1.0; hdg_std = 0.5; carr = 2; valid = True   # 폴백(품질필드 미확정)
+        else:
+            return None
+        baseline = length or 1.0
+        rel_d = baseline * math.sin(math.radians(pitch))   # 가로 baseline pitch → roll 성분
+        return {
+            "heading_deg": heading % 360.0,
+            "acc_deg": hdg_std,
+            "baseline_m": baseline,
+            "rel_d_m": rel_d,
+            "fix_ok": True,
+            "valid": True,
+            "heading_valid": bool(valid),
+            "carr_soln": carr,
+        }
+    except (IndexError, ValueError):
+        return None
+
+
 def parse_vtg(line: str) -> Optional[Tuple[float, float]]:
     """
     NMEA VTG → (진로각 course[deg, 북=0], 속도[m/s]). 실패/정지 시 None.
@@ -419,7 +464,13 @@ class F9pUsbClient:
         한 줄(NMEA 문장)을 처리. 테스트/리플레이에서 직접 호출 가능.
         하드웨어 없이도 parse_gga/parse_hdt + 콜백 경로를 검증할 수 있다.
         """
-        # 진헤딩(HDT) — 듀얼안테나(ver1)·INS 스마트안테나(ver2/NX510/FJD) 공통
+        # Unicore UM482 듀얼안테나 헤딩(#HEADINGA / $GxHPR) → on_heading_meas(90° 오프셋 경로)
+        if line.startswith("#HEADING") or ("HPR" in line and line.startswith("$")):
+            m = parse_unicore_heading(line)
+            if m is not None and self.on_heading_meas:
+                self.on_heading_meas(m)
+            return
+        # 진헤딩(HDT) — INS 스마트안테나(ver2/NX510/FJD) — 차량heading 직접 출력(오프셋 0)
         if "HDT" in line:
             hdg = parse_hdt(line)
             if hdg is not None and self.on_heading:
@@ -492,8 +543,8 @@ def detect_format(head: bytes) -> str:
     """버퍼 맨 앞으로 프레임 포맷 추정: 'nmea'/'ubx'/'rtcm3'/'unknown'."""
     if not head:
         return "unknown"
-    if head[0] == 0x24:                       # '$'
-        return "nmea"
+    if head[0] == 0x24 or head[0] == 0x23:    # '$'(NMEA) / '#'(Unicore ASCII 로그)
+        return "nmea"                          # 둘 다 줄(\n) 단위 ASCII → 라인 분배
     if head[:2] == UBX_SYNC:
         return "ubx"
     if head[0] == RTCM3_PRE:

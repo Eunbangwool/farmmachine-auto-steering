@@ -95,6 +95,9 @@ class Controller:
     # ── 수명주기 ──────────────────────────────────────────────
     def start(self):
         if self.bus is not None:
+            # CAN 트랜시버 전원 먼저(채널 불확실 → 0/1/2 모두 enable, best-effort) → bus 연결
+            for ch in (0, 1, 2):
+                self.can_power_on(ch)
             self.bus.start()
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True,
