@@ -572,6 +572,7 @@ class SniffReport:
         self.gga_count    = 0
         self.gga_qualities = set()
         self.last_fix     = None
+        self.open_error   = None      # 포트 열기 실패 사유(권한거부 vs 부재 구분용)
         self._buf = bytearray()
 
     def feed_bytes(self, data: bytes):
@@ -711,6 +712,7 @@ class GnssSniffer:
         try:
             ser = serial.Serial(self.port, self.baudrate, timeout=0.2)
         except Exception as e:
+            report.open_error = str(e)     # ex) Permission denied / No such file or directory
             log.error(f"포트 열기 실패({self.port}@{self.baudrate}): {e}")
             return report
         t0 = time.time()
@@ -735,14 +737,20 @@ def detect_baudrate(port: str = "/dev/ttyACM0",
     반환: (best_baud, SniffReport) 또는 (None, None).
     """
     best = (None, None, 0)
+    last_rep = None
     for baud in candidates:
         rep = GnssSniffer(port, baud).run(window)
+        last_rep = rep
+        # 포트 열기 실패(권한거부/부재)는 보레이트와 무관 → 즉시 반환(순회 시간 낭비 방지)
+        if rep.open_error:
+            log.info(f"{port}: 열기 실패 → {rep.open_error}")
+            return (None, rep)
         score = rep.nmea_ok * 2 + rep.ubx_frames + rep.rtcm3_frames
         log.info(f"baud {baud}: 점수 {score} "
                  f"(NMEA_ok={rep.nmea_ok}, UBX={rep.ubx_frames}, RTCM3={rep.rtcm3_frames})")
         if score > best[2]:
             best = (baud, rep, score)
-    return (best[0], best[1]) if best[2] > 0 else (None, None)
+    return (best[0], best[1]) if best[2] > 0 else (None, last_rep)
 
 
 def scan_ports(ports=None,
@@ -760,10 +768,16 @@ def scan_ports(ports=None,
                            _glob.glob("/dev/ttyUSB*") +
                            _glob.glob("/dev/ttyACM*")))
     results = []; best = None
+    if not ports:
+        return {"best": None, "ports": [], "note": "후보 tty 없음(/dev 접근 불가일 수 있음)"}
     for p in ports:
         baud, rep = detect_baudrate(p, candidates=bauds, window=window)
         if rep is None:
             results.append({"port": p, "found": False, "score": 0}); continue
+        if getattr(rep, "open_error", None):
+            # 권한거부면 데이터 유무와 무관하게 우리 앱이 그 포트를 못 엶
+            results.append({"port": p, "found": False, "score": 0,
+                            "open_error": rep.open_error}); continue
         s = rep.summary()
         score = s["nmea_ok"] * 2 + s["ubx_frames"] + s["rtcm3_frames"]
         entry = {"port": p, "found": score > 0, "baud": baud, "score": score,

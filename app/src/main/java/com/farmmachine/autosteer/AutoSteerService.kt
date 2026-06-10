@@ -24,6 +24,7 @@ class AutoSteerService : Service() {
     override fun onCreate() {
         super.onCreate()
         startForegroundCompat()
+        HardwareInit.enable(this)   // GNSS(UM482)/CAN 전원 인에이블(com.van.service 브로드캐스트 + 네이티브 GPIO)
         bridge.start()
         PythonEngine.boot(this, backend = "bridge")
     }
