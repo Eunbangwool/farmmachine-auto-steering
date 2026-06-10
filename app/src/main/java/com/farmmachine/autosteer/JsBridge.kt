@@ -59,7 +59,13 @@ class JsBridge {
     @JavascriptInterface fun canStatus(): String {
         val vm = com.van.jni.VanMcu.available
         val b = com.farmmachine.autosteer.can.ApolloCanBridge
-        return """{"vanmcu":$vm,"canReady":${b.canReady},"connected":${b.clientConnected},"txCount":${b.txCount},"lastTxOk":${b.lastTxOk},"rxCount":${b.rxCount}}"""
+        return """{"vanmcu":$vm,"canReady":${b.canReady},"connected":${b.clientConnected},"txCount":${b.txCount},"lastTxOk":${b.lastTxOk},"rxCount":${b.rxCount},"rxEnabled":${b.rxEnabled}}"""
+    }
+
+    /** 현장 진단: CAN 수신(RX) on/off — 모터 회전이 RX 와 충돌하는지 1회 검증. 기본 OFF(TX전용). */
+    @JavascriptInterface fun setCanRx(on: Boolean): String {
+        val ok = com.farmmachine.autosteer.can.ApolloCanBridge.instance?.setRx(on) ?: false
+        return """{"rxEnabled":$ok}"""
     }
 
     /** NTRIP(RTK 보정신호) 접속/해제/상태. */

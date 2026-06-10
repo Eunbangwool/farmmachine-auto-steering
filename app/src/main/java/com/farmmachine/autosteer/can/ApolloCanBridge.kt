@@ -47,6 +47,7 @@ class ApolloCanBridge(
         @Volatile var lastTxOk = false          // 마지막 CanWrite 결과 (진단)
         @Volatile var txCount = 0               // 송신 프레임 수 (진단)
         @Volatile var rxCount = 0               // 수신 프레임 수 (진단 — 하트비트 도착 확인)
+        @Volatile var rxEnabled = false         // ★ CAN 수신 콜백 활성(기본 OFF=TX전용, 모터 회전 우선)
     }
 
     /** 현장 진단: CAN 채널/비트레이트/확장ID 강제 를 런타임 전환 후 재오픈. */
@@ -82,26 +83,37 @@ class ApolloCanBridge(
             Log.w(TAG, "CAN setCanSpeed 실패: ${e.message}")
             return
         }
-        // 2) RX 콜백 — 선택(피드백용). 실패해도 TX(모터 송신)에는 영향 없음.
+        // 2) RX 콜백 — ★ 기본 OFF. 모터가 돌던 버전은 setCallback 이 시그니처 불일치로
+        //    조용히 실패해 RX 가 꺼진 상태였고 TX(모터)는 정상이었다. RX 를 실제로 켜고
+        //    HW 필터를 추가한 뒤 모터가 Disabled 로 안 도는 회귀가 관측됨 → RX 는 opt-in.
+        //    (헤딩/조향피드백은 dead-reckoning 폴백으로 동작하므로 모터 회전이 우선.)
+        applyRx()
+    }
+
+    /** RX 콜백 적용/해제 — rxEnabled 에 따라. HW 필터는 회귀 의심으로 사용 안 함. */
+    private fun applyRx() {
         try {
-            VanMcu.setOnCanListener(object : VanMcu.OnCanListener {
-                override fun OnCan(m: VanMcu.CanMsg) {
-                    rxQueue.offer(m.id to m.data)          // 채널 무관 전부 수용(진단)
-                    rxCount++
-                }
-            })
-            // 일부 .so 는 RX 가 기본 '전부 차단' → 필터 비우고 전체 수용(id=0,mask=0) 시도
-            try {
-                VanMcu.CanHwFilterClear(channel)
-                VanMcu.CanHwFilterAdd(channel, 0, 0)
-                Log.i(TAG, "RX 필터 전체수용 설정")
-            } catch (e: Throwable) { Log.w(TAG, "RX 필터설정 무시: ${e.message}") }
-            // ★ 반드시 CAN 비트(2)로 켠다. true(=1=ACC)로 켜면 CAN 수신이 영구 미발생.
-            VanMcu.setCallback(VanMcu.CAN)
-            Log.i(TAG, "CAN RX 콜백 등록 OK (filter=CAN)")
+            if (rxEnabled) {
+                VanMcu.setOnCanListener(object : VanMcu.OnCanListener {
+                    override fun OnCan(m: VanMcu.CanMsg) { rxQueue.offer(m.id to m.data); rxCount++ }
+                })
+                VanMcu.setCallback(VanMcu.CAN)
+                Log.i(TAG, "CAN RX 콜백 ON (filter=CAN)")
+            } else {
+                VanMcu.setOnCanListener(null)
+                VanMcu.setCallback(0)
+                Log.i(TAG, "CAN RX OFF (TX 전용 — 모터 회전 우선)")
+            }
         } catch (e: Throwable) {
-            Log.w(TAG, "CAN RX 콜백 미지원(무시, TX 는 동작): ${e.message}")
+            Log.w(TAG, "CAN RX 설정 무시(TX 는 동작): ${e.message}")
         }
+    }
+
+    /** 현장 진단: CAN 수신(RX) on/off 즉석 전환 — 모터 회전이 RX 와 충돌하는지 1회 검증용. */
+    fun setRx(on: Boolean): Boolean {
+        rxEnabled = on
+        if (canReady) applyRx()
+        return rxEnabled
     }
 
     fun stop() {

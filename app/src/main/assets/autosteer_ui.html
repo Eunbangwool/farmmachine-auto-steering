@@ -573,12 +573,19 @@ function openDetail(key){
            <span>채널</span>
            <button class="dbtn" data-k="ch" data-v="0">0</button>
            <button class="dbtn" data-k="ch" data-v="1">1</button>
+           <button class="dbtn" data-k="ch" data-v="2">2</button>
            <span>속도</span>
            <button class="dbtn" data-k="br" data-v="250000">250k</button>
            <button class="dbtn" data-k="br" data-v="500000">500k</button>
            <span>확장ID</span>
            <button class="dbtn" data-k="eff" data-v="0">자동</button>
            <button class="dbtn" data-k="eff" data-v="1">강제</button>
+         </div>
+         <div class="drow">
+           <span>수신(RX)</span>
+           <button class="dbtn" data-k="rx" data-v="0">끔(모터우선)</button>
+           <button class="dbtn" data-k="rx" data-v="1">켬(피드백)</button>
+           <span style="font-size:10px;color:var(--sub)">모터 안 돌면 '끔'</span>
          </div>
          <div id="txInfo">송신: -</div>
        </div>
@@ -684,7 +691,7 @@ function wireNtrip(){
 const JOG_PERMILLE=150;     // app_main JOG_MAX_PERMILLE 와 동일(저속 점검)
 let jogTimer=null;
 // CAN 진단 설정(현장에서 되는 조합 찾기용)
-let curCh=0, curBr=250000, curEff=false;
+let curCh=0, curBr=250000, curEff=false, curRx=false;   // curRx 기본 false = RX 끔(TX전용, 모터 회전 우선)
 function applyCanParams(){ if(BR&&BR.setCanParams){ try{ BR.setCanParams(curCh,curBr,curEff); }catch(e){} } }
 function jogSend(p){ if(BR&&BR.motorJog){ try{ return BR.motorJog(p); }catch(e){} return 'error'; } return 'demo'; }
 function jogStop(){ if(jogTimer){ clearInterval(jogTimer); jogTimer=null; } jogSend(0); const st=$('jogState'); if(st) st.textContent='정지'; }
@@ -704,13 +711,14 @@ function wireJog(){
   // 진단 토글 (채널/비트레이트/확장ID)
   document.querySelectorAll('.dbtn').forEach(b=>{
     const k=b.dataset.k, v=b.dataset.v;
-    const cur = k==='ch'?String(curCh) : k==='br'?String(curBr) : (curEff?'1':'0');
+    const cur = k==='ch'?String(curCh) : k==='br'?String(curBr) : k==='eff'?(curEff?'1':'0') : (curRx?'1':'0');
     if(v===cur) b.classList.add('sel');
     b.onclick=()=>{
-      if(k==='ch')curCh=parseInt(v,10); else if(k==='br')curBr=parseInt(v,10); else curEff=(v==='1');
       document.querySelectorAll('.dbtn[data-k="'+k+'"]').forEach(x=>x.classList.remove('sel'));
       b.classList.add('sel');
       jogStop();           // 설정 바꾸면 일단 정지
+      if(k==='rx'){ curRx=(v==='1'); if(BR&&BR.setCanRx){try{BR.setCanRx(curRx);}catch(e){}} toast('CAN 수신 '+(curRx?'켬':'끔(모터 우선)')); return; }
+      if(k==='ch')curCh=parseInt(v,10); else if(k==='br')curBr=parseInt(v,10); else curEff=(v==='1');
       applyCanParams();
     };
   });
@@ -843,7 +851,7 @@ function poll(){
       else { cs.textContent='CAN: 채널 열기 실패 (setCanSpeed)'; cs.style.background='#fdeede'; cs.style.color='var(--danger)'; }
       const ti=$('txInfo');
       if(ti) ti.textContent='송신 '+(c.txCount||0)+' · 수신 '+(c.rxCount||0)+'프레임 · CanWrite '+(c.lastTxOk?'성공':'실패/없음')
-             +' · ch='+curCh+' '+(curBr/1000)+'k '+(curEff?'확장강제':'자동');
+             +' · ch='+curCh+' '+(curBr/1000)+'k '+(curEff?'확장강제':'자동')+' · RX '+(c.rxEnabled?'켬':'끔');
     }catch(e){ cs.textContent='CAN: 상태 불명(브리지 미연결)'; }
   } else if(cs){ cs.textContent='CAN: 데모 모드(실 기기 아님)'; }
   // RTK 화면 열려있으면 NTRIP 상태 갱신
