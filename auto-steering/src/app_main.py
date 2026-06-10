@@ -449,7 +449,7 @@ class Controller:
         import f9p_client as fc
         return fc.scan_ports(window=float(window))
 
-    def configure_moving_base(self, port="/dev/ttyS1", baud=0):
+    def configure_moving_base(self, port="/dev/ttyHSL0", baud=0):
         """
         u-blox 무빙베이스 듀얼안테나 heading 출력(UBX-NAV-RELPOSNED)+위치/속도 활성·저장.
         ★ 전제: 수신기가 무빙베이스/로버 모드(AGMO 돔=공장설정 추정). 적용 후 RELPOSNED 가
@@ -462,19 +462,41 @@ class Controller:
         baud = int(baud) or (spec.serial_baud if spec else 115200)
         return fc.configure_serial(str(port), baud, fc.moving_base_heading_cfg())
 
+    # ★ ApolloPro(이 실기기, Qualcomm) GNSS = u-blox. 전원은 sysfs gpio 가 아니라
+    #   /dev/gpio_dev 매직코드(디컴파일 ApolloPro.setUblox/ setRs485 확정). 666 → 일반앱 가능.
+    GPIO_DEV       = "/dev/gpio_dev"
+    GPIO_DEV_UBLOX_ON  = "100008"   # setUblox(1)
+    GPIO_DEV_UBLOX_OFF = "100009"
+    GPIO_DEV_RS485_ON  = "100021"   # setRs485(1) — NTRIP/RTCM 보정 라인
+
+    @classmethod
+    def _gpio_dev_write(cls, code):
+        """ApolloPro /dev/gpio_dev 매직코드 echo (best-effort, 666이면 일반앱도 됨)."""
+        try:
+            with open(cls.GPIO_DEV, "w") as f:
+                f.write(str(code) + "\n")
+            return True
+        except Exception as e:
+            log.info(f"gpio_dev {code} 쓰기 실패: {e}")
+            return False
+
     def gnss_power_on(self):
-        """AGMO ver1 GNSS(Unicore UM482) 전원 ON — RK3568 sysfs GPIO 시퀀스.
-        UM482_PWREN(137) → GNSS_LNA_EN(101) → GNSS_RST_N(136, 리셋해제). best-effort."""
+        """GNSS 전원 ON. ApolloPro(u-blox, /dev/gpio_dev 100008)가 이 실기기 경로.
+        Apollo2(RK3568 sysfs UM482) 는 폴백으로 함께 시도(멀티변종)."""
         if self.demo:
             return "demo"
         ok = []
+        # 1) ApolloPro (이 기기): /dev/gpio_dev 매직코드 — u-blox ON + RS485(NTRIP) ON
+        if self._gpio_dev_write(self.GPIO_DEV_UBLOX_ON): ok.append("ublox(100008)")
+        if self._gpio_dev_write(self.GPIO_DEV_RS485_ON): ok.append("rs485(100021)")
+        # 2) Apollo2 (RK3568) 폴백: sysfs gpio
         if self._gpio_set(self.GPIO_UM482_PWREN, 1): ok.append("PWREN")
         if self._gpio_set(self.GPIO_GNSS_LNA_EN, 1): ok.append("LNA")
         if self._gpio_set(self.GPIO_GNSS_RST_N, 1):  ok.append("RST_N")
         if ok:
-            log.info(f"GNSS(UM482) 전원 GPIO ON: {ok}")
+            log.info(f"GNSS 전원 ON: {ok}")
             return "ok"
-        log.info("GNSS 전원 GPIO 쓰기 실패 — 권한(시스템/root) 또는 외부전원 가능성(포트탐지로 확인)")
+        log.info("GNSS 전원 쓰기 실패 — 권한 또는 경로 확인")
         return "no-gpio"
 
     def can_power_on(self, channel=0):
@@ -490,7 +512,7 @@ class Controller:
             return "ok"
         return "no-gpio"
 
-    def start_gnss(self, port="/dev/ttyS1", baud=0):
+    def start_gnss(self, port="/dev/ttyHSL0", baud=0):
         """
         GNSS(NMEA GGA 위치 + HDT/UBX 진헤딩) 읽어 on_rtk/on_heading(_meas) 공급.
         ★ 자율조향 1단계 = AGMO ver1 안테나(내부 UART). port 는 내부 tty(예: /dev/ttyS1~S3) —
@@ -550,11 +572,11 @@ class Controller:
     def scan_gnss_async(self, window=1.5):
         return self._run_async("scan", lambda: self.scan_gnss(window))
 
-    def configure_moving_base_async(self, port="/dev/ttyS1", baud=0):
+    def configure_moving_base_async(self, port="/dev/ttyHSL0", baud=0):
         return self._run_async("configure",
                                lambda: {"result": self.configure_moving_base(port, baud)})
 
-    def start_gnss_async(self, port="/dev/ttyS1", baud=0):
+    def start_gnss_async(self, port="/dev/ttyHSL0", baud=0):
         return self._run_async("start",
                                lambda: {"result": self.start_gnss(port, baud)})
 
@@ -656,14 +678,14 @@ def start_heading_calib():    return _ctrl.start_heading_calib() if _ctrl else "
 def heading_calib_status():   return json.dumps(_ctrl.heading_calib_status() if _ctrl else {"active": False}, ensure_ascii=False)
 def start_mount_diag():       return _ctrl.start_mount_diag() if _ctrl else "no-ctrl"
 def mount_diag_status():      return json.dumps(_ctrl.mount_diag_status() if _ctrl else {"active": False}, ensure_ascii=False)
-def start_gnss(port="/dev/ttyS1", baud=0): return _ctrl.start_gnss(port, baud) if _ctrl else "no-ctrl"
+def start_gnss(port="/dev/ttyHSL0", baud=0): return _ctrl.start_gnss(port, baud) if _ctrl else "no-ctrl"
 def gnss_power_on():    return _ctrl.gnss_power_on() if _ctrl else "no-ctrl"
 def scan_gnss(window=1.5): return json.dumps(_ctrl.scan_gnss(window) if _ctrl else {"best": None, "ports": []}, ensure_ascii=False)
 def scan_gnss_async(window=1.5): return _ctrl.scan_gnss_async(window) if _ctrl else '{"running":false}'
-def configure_moving_base_async(port="/dev/ttyS1", baud=0): return _ctrl.configure_moving_base_async(port, baud) if _ctrl else '{"running":false}'
-def start_gnss_async(port="/dev/ttyS1", baud=0): return _ctrl.start_gnss_async(port, baud) if _ctrl else '{"running":false}'
+def configure_moving_base_async(port="/dev/ttyHSL0", baud=0): return _ctrl.configure_moving_base_async(port, baud) if _ctrl else '{"running":false}'
+def start_gnss_async(port="/dev/ttyHSL0", baud=0): return _ctrl.start_gnss_async(port, baud) if _ctrl else '{"running":false}'
 def gnss_job_status(): return _ctrl.gnss_job_status() if _ctrl else '{"running":false,"result":null}'
-def configure_moving_base(port="/dev/ttyS1", baud=0): return _ctrl.configure_moving_base(port, baud) if _ctrl else "no-ctrl"
+def configure_moving_base(port="/dev/ttyHSL0", baud=0): return _ctrl.configure_moving_base(port, baud) if _ctrl else "no-ctrl"
 def on_rtk(lat, lon, quality, source="pa3"):  _ctrl and _ctrl.on_rtk(lat, lon, quality, source)
 def on_imu(h, av, acc, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_imu(h, av, acc, roll, pitch)
 def on_gyro(av, acc=0.0, roll=0.0, pitch=0.0):  _ctrl and _ctrl.on_gyro(av, acc, roll, pitch)

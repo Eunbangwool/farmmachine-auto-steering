@@ -541,7 +541,7 @@ function openDetail(key){
        <button class="pill" id="gPwr">① 전원 ON (내부 u-blox)</button>
        <button class="pill" id="gScan" style="margin-top:8px">② 포트 자동 탐지 (수 초 소요)</button>
        <div id="gScanR" style="font-size:12px;color:var(--sub);margin:8px 0;white-space:pre-line">—</div>
-       <div class="row"><span class="k">포트</span><input class="nti" id="gPort" value="/dev/ttyS1"
+       <div class="row"><span class="k">포트</span><input class="nti" id="gPort" value="/dev/ttyHSL0"
             autocapitalize="off" autocorrect="off" spellcheck="false"/></div>
        <div class="row"><span class="k">보레이트(0=자동)</span><input class="nti" id="gBaud" value="0"/></div>
        <button class="pill" id="gCfg" style="margin-top:8px">③ 무빙베이스 설정(듀얼헤딩 RELPOSNED)</button>
@@ -633,7 +633,7 @@ function wireDetail(key){
       $$('.modebtn').forEach(x=>x.classList.remove('sel')); b.classList.add('sel');
       toast('주행 모드: '+b.textContent); });
   } else if(key==='gnss'){
-    const port=()=>(($('gPort')&&$('gPort').value)||'/dev/ttyS1').trim();
+    const port=()=>(($('gPort')&&$('gPort').value)||'/dev/ttyHSL0').trim();
     const baud=()=>parseInt(($('gBaud')&&$('gBaud').value)||'0',10)||0;
     // ★ GNSS 작업(포트탐지/설정/시작)은 블로킹(탐지 수십 초)이라 비동기로 돌리고
     //   gnssJobStatus() 를 폴링한다. 동기 호출은 WebView JS 스레드를 막아 화면이 멈춤.
