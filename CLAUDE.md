@@ -18,25 +18,29 @@
 [Apollo 10 Pro 태블릿]  ← 본인 앱 실행 (AgNav 대체)
     ├─ CAN  → 조향 모터  (직접 제어)
     ├─ CAN  ← 앵글센서   (조향각 피드백)
-    ├─ UART(내부) ← AGMO ver1 듀얼안테나 GNSS  ★자율조향 1단계 (u-blox, sysfs GPIO 전원)
+    ├─ UART(내부) ← AGMO ver1 듀얼안테나 GNSS  ★자율조향 1단계 (Unicore UM482, RK3568 sysfs GPIO 전원)
     ├─ CAN/RS232 ← CHCNAV PA-3/NX510          (실험 후 추가)
     └─ USB  ← (레벨러 안테나 전용)            ★자율조향 GNSS 아님
 ```
 
 **배경**: NX510(CHCNAV 자율조향)이 이미 설치되어 있으나, AgNav 앱을 본인 앱으로 교체하는 구조. 모터 회사와 모터 프로그램 보유. CAN 프로토콜은 AGMO 경유 입수 예정.
 
-**★ GNSS 경로(오너 확인, 2026-06)**: 자율조향 GNSS는 **USB 아님**. **1단계 = AGMO ver1 안테나(루프
-듀얼+IMU 돔) → Apollo 내부 UART(tty), sysfs GPIO 로 전원/standby ON**(AGMO 디컴파일: `UBLOX`/
-`gnss_pwren_state`, Allwinner sunxi). 이후 **CHCNAV PA-3/NX510(CAN 500k 또는 RS232)** 도 실험 후 추가.
-**USB 는 레벨러 안테나 추가 시에만** 사용. (과거 "USB→F9P" 표기는 폐기)
+**★ GNSS 경로(디컴파일 기능분석 확정, 2026-06 정정)**: 자율조향 GNSS는 **USB 아님**.
+**1단계 = AGMO ver1 안테나(루프 듀얼+IMU) → Apollo(=Apollo2/RK3568) 내부 UART(tty)**.
+**★ GNSS 수신기 = Unicore UM482**(듀얼안테나 RTK 헤딩 보드) — **u-blox 아님**(과거 "u-blox/
+Allwinner sunxi" 표기 폐기. u-blox 는 구형 대시캠 ApolloPro 변종이었음). 전원=RK3568 표준
+sysfs `/sys/class/gpio/gpioNN/value`: `UM482_PWREN(137)→GNSS_LNA_EN(101)→GNSS_RST_N(136)`.
+UM482 출력 = **NMEA(GGA/RMC/HDT) + Unicore 독자(#HEADINGA/$GxHPR)** — 헤딩을 보드가 직접 계산.
+이후 **CHCNAV PA-3/NX510(CAN 500k 또는 RS232)** 실험 후 추가. **USB 는 레벨러 안테나 전용.**
+> 상세: `apk-analysis/AGMO_VER1_FUNCTIONAL_ANALYSIS.md`(분석 브랜치). AGMO 조향루프·GNSS파서·
+> EKF 는 전부 Qt C++ **native .so** 라 Java 디컴파일에 없음 → 우리는 **자체 구현**(clean-room).
 
-**✅ 현장 1단계 도구(미리 구현)**: `app_main.scan_gnss()`(=`f9p_client.scan_ports`) 내부 `/dev/ttyS*`
-자동 스니핑으로 GNSS 나오는 포트·보레이트 탐지 → `start_gnss(port,baud)`. `gnss_power_on()` 가
-sysfs(`gnss_pwren_state`/`nstandby_state`) best-effort 전원 ON. `configure_moving_base(port)`
-(=`f9p_client.moving_base_heading_cfg`)로 u-blox 에 UBX-NAV-RELPOSNED(듀얼헤딩)+PVT+VELNED+
-NMEA GGA/VTG 출력 활성·저장(레거시 CFG-MSG/RATE/CFG, F9P 수용). ★ RELPOSNED 유효헤딩은
-수신기가 **무빙베이스/로버 모드**여야 함(AGMO 돔=공장설정 추정; 안 나오면 모드 미설정→현장조사).
-검증: `test_closed_loop.py` [12]UBX빌더·[13]포트스캔.
+**✅ 현장 1단계 도구(구현됨)**: `app_main.scan_gnss()`(=`f9p_client.scan_ports`) 내부 `/dev/ttyS*`
+자동 스니핑(비동기 잡, UI 프리즈 방지) → `start_gnss(port,baud)`. `gnss_power_on()` 가 위 GPIO
+시퀀스 best-effort ON(권한 없으면 `no-gpio` — AGMO 는 시스템서비스가 켬). **헤딩=UM482 `#HEADINGA`/
+`$GxHPR` → `f9p_client.parse_unicore_heading` → `on_heading_meas`(`dual_baseline_offset_deg=90`
+차감·적응형R·pitch→roll)**. `configure_moving_base`(UBX)는 **u-blox F9P 폴백 전용**(UM482 엔 불필요).
+검증: `parse_unicore_heading`(#HEADINGA/GPHPR) + `test_closed_loop.py`.
 
 ### Monorepo 구조
 ```
@@ -179,7 +183,9 @@ class CanSpec:
 > 자율조향엔 위치뿐 아니라 **헤딩(차량 방향)+roll/pitch**가 필수(모든 추종 알고리즘이 `state.heading` 사용).
 > 모터 하트비트(조향각)가 없어도 **헤딩만 있으면** GNSS로 폐루프가 닫힌다 → 헤딩 소스가 핵심 피드백.
 
-- **ver1 (듀얼안테나 + IMU)**: heading=두 안테나 baseline, 각속도/자세=IMU. `heading_source="dual"`
+- **ver1 (듀얼안테나 + IMU) = Unicore UM482 보드**: heading=ANT1→ANT2 baseline(보드가 직접 계산,
+  `#HEADINGA`/`$GxHPR`), 각속도/자세=IMU. `heading_source="dual"`. (F9P 무빙베이스면 동등하게
+  UBX-NAV-RELPOSNED — 둘 다 `on_heading_meas` 로 수렴, parse_unicore_heading/parse_relposned)
   - ★ **물리구성 확인(오너 제공 사진, 여러 번 강조됨)**: 트랙터 루프에 얹는 **가로 막대형 케이스**.
     **양쪽 사이드(좌/우)에 안테나 2개** = **가로(횡) 베이스라인**, **케이스 내부 중앙에 IMU**(별도 박스 아님).
   - ★ **base/rover(오너 확인)**: **진행방향 기준 base=좌측, rover=우측**(보낸 사진 기준으로는 우측이 base).
@@ -213,8 +219,9 @@ class CanSpec:
     (보고heading vs GPS 진로각) 원형평균 = 베이스라인 yaw 바이어스 → `set_heading_bias`/on_heading 보정.
     app_main: `start_heading_calib()` 후 직선 주행하면 자동 산출·적용. (테스트: +5° 복원 R=1.0)
   - **PA-3급 헤딩 업그레이드(✅ 방법 1·3·4·5, 자이로바이어스 6상태=방법2는 제외)**: 듀얼안테나 ver1 을
-    단일안테나 INS(PA-3) 수준으로. (1) **무빙베이스 RTK 헤딩**: HDT 스칼라 대신 **UBX-NAV-RELPOSNED**
-    (`f9p_client.parse_relposned`, `_StreamFramer` 바이트경로) — 에폭별 헤딩+`accHeading`+베이스라인+fix플래그.
+    단일안테나 INS(PA-3) 수준으로. (1) **무빙베이스 RTK 헤딩**: HDT 스칼라 대신 **UM482 #HEADINGA**
+    (`f9p_client.parse_unicore_heading`) **또는 F9P UBX-NAV-RELPOSNED**(`parse_relposned`, `_StreamFramer`
+    바이트경로) — 둘 다 에폭별 헤딩+정확도(std/accHeading)+베이스라인+fix플래그를 `on_heading_meas` 로.
     (3) **적응형 R + fix 게이팅**: `StateEstimator.update_heading_adaptive(σ)` + `AutoSteerSystem.on_heading_meas`
     가 `carrSoln==fixed && valid && acc≤max_hdg_acc_deg(0.6°)` 만 수용(아니면 predict coast, `heading_degraded` 플래그).
     (4) **베이스라인 틸트→roll** 경사보정 공급 + `calibration.RollPitchEstimator`(가속도 roll, 원심오염 배제) `on_accel`.
@@ -395,7 +402,11 @@ Apollo 10 Pro는 CAN 내장 (IP65, ADB 환경). SDK 문서 확인 필요.
 
 1. **★ 실측**: wheelbase, antenna_to_axle — 물리 측정 (미완). ✅ 사전준비: `calibration.py`로 저속 주행 자동 추정 + `field_config.py`로 JSON 주입
 2. ✅ **CanSpec 채우기**: Keya KY170 매뉴얼 V2.4 프로토콜 이식 완료(250k, 0x06000001 TX **확장프레임**, cmd_speed/parse_heartbeat). 실차 모터 회전 확인됨(확장ID 자동). ★ 남은 건 (a) autosteer `_send_motor` 를 cmd_speed 속도제어로 배선 + SITL 재검증, (b) 조향각 피드백을 **모터 하트비트 각**으로(AGMO=WAS 미사용). WAS CAN ID 캡처는 **CHCNAV/FJD 가 WAS 장착할 때만** 필요
-3. ✅ **ApolloCanInterface/CAN 배선**: `apollo_can.ApolloCanBus`(bridge…) → Kotlin `ApolloCanBridge` → **`com.van.jni.VanMcu`(libsysmcu.so JNI)** 로 실제 송수신 배선 완료(`CanWrite`/`setCanSpeed`/`setOnCanListener`). VanMcu 는 com.agmo.autokit 디컴파일의 **인터페이스 사실**만 자체 구현(clean-room). **★ device-owner 는 안 씀(오너 확인)**: 실차에서 device-owner 설정은 실패했고, 그럼에도 **모터 CAN 송신(TX)은 권한 없이 동작 확인됨**(조그 회전·방향 디버깅). → device-owner 미추진. (AdminReceiver/device_admin.xml 은 코드에 남아있으나 휴면·선택; 필수 아님.) RX 콜백·GNSS sysfs 전원의 권한 필요 여부는 별개 이슈로 현장 확인. MainActivity 가 mock→**AutoSteerService(bridge)** 기동. ★ 남은 건 실차에서 모터 CAN **채널(0/1) 확정** + 확장프레임 플래그 검증
+3. ✅ **ApolloCanInterface/CAN 배선**: `apollo_can.ApolloCanBus`(bridge…) → Kotlin `ApolloCanBridge` → **`com.van.jni.VanMcu`(libsysmcu.so JNI)** 로 실제 송수신 배선 완료(`CanWrite`/`setCanSpeed`/`setOnCanListener`). VanMcu 는 com.agmo.autokit 디컴파일의 **인터페이스 사실**만 자체 구현(clean-room). **★ device-owner 는 안 씀(오너 확인)**: 실차에서 device-owner 설정은 실패했고, 그럼에도 **모터 CAN 송신(TX)은 권한 없이 동작 확인됨**(조그 회전·방향 디버깅). → device-owner 미추진. (AdminReceiver/device_admin.xml 은 코드에 남아있으나 휴면·선택; 필수 아님.) RX 콜백·GNSS sysfs 전원의 권한 필요 여부는 별개 이슈로 현장 확인. MainActivity 가 mock→**AutoSteerService(bridge)** 기동. ★ 디컴파일 확정: Apollo2(RK3568)는 **CAN0/1/2
+3채널**, CAN 쓰기 전 **`CAN_PWR_EN(gpio61)`+채널 enable(`CAN0=99/CAN1=154/CAN2=128`)** 필요 →
+`app_main.can_power_on(ch)` 가 start 시 0/1/2 모두 best-effort ON. ★ 남은 건 실차에서 모터 CAN
+**채널(0/1/2) 확정**(`setCanParams`/UI 스윕) + 확장프레임(0x80000000) 플래그 검증. heartbeat 와도
+TX 채널 일치 보장 안 됨(RX 는 채널무관 수용).
 4. ✅ **RTK 연결**: `f9p_client.F9pUsbClient`/`ChcnavPa3SerialClient` → `on_rtk()` (GGA 파싱, 품질 4/5, sniff/UBX/보레이트탐색)
 5. ✅ **IMU 캘리브레이션**: `ImuCalibrator` (평지 30초 평균 → ImuOffset)
 6. ✅ **3-모드 프로파일**: `TuningProfile` + `PROFILE_NORMAL/HEAVY/SAND` + `set_profile()`
