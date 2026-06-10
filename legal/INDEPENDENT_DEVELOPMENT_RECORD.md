@@ -162,6 +162,15 @@ Connectix 등에서 호환 목적 인터페이스 분석은 적법으로 인정)
 - 산출물: apk-analysis/AGMO_VER1_FUNCTIONAL_ANALYSIS.md (clean-room 핸드오프 리포트)
 - 기록: AGMO 소스/리소스 표현 복제 없음. 리포트 내 코드 스니펫은 전부 farmmachine 자체 구현 제안.
 
+### 2026-06-10
+- 디컴파일 정밀 재리뷰 (com.cp.cputils.Apollo2/ApolloPro 하드웨어 추상화 클래스)
+- 정정: ver1 자율조향 디바이스 = Apollo2(RK3568), GNSS 수신기 = Unicore UM482 듀얼안테나 헤딩 보드
+  (UM482_PWREN=gpio137 확인). 기존 "u-blox" 표기는 구형 대시캠 ApolloPro 변종이었음 → 리포트 정정
+- 추가 확인(하드웨어 사실, GPIO/sysfs 번호만): CAN0/1/2 3채널 + CAN_PWR_EN, GNSS LNA/RST,
+  RS485, ADC voltage4/5(WAS 후보), 부팅 시 com.van.service GPIO 인에이블 + 키오스크(Device Admin)
+- 경로 데이터모델 확인: RDDF(탭구분 col1/2=TM좌표·col6=속도·col7=작업기) + PathItem JSON(3D boundary_points)
+- 리포트를 "디컴파일 없는 세션도 단독으로 구현 가능"한 자급식 문서로 재작성. 코드 비복제 유지.
+
 ### [다음 작업일]
 - (여기에 계속 기록)
 
