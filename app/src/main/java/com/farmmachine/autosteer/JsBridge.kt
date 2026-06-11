@@ -46,6 +46,8 @@ class JsBridge {
     @JavascriptInterface fun headingCalibStatus(): String = SteerController.headingCalibStatus()
     @JavascriptInterface fun startImuCalib(): String = SteerController.startImuCalib()
     @JavascriptInterface fun imuCalibStatus(): String = SteerController.imuCalibStatus()
+    @JavascriptInterface fun startSteerRatioCalib(): String = SteerController.startSteerRatioCalib()
+    @JavascriptInterface fun steerRatioCalibStatus(): String = SteerController.steerRatioCalibStatus()
     @JavascriptInterface fun startMountDiag(): String = SteerController.startMountDiag()
     @JavascriptInterface fun mountDiagStatus(): String = SteerController.mountDiagStatus()
     @JavascriptInterface fun gnssPowerOn(): String = SteerController.gnssPowerOn()

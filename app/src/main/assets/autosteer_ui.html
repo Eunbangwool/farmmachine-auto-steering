@@ -511,7 +511,8 @@ function openDetail(key){
     h=row('imuzero','IMU 영점 설정','실행')
      +row('gpscenter','GPS 중심 설정','실행')
      +row('turnspeed','배속 선회 설정','설정')
-     +row('hcalib','헤딩 바이어스 캘리브 (ver1 · 직선 20m)','시작');
+     +row('hcalib','헤딩 바이어스 캘리브 (ver1 · 직선 20m)','시작')
+     +row('steercal','조향비 자동측정 (S자/사인 주행)','시작');
   }else if(key==='tuning'){
     h=`<div class="row"><span class="k">제조사</span><span class="val" id="tnVendor">-</span></div>
        <div style="font-size:13px;color:var(--sub);margin:10px 0 6px">작업 모드 (CHCNAV 3-모드 튜닝)</div>
@@ -627,6 +628,8 @@ function wireDetail(key){
         toast('전방 20m 직선 자동생성+헤딩캘리브 — 데드맨 누르고 주행하면 자동 보정'); }
       else if(a==='imuzero'){ if(BR&&BR.startImuCalib){try{BR.startImuCalib();}catch(e){}}
         toast('IMU 영점 시작 — 평지 정차 후 30초 유지 (IMU 데이터 들어와야 진행)'); }
+      else if(a==='steercal'){ if(BR&&BR.startSteerRatioCalib){try{BR.startSteerRatioCalib();}catch(e){}}
+        toast('조향비 측정 시작 — 좌우로 S자/사인 조향하며 저속 주행 (모터 하트비트 필요)'); }
       else toast(({gpscenter:'GPS 중심(안테나↔차축) 설정',
                    turnspeed:'배속 선회(유턴 속도) 설정'})[a]||''); });
   } else if(key==='tuning'){
@@ -910,6 +913,11 @@ function poll(){
   if(ic && BR && BR.imuCalibStatus){ try{ const c=JSON.parse(BR.imuCalibStatus());
     ic.textContent = c.active ? ('수집 '+Math.round((c.progress||0)*100)+'% ('+(c.samples||0)+')')
       : (c.applied ? ('완료 roll '+(c.roll*57.2958).toFixed(1)+'°') : '실행'); }catch(e){} }
+  // 조향비 자동측정 진행/결과
+  const sc=$('oa_steercal');
+  if(sc && BR && BR.steerRatioCalibStatus){ try{ const c=JSON.parse(BR.steerRatioCalibStatus());
+    sc.textContent = c.active ? ('수집 n='+(c.n||0)+' R²='+(c.r2!=null?c.r2:'-'))
+      : (c.applied ? ('완료 비율 '+Number(c.steer_ratio).toFixed(2)) : ('현재 '+Number(c.steer_ratio).toFixed(1))); }catch(e){} }
 }
 
 // ───────── 부팅 시퀀스 ─────────

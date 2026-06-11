@@ -1570,6 +1570,14 @@ class SteeringActuator:
         with self._lock:
             return self._measured_angle
 
+    def get_motor_angle_rad(self):
+        """모터 하트비트 누적각(중앙=0 기준, rad) — steer_ratio 측정용 원시값.
+        하트비트 미수신이면 None(추정각이 아닌 실측만 사용)."""
+        if not self._hb_seen:
+            return None
+        with self._lock:
+            return math.radians(self._motor_cont_deg - self._motor_angle_zero)
+
     # ── 제어 루프 ──────────────────────────────────
     def update(self, target_angle: float,
                measured_ang_vel: float, dt: float) -> float:

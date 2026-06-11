@@ -71,6 +71,8 @@ class Controller:
         self._mdiag = None            # 듀얼 마운트(base/rover·부호) 진단기(진행 중일 때만)
         self._imu_cal = None          # IMU 영점 캘리브레이터(진행 중일 때만)
         self._imu_cal_applied = False
+        self._sr_cal = None           # 조향비(steer_ratio) 추정기(진행 중일 때만)
+        self._sr_applied = False
         self._sections = 4            # 작업 섹션 수(표시)
         self._ab_a = None             # ⑥ 현장에서 찍은 AB 라인 A점(east,north)
         self._ab_b = None             # ⑥ B점
@@ -282,6 +284,9 @@ class Controller:
             io = getattr(p, "imu_offset", None)   # 파라미터5: IMU 영점(roll/pitch/yaw)
             if io is not None:
                 d["imu_offset"] = {"roll": io.roll, "pitch": io.pitch, "yaw": io.yaw}
+            sr = getattr(self.sys.actuator, "steer_ratio", None)  # 측정된 조향비
+            if sr is not None:
+                d["steer_ratio"] = sr
             with open(path, "w") as f:
                 json.dump(d, f)
         except Exception as e:
@@ -304,6 +309,8 @@ class Controller:
                     roll=float(io.get("roll", 0.0)),
                     pitch=float(io.get("pitch", 0.0)),
                     yaw=float(io.get("yaw", 0.0)))
+            if d.get("steer_ratio") and hasattr(self.sys, "actuator"):
+                self.sys.actuator.steer_ratio = float(d["steer_ratio"])
             log.info(f"저장된 차량변수 로드: {d}")
         except Exception as e:
             log.warning(f"차량변수 로드 실패: {e}")
@@ -438,6 +445,41 @@ class Controller:
             self._imu_cal = None
             self._imu_cal_applied = True
             log.info(f"IMU 영점 적용·저장: roll={off.roll:+.4f} pitch={off.pitch:+.4f}")
+
+    # ── 조향비(steer_ratio) 자동측정 — S자/사인 주행으로 17.5 가정 대체 ──
+    #   δ=atan(ω·L/v) 역산 vs 모터 하트비트각 회귀 = steer_ratio. wheelbase(L) 기지 전제.
+    #   ★ 모터 하트비트(RX) + GNSS yaw 필요. 좌우 조향 변화가 있어야 추정됨(직선만은 불가).
+    def start_steer_ratio_calib(self):
+        from calibration import SteerRatioEstimator
+        self._sr_cal = SteerRatioEstimator(wheelbase=self.sys.params.wheelbase)
+        self._sr_applied = False
+        return "ok"
+
+    def _sr_feed(self):
+        c = self._sr_cal
+        if c is None:
+            return
+        ma = self.sys.actuator.get_motor_angle_rad()   # 하트비트 없으면 None
+        if ma is None:
+            return
+        st = self.sys.estimator.get_state()
+        c.add_sample(ma, st.speed, st.angular_vel)
+        est = c.estimate()
+        if est.ok and est.n_samples >= 100:
+            self.sys.actuator.steer_ratio = est.value
+            self._save_params()
+            self._sr_cal = None
+            self._sr_applied = True
+            log.info(f"조향비 측정·적용: steer_ratio={est.value:.2f} (n={est.n_samples}, R²={est.r2:.3f})")
+
+    def steer_ratio_calib_status(self):
+        sr = getattr(self.sys.actuator, "steer_ratio", 17.5)
+        c = self._sr_cal
+        if c is None:
+            return {"active": False, "steer_ratio": sr, "applied": self._sr_applied}
+        est = c.estimate()
+        return {"active": True, "n": est.n_samples, "r2": round(est.r2, 3),
+                "steer_ratio": sr, "applied": False}
 
     def imu_calib_status(self):
         p = getattr(self.sys.params, "imu_offset", None)
@@ -663,6 +705,8 @@ class Controller:
                     st = dict(self.sim.step(self._dt))   # 폐루프 한 틱(rtk/imu 주입+제어)
                 else:
                     st = dict(self.sys.control_step(self._dt))
+                    if self._sr_cal is not None:
+                        self._sr_feed()       # 조향비 추정 샘플 누적(진행 중일 때만)
             except Exception as e:
                 st = {"error": str(e)}
             if self.bus is not None:
@@ -753,6 +797,8 @@ def start_heading_calib_drive(length_m=20.0, width=3.0, speed=1.0): return _ctrl
 def heading_calib_status():   return json.dumps(_ctrl.heading_calib_status() if _ctrl else {"active": False}, ensure_ascii=False)
 def start_imu_calib():        return _ctrl.start_imu_calib() if _ctrl else "no-ctrl"
 def imu_calib_status():       return json.dumps(_ctrl.imu_calib_status() if _ctrl else {"active": False, "progress": 0.0}, ensure_ascii=False)
+def start_steer_ratio_calib(): return _ctrl.start_steer_ratio_calib() if _ctrl else "no-ctrl"
+def steer_ratio_calib_status(): return json.dumps(_ctrl.steer_ratio_calib_status() if _ctrl else {"active": False}, ensure_ascii=False)
 def start_mount_diag():       return _ctrl.start_mount_diag() if _ctrl else "no-ctrl"
 def mount_diag_status():      return json.dumps(_ctrl.mount_diag_status() if _ctrl else {"active": False}, ensure_ascii=False)
 def start_gnss(port="/dev/ttyHSL0", baud=0): return _ctrl.start_gnss(port, baud) if _ctrl else "no-ctrl"

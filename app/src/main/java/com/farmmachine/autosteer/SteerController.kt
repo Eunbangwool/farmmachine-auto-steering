@@ -48,6 +48,10 @@ object SteerController {
         try { api().callAttr("start_imu_calib").toString() } catch (e: Throwable) { "error" }
     fun imuCalibStatus(): String =
         try { api().callAttr("imu_calib_status").toString() } catch (e: Throwable) { "{}" }
+    fun startSteerRatioCalib(): String =
+        try { api().callAttr("start_steer_ratio_calib").toString() } catch (e: Throwable) { "error" }
+    fun steerRatioCalibStatus(): String =
+        try { api().callAttr("steer_ratio_calib_status").toString() } catch (e: Throwable) { "{}" }
 
     /** 듀얼안테나 base/rover·부호 진단(직선 ~15m 주행). */
     fun startMountDiag(): String =

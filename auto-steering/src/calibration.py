@@ -88,6 +88,50 @@ class WheelbaseEstimator:
         return Estimate(L, n, r2, ok, note)
 
 
+class SteerRatioEstimator:
+    """
+    조향비(steer_ratio = 모터각/앞바퀴각) 추정 — 17.5 가정을 측정값으로 대체.
+
+    이론 (자전거 모델, wheelbase L 기지):
+      앞바퀴각:  δ = atan(ω·L / v)            (관측 yaw rate 로 역산)
+      모터각:    θ_motor = steer_ratio · δ
+      → (δ, θ_motor) 원점통과 회귀 기울기 = steer_ratio.
+
+    add_sample(motor_angle_rad, speed, yaw_rate) 를 **조향 변화가 있는 구간**(S자/원/
+    개루프 사인 가진)에서 누적. 직선만 달리면 δ≈0 이라 추정 불가(회전 필요).
+    motor_angle_rad = 모터 하트비트 누적각(중앙=0 기준), 라디안.
+    """
+    def __init__(self, wheelbase: float, min_speed: float = 0.3,
+                 min_yaw_rate: float = 0.03,
+                 min_motor_rad: float = math.radians(2)):
+        self.L = wheelbase
+        self.min_speed = min_speed
+        self.min_yaw_rate = min_yaw_rate
+        self.min_motor = min_motor_rad
+        self._x: List[float] = []   # δ (앞바퀴각, rad)
+        self._y: List[float] = []   # θ_motor (모터각, rad)
+
+    def add_sample(self, motor_angle_rad: float, speed: float, yaw_rate: float):
+        if speed < self.min_speed or abs(yaw_rate) < self.min_yaw_rate:
+            return
+        if abs(motor_angle_rad) < self.min_motor:
+            return
+        delta = math.atan(yaw_rate * self.L / speed)   # 관측 앞바퀴각
+        if abs(delta) < math.radians(0.5):
+            return
+        self._x.append(delta)
+        self._y.append(motor_angle_rad)
+
+    def estimate(self) -> Estimate:
+        n = len(self._x)
+        if n < 20:
+            return Estimate(0.0, n, 0.0, False, "샘플 부족(좌우 조향 더 주행)")
+        sr, r2 = _fit_through_origin(self._x, self._y)
+        ok = (3.0 <= sr <= 40.0) and r2 > 0.9
+        note = "" if ok else "신뢰도 낮음 — S자/사인 조향으로 더 주행 권장"
+        return Estimate(sr, n, r2, ok, note)
+
+
 class LeverArmEstimator:
     """
     안테나 전후 오프셋(antenna_to_axle) 추정.
@@ -373,5 +417,16 @@ if __name__ == "__main__":
 
     assert wb.ok and abs(wb.value - TRUE_L) < 0.1, f"wheelbase 오차 {wb.value}"
     assert la.ok and abs(la.value - TRUE_D) < 0.15, f"lever-arm 오차 {la.value}"
-    print("\n  ✓ 저속 사인/원주행만으로 wheelbase·안테나 오프셋 자동 추정")
+
+    # 조향비 추정 검증 — 모터각 = TRUE_SR·앞바퀴각 (합성)
+    TRUE_SR = 17.5
+    sre = SteerRatioEstimator(wheelbase=TRUE_L)
+    for s in samples:
+        sre.add_sample(TRUE_SR * s["steer_rad"], s["speed"], s["yaw_rate"])
+    sr = sre.estimate()
+    print(f"steer_ratio    : 추정 {sr.value:.3f}   (실제 {TRUE_SR})  "
+          f"n={sr.n_samples} R²={sr.r2:.3f} {'OK' if sr.ok else '✗'} {sr.note}")
+    assert sr.ok and abs(sr.value - TRUE_SR) < 0.5, f"steer_ratio 오차 {sr.value}"
+
+    print("\n  ✓ 저속 사인/원주행만으로 wheelbase·안테나 오프셋·조향비 자동 추정")
     print("  → field_config.save_config 로 JSON 에 기록하면 실측 대체/검산 가능")
