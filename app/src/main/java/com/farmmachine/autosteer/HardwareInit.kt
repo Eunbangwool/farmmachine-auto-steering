@@ -26,7 +26,22 @@ object HardwareInit {
 
     @Volatile var lastResult = "미실행"; private set
 
+    /** ro.build.cp.version — Apollo2 / ApolloPro 변종 판별 (SystemProperties 리플렉션). */
+    private fun cpVersion(): String = try {
+        val sp = Class.forName("android.os.SystemProperties")
+        sp.getMethod("get", String::class.java).invoke(null, "ro.build.cp.version") as? String ?: ""
+    } catch (_: Throwable) { "" }
+
     fun enable(ctx: Context) {
+        // ★ 위 핀 번호는 전부 Apollo2(RK3568) 디컴파일 값. 오너 실기기 = ApolloPro(Qualcomm) —
+        //   같은 번호를 ApolloPro MCU 의 OutputSet 에 넣으면 무슨 라인이 토글되는지 알 수 없다
+        //   (모터 무동작 회귀 구간에 이 부팅 시퀀스가 추가됨 → 용의선상). Apollo2 가 확인될 때만 실행.
+        val cp = cpVersion()
+        if (!cp.contains("APOLLO2", ignoreCase = true)) {
+            lastResult = "skip(비Apollo2: cp.version='$cp' — ApolloPro 는 GPIO 미조작, 모터 회전 우선)"
+            Log.i(TAG, "하드웨어 전원 인에이블 건너뜀: $lastResult")
+            return
+        }
         val log = StringBuilder()
         // 1) AGMO 메커니즘 — com.van.service 로 전원 브로드캐스트
         for (action in arrayOf("CAMERGPIOON", "com.van.service.CAMERGPIOON")) {

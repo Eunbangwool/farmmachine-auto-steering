@@ -99,9 +99,13 @@ class Controller:
     # ── 수명주기 ──────────────────────────────────────────────
     def start(self):
         if self.bus is not None:
-            # CAN 트랜시버 전원 먼저(채널 불확실 → 0/1/2 모두 enable, best-effort) → bus 연결
-            for ch in (0, 1, 2):
-                self.can_power_on(ch)
+            # CAN 트랜시버 전원(Apollo2/RK3568 sysfs 핀) — ★ Apollo2 확인 시에만.
+            # 핀 번호(61/99/154/128)는 Apollo2 디컴파일 값이라 ApolloPro(오너 실기기,
+            # Qualcomm)에선 무슨 라인인지 알 수 없음. 모터 돌던 버전엔 이 호출 자체가
+            # 없었음(무동작 회귀 구간에 추가) → ApolloPro 는 건드리지 않는다.
+            if self._is_apollo2():
+                for ch in (0, 1, 2):
+                    self.can_power_on(ch)
             self.bus.start()
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True,
@@ -535,6 +539,18 @@ class Controller:
     GPIO_CAN_PWR_EN   = 61    # CAN 트랜시버 전원(공통)
     GPIO_CAN_ON       = {0: 99, 1: 154, 2: 128}   # 채널별 CANx_ON enable
     GPIO_RS485_EN     = 134   # RS-485(LoRa NTRIP) 전원
+
+    @staticmethod
+    def _is_apollo2():
+        """기기 변종 판별: ro.build.cp.version 에 APOLLO2 포함 시에만 True.
+        ApolloPro(오너 실기기)는 sysfs GPIO 미사용(/dev/gpio_dev 매직코드 방식)."""
+        try:
+            import subprocess
+            v = subprocess.run(["getprop", "ro.build.cp.version"],
+                               capture_output=True, text=True, timeout=2).stdout
+            return "APOLLO2" in v.upper()
+        except Exception:
+            return False    # 판별 불가 → 안 건드리는 쪽이 안전(모터 회전 우선)
 
     @staticmethod
     def _gpio_set(num, value=1):

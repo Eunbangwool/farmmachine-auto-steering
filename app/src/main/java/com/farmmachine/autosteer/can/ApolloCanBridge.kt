@@ -120,7 +120,10 @@ class ApolloCanBridge(
 
     fun stop() {
         running = false
-        try { if (canReady) { VanMcu.setOnCanListener(null); VanMcu.setCallback(0) } } catch (_: Throwable) {}
+        // ★ setCallback(0) 금지: .so/MCU 데몬이 CAN 처리를 통째로 끌 수 있고(2681563 분석),
+        //   데몬 상태가 앱 재시작 후에도 남으면 다음 실행이 'TX 죽은 채' 시작된다.
+        //   (모터 무동작 회귀의 유력 경로 — 종료 시에도 데몬 상태는 건드리지 않는다.)
+        try { if (canReady) VanMcu.setOnCanListener(null) } catch (_: Throwable) {}
         serverThread = null
     }
 
