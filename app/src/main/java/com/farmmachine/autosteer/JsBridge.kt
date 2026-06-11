@@ -28,6 +28,7 @@ class JsBridge {
     @JavascriptInterface fun disengage() = SteerController.disengage()
     @JavascriptInterface fun estop() = SteerController.estop()
     @JavascriptInterface fun setProfile(name: String) = SteerController.setProfile(name)
+    @JavascriptInterface fun setAlgorithm(name: String): String = SteerController.setAlgorithm(name)
     @JavascriptInterface fun setDeadman(pressed: Boolean) = SteerController.setDeadman(pressed)
     @JavascriptInterface fun listVendors(): String = SteerController.listVendors()
     @JavascriptInterface fun setVendor(key: String): String = SteerController.setVendor(key)

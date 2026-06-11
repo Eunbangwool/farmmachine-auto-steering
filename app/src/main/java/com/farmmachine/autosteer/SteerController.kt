@@ -80,6 +80,8 @@ object SteerController {
         try { api().callAttr("gnss_job_status").toString() } catch (e: Throwable) { "{\"running\":false,\"result\":null}" }
     fun setDeadman(pressed: Boolean) = safe { api().callAttr("set_deadman", pressed) }
     fun setProfile(name: String) = safe { api().callAttr("set_profile", name) }
+    fun setAlgorithm(name: String): String =
+        try { api().callAttr("set_algorithm", name).toString() } catch (e: Throwable) { "error" }
 
     /** 제조사 선택화면용 목록 JSON. */
     fun listVendors(): String =

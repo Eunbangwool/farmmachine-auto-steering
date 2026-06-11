@@ -309,6 +309,43 @@ def test_offset_convergence():
         assert abs(sim.model.x) < 0.2, f"{algo} 라인 복귀 실패(부호 의심): {sim.model.x:+.2f}m"
 
 
+def test_implement_ff_curve():
+    """작업기 곡선 피드포워드 — 곡선서 작업기오차 < pure_pursuit, 직선서 라인복귀 유지."""
+    import sitl_sim, statistics
+    from autosteer_core import Waypoint, KUBOTA_MR1157
+    def arc(R):
+        return [Waypoint(R*math.sin(k*0.008), R*(1-math.cos(k*0.008)), 1.0, True, "w")
+                for k in range(500)]
+    def sx(px, py, path):
+        bi = min(range(len(path)), key=lambda i: math.hypot(path[i].x-px, path[i].y-py))
+        j = min(bi+1, len(path)-1); i0 = max(j-1, 0)
+        ph = math.atan2(path[j].y-path[i0].y, path[j].x-path[i0].x)
+        return math.sin(ph)*(px-path[bi].x) - math.cos(ph)*(py-path[bi].y)
+    def impl_err(algo, R):
+        s = sitl_sim.build_system(algo=algo, profile="normal", realistic=True)
+        s.set_algorithm(algo, s.params.wheelbase); s.path = arc(R)
+        sim = sitl_sim.Simulator(s, KUBOTA_MR1157, target_speed=1.0, yaw_tau=0.2)
+        sim.model.x = sim.model.y = sim.model.heading = 0.0; e = []
+        for _ in range(1500):
+            sim.step(0.02)
+            ip = s.params.implement_position(sim.model.x, sim.model.y, sim.model.heading)
+            e.append(abs(sx(ip[0], ip[1], s.path)))
+        return statistics.mean(e[500:1300])
+    base = impl_err("pure_pursuit", 8.0)
+    ff   = impl_err("implement_ff", 8.0)
+    print(f"  곡선(R8) 작업기오차: pure_pursuit {base:.4f}m → implement_ff {ff:.4f}m ({(1-ff/base)*100:+.0f}%)")
+    assert ff < base * 0.7, f"implement_ff 곡선 개선 실패: {ff:.4f} vs {base:.4f}"
+    # 직선 오프셋 복귀(FF=0 → pure_pursuit 동일)
+    s2 = sitl_sim.build_system(algo="implement_ff", profile="normal", realistic=True)
+    s2.set_algorithm("implement_ff", s2.params.wheelbase)
+    sim2 = sitl_sim.Simulator(s2, sitl_sim.KUBOTA_MR1157, target_speed=1.2, yaw_tau=0.2)
+    sim2.model.x = 0.8
+    for _ in range(700):
+        if not sim2.step(0.02)["engaged"]: break
+    print(f"  직선 0.8m → {sim2.model.x:+.3f}m (라인복귀)")
+    assert abs(sim2.model.x) < 0.2, f"implement_ff 직선 복귀 실패: {sim2.model.x:+.2f}m"
+
+
 def test_ubx_cfg_builder():
     """UBX-CFG 빌더 — 체크섬 정합 + 무빙베이스 시퀀스에 RELPOSNED 활성 포함."""
     import f9p_client as fc
@@ -372,5 +409,7 @@ if __name__ == "__main__":
     test_ubx_cfg_builder()
     print("[14] 내부 UART 포트 스캔(안전성)")
     test_scan_ports_safe()
+    print("[15] 작업기 곡선 피드포워드(implement_ff) — 곡선 작업기오차 감소 + 직선 무영향")
+    test_implement_ff_curve()
     print("\n  ✓ GNSS(NMEA/UBX)→EKF 입력 경로 검증 통과 — 헤딩 변환/위치 추종/무IMU predict "
           "+ 무빙베이스 헤딩(적응형R·게이팅·틸트)·COG보조. (조향 수렴은 sitl_sim 6/6)")

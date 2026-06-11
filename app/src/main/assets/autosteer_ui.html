@@ -229,6 +229,8 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .optrow:active{background:var(--brand-lt);}
 .modebtn{padding:9px 12px;}
 .modebtn.sel{background:var(--brand);color:#fff;border-color:var(--brand);}
+.algobtn{padding:9px 12px;}
+.algobtn.sel{background:var(--brand);color:#fff;border-color:var(--brand);}
 
 /* ───── 모달 (주행 모드/경로 유형/경고) ───── */
 .modal{position:absolute;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,.55);display:none;z-index:40;
@@ -415,7 +417,7 @@ const BR = window.AndroidSteer || null;   // 실기기 Python 브리지 (없으�
 
 // ───────── 상태 ─────────
 const S = { engaged:false, xte:0, speed:0, sensorOk:false, motorVerified:true,
-            vendorName:"", line:4, section:4, nudge_cm:0, profile:"", hb:null, sys:{net:true,gps:false,rtk:false,imu:false,motor:true} };
+            vendorName:"", line:4, section:4, nudge_cm:0, profile:"", algo:"", hb:null, sys:{net:true,gps:false,rtk:false,imu:false,motor:true} };
 
 function closeAllLayers(){ document.querySelectorAll('.overlay,.modal,.detail').forEach(o=>o.classList.remove('on')); }
 function show(id){ try{jogStop();}catch(e){} closeAllLayers(); document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on')); $(id).classList.add('on');
@@ -521,6 +523,12 @@ function openDetail(key){
          <button class="dbtn modebtn" data-mode="heavy">과부하(쟁기/균평)</button>
          <button class="dbtn modebtn" data-mode="sand">사질토</button>
        </div>
+       <div style="font-size:13px;color:var(--sub);margin:14px 0 6px">경로 추종 알고리즘</div>
+       <div style="display:flex;gap:8px;flex-wrap:wrap">
+         <button class="dbtn algobtn" data-algo="pure_pursuit">기본(Pure Pursuit)</button>
+         <button class="dbtn algobtn" data-algo="implement_ff">작업기 곡선보정 (쟁기/균평)</button>
+       </div>
+       <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">곡선 작업 시 작업기가 안쪽으로 밀리는 오차를 곡률 피드포워드로 선보정합니다. 직선에는 영향 없음.</div>
        <div id="tnInfo" style="font-size:12px;color:var(--muted);margin-top:12px;line-height:1.6">현재 튜닝 로딩…</div>`;
   }else if(key==='rtk'){
     const cfg=loadNtrip();
@@ -637,6 +645,10 @@ function wireDetail(key){
       const m=b.dataset.mode; if(BR&&BR.setProfile){try{BR.setProfile(m);}catch(e){}}
       $$('.modebtn').forEach(x=>x.classList.remove('sel')); b.classList.add('sel');
       toast('주행 모드: '+b.textContent); });
+    $$('.algobtn').forEach(b=>b.onclick=()=>{
+      const a=b.dataset.algo; if(BR&&BR.setAlgorithm){try{BR.setAlgorithm(a);}catch(e){}}
+      $$('.algobtn').forEach(x=>x.classList.remove('sel')); b.classList.add('sel');
+      toast('알고리즘: '+b.textContent); });
   } else if(key==='gnss'){
     const port=()=>(($('gPort')&&$('gPort').value)||'/dev/ttyHSL0').trim();
     const baud=()=>parseInt(($('gBaud')&&$('gBaud').value)||'0',10)||0;
@@ -824,6 +836,7 @@ function poll(){
       if(typeof st.motor_verified==='boolean') S.motorVerified=st.motor_verified;
       if(st.vendor_name) S.vendorName=st.vendor_name;
       if(st.profile) S.profile=st.profile;
+      if(st.algo) S.algo=st.algo;
       S.hb = st.heartbeat || null;
       S.sensorOk = !!st.active_gnss;
       S.sys.gps = !!st.active_gnss; S.sys.rtk = (st.safety!=='RTK_LOW'&&st.safety!=='RTK_LOST'&&!!st.active_gnss);
@@ -902,6 +915,9 @@ function poll(){
     // 현재 모드 버튼 하이라이트
     document.querySelectorAll('#detailBody .modebtn').forEach(b=>
       b.classList.toggle('sel', b.dataset.mode===S.profile));
+    // 현재 알고리즘 버튼 하이라이트 (implement_ff = 작업기 곡선보정)
+    document.querySelectorAll('#detailBody .algobtn').forEach(b=>
+      b.classList.toggle('sel', b.dataset.algo===(S.algo||'pure_pursuit')));
   }
   // 헤딩 바이어스 캘리브 진행률
   const hc=$('oa_hcalib');

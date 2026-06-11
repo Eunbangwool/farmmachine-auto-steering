@@ -129,6 +129,11 @@ class Controller:
         self.sys.set_profile(str(name))
         return str(name)
 
+    def set_algorithm(self, name):
+        """추종 알고리즘 전환: pure_pursuit / stanley / implement_ff(작업기 곡선보정) / implement."""
+        self.sys.set_algorithm(str(name), self.sys.params.wheelbase)
+        return str(name)
+
     def set_deadman(self, pressed):
         self.sys.safety.update_deadman(bool(pressed))
 
@@ -719,6 +724,8 @@ class Controller:
                 st.update(can_state="SIM", can_available=True,
                           can_tx=0, can_rx=0, can_reconnects=0)
             st["running"] = self._running
+            try: st["algo"] = getattr(self.sys, "_algo", "pure_pursuit")
+            except Exception: pass
             with self._lock:
                 self._last = st
             rest = self._dt - (time.time() - t0)
@@ -774,6 +781,7 @@ def set_ab_line(ax, ay, bx, by, width=3.0, passes=4, speed=1.2):
 
 
 def set_profile(name):  return _ctrl.set_profile(name) if _ctrl else str(name)
+def set_algorithm(name): return _ctrl.set_algorithm(name) if _ctrl else str(name)
 def set_deadman(p):     _ctrl and _ctrl.set_deadman(p)
 def engage():           return _ctrl.engage() if _ctrl else False
 def disengage():        _ctrl and _ctrl.disengage()
