@@ -1748,7 +1748,7 @@ class SafetyMonitor:
         now = time.time()
         dt = now - self._prev_angle_t
         if dt > 0 and 0 < dt < 0.5:
-            rate = abs(measured_angle - self._prev_angle) / dt
+            rate = abs(_wrap(measured_angle - self._prev_angle)) / dt
             # 120 deg/s 이상 급변 = 운전자 조작 (실제값; Mock에서는 발동 안 됨)
             if rate > math.radians(120):
                 self._override = True
