@@ -194,6 +194,89 @@ class ImuOffset:
         return _wrap(raw_yaw - self.yaw)
 
 
+class ImuCalibrator:
+    """
+    파라미터 5(IMU 오프셋) 캘리브레이션 도우미.
+
+    절차 (CLAUDE.md 우선순위 5 — "평지에서 30초 측정 → ImuOffset 채우기"):
+      1) 트랙터를 수평 평지에 정차
+      2) start() 호출 후, 100Hz IMU 루프에서 raw 값을 add_sample() 로 누적
+      3) ready 가 True 가 되면 finish() 로 평균 오프셋(ImuOffset) 생성
+      4) 결과를 params.imu_offset 에 대입하고 KUBOTA_MR1157 기본값/설정 저장
+
+    roll/pitch: 평지 정차 평균값 = 센서 장착 기울기 오프셋.
+    yaw: 절대 방위(북) 기준이 없으면 보정 불가 → 기본 0.
+         heading_ref_rad(예: RTK 듀얼안테나/이동평균 heading)를 주면
+         원형 평균으로 yaw 오프셋 산출.
+
+    사용 예:
+        cal = ImuCalibrator()          # 기본 30초 / 3000샘플(100Hz)
+        cal.start()
+        while not cal.ready:
+            cal.add_sample(raw_roll, raw_pitch, raw_yaw)   # IMU 루프에서
+        params.imu_offset = cal.finish()
+    """
+    def __init__(self, min_samples: int = 3000, min_duration: float = 30.0):
+        self.min_samples  = min_samples
+        self.min_duration = min_duration
+        self._roll:  List[float] = []
+        self._pitch: List[float] = []
+        self._yaw:   List[float] = []
+        self._t0: Optional[float] = None
+
+    def start(self):
+        """샘플 버퍼 초기화 + 타이머 시작."""
+        self._roll.clear(); self._pitch.clear(); self._yaw.clear()
+        self._t0 = time.time()
+        log.info(f"IMU 캘리브레이션 시작 — 평지 정차 유지 "
+                 f"({self.min_duration:.0f}s / {self.min_samples}샘플)")
+
+    def add_sample(self, raw_roll: float, raw_pitch: float,
+                   raw_yaw: float = 0.0):
+        if self._t0 is None:
+            self.start()
+        self._roll.append(raw_roll)
+        self._pitch.append(raw_pitch)
+        self._yaw.append(raw_yaw)
+
+    @property
+    def elapsed(self) -> float:
+        return 0.0 if self._t0 is None else time.time() - self._t0
+
+    @property
+    def progress(self) -> float:
+        """0.0~1.0 진행률 (샘플/시간 중 느린 쪽)."""
+        if self._t0 is None:
+            return 0.0
+        return min(1.0, min(len(self._roll) / max(1, self.min_samples),
+                            self.elapsed / max(1e-6, self.min_duration)))
+
+    @property
+    def ready(self) -> bool:
+        return (self._t0 is not None
+                and len(self._roll) >= self.min_samples
+                and self.elapsed >= self.min_duration)
+
+    def finish(self, heading_ref_rad: Optional[float] = None) -> 'ImuOffset':
+        """누적 샘플 평균 → ImuOffset 생성. min 미달이어도 강제 계산 가능."""
+        if not self._roll:
+            raise RuntimeError("IMU 캘리브레이션 샘플 없음 — add_sample() 먼저 호출")
+        mean = lambda xs: sum(xs) / len(xs)
+        roll  = mean(self._roll)
+        pitch = mean(self._pitch)
+        if heading_ref_rad is None:
+            yaw = 0.0
+        else:
+            # 원형 평균(circular mean) 후 기준 방위와의 차
+            sy = mean([math.sin(a) for a in self._yaw])
+            cy = mean([math.cos(a) for a in self._yaw])
+            yaw = _wrap(math.atan2(sy, cy) - heading_ref_rad)
+        log.info(f"IMU 캘리브레이션 완료: roll={roll:+.4f} pitch={pitch:+.4f} "
+                 f"yaw={yaw:+.4f} rad (샘플 {len(self._roll)}개, "
+                 f"{self.elapsed:.1f}s)")
+        return ImuOffset(roll=roll, pitch=pitch, yaw=yaw)
+
+
 # 기본 파라미터 인스턴스 (Kubota MR1157 — 사진 기반 + 일부 추정)
 # ★ 파라미터 1(휠베이스), 3(안테나↔차축) 은 반드시 실측 후 교체
 KUBOTA_MR1157 = TractorParams(
@@ -388,7 +471,7 @@ DEFAULT_MOTOR_PROTECTION = MotorProtectionParams()
 
 
 # ═══════════════════════════════════════════════════════════════
-#  KY170C CAN 규격 — Keya KY170DD01005-08G V2.4 매뉴얼 확정
+#  ★ CAN 규격 — 본인 모터 프로그램 문서로 채울 것
 # ═══════════════════════════════════════════════════════════════
 
 class CanSpec:
@@ -431,6 +514,7 @@ class CanSpec:
     MOTOR_ID      = 1               # parameter 0018 기본값
     RATED_RPM     = 80              # parameter 0002 (80 RPM)
     CMD_PERIOD    = 0.020           # 50Hz 명령 주기 (20ms)
+    MOTOR_CMD_PERIOD = CMD_PERIOD     # 하위호환 별칭 (50Hz 명령주기)
     WATCHDOG_MS   = 1000            # 속도 명령 워치독 (매뉴얼 확정)
 
     # ── CAN ID (29-bit Extended) ───────────────────────────
@@ -595,8 +679,54 @@ class CanSpec:
     MOTOR_BYTE_CHECKSUM  = -1
     MOTOR_MODE_DISABLE   = 0x00
     MOTOR_MODE_ANGLE     = 0x01
+    MOTOR_MODE_TORQUE    = 0x02    # 레거시 호환 (현 Keya 속도제어 경로에선 미사용)
     MOTOR_ANGLE_SCALE    = 1.0
     MOTOR_MAX_SPEED      = 400
+
+
+# ═══════════════════════════════════════════════════════════════
+#  GNSS 수신기 스펙 — EKF 튜닝 + 버스/시리얼 설정 참조
+#  (CHCNAV PA-3 데이터시트 / u-blox F9P)
+# ═══════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class GnssReceiverSpec:
+    """
+    GNSS 수신기 하드웨어 스펙. EKF 측정노이즈(R) 튜닝 + CAN/시리얼 설정 참조용.
+    """
+    name:              str
+    can_bitrate:       int      # bps (0 = CAN 미지원)
+    serial_baud:       int      # bps (NMEA-0183 출력)
+    nmea_rate_hz:      float    # 위치 출력 주기
+    imu_rate_hz:       float    # IMU 출력 주기 (0 = 내장 IMU 없음)
+    heading_acc_deg:   float    # heading 정확도 (≈1σ, 0 = heading 소스 없음)
+    rollpitch_acc_deg: float
+    vel_acc_mps:       float
+    rtcm:              str      # 지원 차분 포맷
+    # 헤딩 소스 종류 — 둘 다 동일 on_imu 경로로 EKF 에 융합(아래 참고):
+    #   "ins"  : GNSS+INS 스마트안테나가 heading/자세 융합 출력 (PA-3/NX510/FJD/AGMO ver2)
+    #   "dual" : 듀얼안테나 baseline heading + 별도 IMU 각속도/자세 (AGMO ver1)
+    #   "none" : heading 소스 없음 (F9P 단독 — 별도 IMU/듀얼 필요)
+    heading_source:    str = "none"
+
+
+# ── GNSS+INS 스마트안테나 (단일 안테나, heading/자세 융합 출력) ──
+# CHCNAV PA-3 (NX510 설치 안테나, 데이터시트). FJD AT2 / AGMO ver2 동급.
+#   - CAN 2포트 @500kb/s, RS232 ≤115200bps, NMEA-0183 + 내장 IMU 100Hz
+CHCNAV_PA3 = GnssReceiverSpec(
+    name="CHCNAV PA-3", can_bitrate=500_000, serial_baud=115_200,
+    nmea_rate_hz=10.0, imu_rate_hz=100.0,
+    heading_acc_deg=0.3, rollpitch_acc_deg=0.1, vel_acc_mps=0.03,
+    rtcm="RTCM3.2/3.3", heading_source="ins",
+)
+
+# 본인 u-blox ZED-F9P (RTK 보드, 내장 IMU/INS 없음 → 듀얼안테나 or 별도 IMU 필요)
+UBLOX_F9P = GnssReceiverSpec(
+    name="u-blox ZED-F9P", can_bitrate=0, serial_baud=38_400,
+    nmea_rate_hz=10.0, imu_rate_hz=0.0,
+    heading_acc_deg=0.0, rollpitch_acc_deg=0.0, vel_acc_mps=0.05,
+    rtcm="RTCM3.x", heading_source="none",
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -838,10 +968,82 @@ class StateEstimator:
         self.x[3] = self.x[3] + fwd_accel * dt
         self.x[4] = angular_vel
 
+    def update_heading(self, heading_rad: float):
+        """
+        heading 단독 측정 갱신 — INS/듀얼안테나(HDT) 용.
+        IMU 없이 GNSS 헤딩만 들어오는 구성에서 EKF heading 을 보정.
+        """
+        np = self.np
+        heading = self.params.imu_offset.correct_yaw(heading_rad)
+        H = np.array([[0, 0, 1, 0, 0]])
+        resid = np.array([_wrap(heading - self.x[2])])
+        S = H @ self.P @ H.T + self.R_hdg
+        K = self.P @ H.T @ np.linalg.inv(S)
+        self.x = self.x + (K @ resid.reshape(1, 1)).flatten()
+        self.P = (np.eye(5) - K @ H) @ self.P
+
+    def update_heading_adaptive(self, heading_rad: float, sigma_rad: float):
+        """
+        heading 단독 측정 — **에폭별 측정노이즈 R=σ²**.
+        무빙베이스 RTK(UBX-NAV-RELPOSNED)의 accHeading(에폭별 헤딩 정확도)을 그대로
+        반영해, 고정 R 대신 매 측정의 신뢰도에 맞춰 칼만 이득을 조절한다(방법 1·3).
+        update_heading 과 동일한 식이되 R 만 인자로 구성.
+        """
+        np = self.np
+        heading = self.params.imu_offset.correct_yaw(heading_rad)
+        R = np.array([[sigma_rad * sigma_rad]])
+        H = np.array([[0, 0, 1, 0, 0]])
+        resid = np.array([_wrap(heading - self.x[2])])
+        S = H @ self.P @ H.T + R
+        K = self.P @ H.T @ np.linalg.inv(S)
+        self.x = self.x + (K @ resid.reshape(1, 1)).flatten()
+        self.P = (np.eye(5) - K @ H) @ self.P
+
+    def update_cog(self, course_rad: float, sigma_rad: float,
+                   beta_rad: float = 0.0):
+        """
+        진로각(COG) 보조 측정 — heading KF 갱신(방법 5).
+        측정값 = course - beta(횡슬립). beta=0 이면 COG=heading 가정.
+        저속·정지에서는 호출부(on_velocity)가 게이트한다.
+        """
+        np = self.np
+        meas = _wrap(course_rad - beta_rad)
+        R = np.array([[sigma_rad * sigma_rad]])
+        H = np.array([[0, 0, 1, 0, 0]])
+        resid = np.array([_wrap(meas - self.x[2])])
+        S = H @ self.P @ H.T + R
+        K = self.P @ H.T @ np.linalg.inv(S)
+        self.x = self.x + (K @ resid.reshape(1, 1)).flatten()
+        self.P = (np.eye(5) - K @ H) @ self.P
+
+    def update_rate(self, angular_vel: float, fwd_accel: float, dt: float,
+                    raw_roll: float = 0.0, raw_pitch: float = 0.0):
+        """
+        IMU 각속도/가속도/자세만 반영 — **heading 절대측정 없음**.
+        듀얼안테나(ver1): 절대 heading=update_heading(HDT), 고레이트 평활=이 각속도(자이로).
+        predict 가 x[4](yaw rate)로 heading 을 전파 → 절대 heading 갱신 사이를 매끄럽게(스네이크↓).
+        """
+        offset = self.params.imu_offset
+        self._current_roll  = offset.correct_roll(raw_roll)
+        self._current_pitch = offset.correct_pitch(raw_pitch)
+        self.x[3] = self.x[3] + fwd_accel * dt
+        self.x[4] = angular_vel
+
     def get_state(self) -> VehicleState:
         return VehicleState(x=self.x[0], y=self.x[1],
                             heading=self.x[2], speed=self.x[3],
                             angular_vel=self.x[4])
+
+    def tune_for_receiver(self, spec: 'GnssReceiverSpec'):
+        """
+        INS 수신기(PA-3 등)의 heading 정확도로 EKF heading 측정노이즈 R 설정.
+        PA-3 heading<0.3° → R_hdg=(0.3°)². F9P처럼 INS 없으면(0°) 변경 안 함.
+        """
+        if spec.heading_acc_deg > 0:
+            sigma = math.radians(spec.heading_acc_deg)
+            self.R_hdg = self.np.array([[sigma * sigma]])
+            log.info(f"EKF heading R = ({spec.heading_acc_deg}°)² "
+                     f"[{spec.name} INS 기준]")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -891,6 +1093,55 @@ class PurePursuit(PathFollower):
 
     def reset(self): self._idx = 0
 
+class PurePursuitImplementFF(PurePursuit):
+    """
+    Pure pursuit + 작업기 곡선 피드포워드 (쟁기/균평 곡선 정밀화).
+
+    곡선에서 강체 후방 작업기(축 뒤 d)는 축 원호 바깥으로 ≈d²·κ/2 벗어난다.
+    룩어헤드 목표점을 경로 법선으로 ff = ff_gain·d²·κ/2 만큼 시프트 → 축이 그만큼
+    안쪽을 달려 **작업기가 경로 위**에 온다.
+    ★ 순수 피드포워드라 발산 위험 없음(오차피드백 LQR 과 달리). 직선(κ=0)에선
+      pure_pursuit 과 완전 동일. SITL 검증: 곡선(R6~15) 작업기 오차 65~84% 감소.
+    """
+    def __init__(self, params: TractorParams,
+                 lookahead_base: float = 3.0, speed_gain: float = 0.5,
+                 ff_gain: float = 0.5):
+        super().__init__(params.wheelbase, lookahead_base, speed_gain)
+        self.params  = params
+        self.d       = abs(params.antenna_to_impl)   # 축↔작업기 전후 거리
+        self.ff_gain = ff_gain
+
+    @staticmethod
+    def _path_kappa(path: List[Waypoint], ti: int, win: int = 8) -> float:
+        """룩어헤드 주변 헤딩변화/호장 = 부호있는 경로 곡률(좌회전 +)."""
+        a = max(0, ti - win); b = min(len(path) - 1, ti + win)
+        if b - a < 2:
+            return 0.0
+        h1 = math.atan2(path[ti].y - path[a].y, path[ti].x - path[a].x)
+        h2 = math.atan2(path[b].y - path[ti].y, path[b].x - path[ti].x)
+        s = sum(math.hypot(path[i+1].x - path[i].x, path[i+1].y - path[i].y)
+                for i in range(a, b))
+        return _wrap(h2 - h1) / s if s > 1e-6 else 0.0
+
+    def compute_steering(self, state: VehicleState,
+                         path: List[Waypoint]) -> float:
+        Ld = self.Ld_base + self.kv * max(0, state.speed)
+        tp = path[-1]; ti = len(path) - 1
+        for i in range(self._idx, len(path)):
+            if math.hypot(path[i].x - state.x, path[i].y - state.y) >= Ld:
+                self._idx = max(0, i - 1); tp = path[i]; ti = i; break
+        # 작업기 곡선 피드포워드 — 룩어헤드를 경로 법선으로 ff 시프트
+        kappa = self._path_kappa(path, ti)
+        j = min(ti + 1, len(path) - 1)
+        ph = (math.atan2(path[j].y - tp.y, path[j].x - tp.x)
+              if ti < len(path) - 1 else state.heading)
+        ff = self.ff_gain * self.d * self.d / 2.0 * kappa
+        nx, ny = -math.sin(ph), math.cos(ph)           # 경로 좌측 법선
+        tx, ty = tp.x + ff * nx, tp.y + ff * ny
+        alpha = _wrap(math.atan2(ty - state.y, tx - state.x) - state.heading)
+        delta = math.atan2(2 * self.L * math.sin(alpha), Ld)
+        return max(-MAX_STEER_RAD, min(MAX_STEER_RAD, delta))
+
 class Stanley(PathFollower):
     """
     앞바퀴 기준 횡방향 오차 + heading 오차 동시 보정.
@@ -911,7 +1162,8 @@ class Stanley(PathFollower):
         idx, cross, ph = self._nearest(fx, fy, path)
         h_err = _wrap(ph - state.heading)
         cross_term = math.atan2(self.k * cross, self.ks + state.speed)
-        delta = h_err - cross_term
+        # cross>0 = 경로 우측 → 좌(+δ)로 복귀해야 함. (부호: SITL 오프셋 수렴 검증)
+        delta = h_err + cross_term
         return max(-MAX_STEER_RAD, min(MAX_STEER_RAD, delta))
 
     def _nearest(self, x, y, path):
@@ -995,7 +1247,7 @@ class ImplementReferenced(PathFollower):
         k_h    = self.profile.k_heading_algo
         k_soft = 0.8 + 0.5 * max(0, state.speed)     # 속도 softening
         cross_t = math.atan2(k_eff * impl_xte, k_soft)
-        pred_t  = 0.12 * pred_xte                      # 예측 선제 조향
+        pred_t  = 0.12 * self.tracking.curve_coefficient * pred_xte   # 예측 선제(AgNav 커브계수)
 
         delta = k_h * h_err - cross_t - pred_t
 
@@ -1044,33 +1296,117 @@ class CanInterface(ABC):
 
 class ApolloCanInterface(CanInterface):
     """
-    Apollo 10 Pro 내장 CAN 인터페이스.
-    실제 구현은 Apollo CAN SDK / android-can 라이브러리 활용.
-    ★ 본인 Apollo SDK 문서에 맞게 구현 필요.
+    Apollo 10 Pro 내장 CAN 인터페이스 — Linux SocketCAN 기반 구현.
+
+    Apollo 10 Pro는 Android(리눅스 커널) + 내장 CAN 포트(can0)를 제공한다.
+    SocketCAN이 활성화된 환경에서는 표준 CAN_RAW 소켓으로 송수신 가능.
+
+    ── 사용 전 준비 (Apollo ADB 셸 또는 부팅 스크립트) ──────────────
+        ip link set can0 type can bitrate 500000
+        ip link set up can0
+        (★ bitrate는 CanSpec.CAN_BITRATE 와 일치시킬 것)
+
+    구현 순서:
+      1) python-can 가 설치돼 있으면 우선 사용 (가장 견고)
+      2) 없으면 순수 socket(PF_CAN, CAN_RAW) 폴백
+      3) 둘 다 실패(하드웨어/권한 없음)하면 available=False 로 두고
+         예외를 던지지 않음 → PC 테스트에서는 MockCanInterface 사용 권장
+
+    ★ Apollo 전용 CAN 드라이버가 SocketCAN이 아닌 별도 SDK라면,
+      start/send/recv 내부만 해당 SDK 호출로 교체하면 된다.
     """
+    # SocketCAN 프레임 포맷: <can_id(uint32) dlc(uint8) pad(3) data(8B)> = 16바이트
+    _FRAME_FMT  = "=IB3x8s"
+    _FRAME_SIZE = struct.calcsize(_FRAME_FMT)
+
     def __init__(self, channel: str = "can0",
-                 bitrate: int = CanSpec.CAN_BITRATE):
+                 bitrate: int = CanSpec.CAN_BITRATE,
+                 use_python_can: bool = True):
         self.channel = channel
         self.bitrate = bitrate
-        self._sock = None
-        log.info(f"Apollo CAN: {channel} @ {bitrate} bps (★미구현, 교체 필요)")
+        self.use_python_can = use_python_can
+        self._sock = None          # 순수 socket 폴백
+        self._bus  = None          # python-can Bus
+        self._available = False
+        log.info(f"Apollo CAN: {channel} @ {bitrate} bps (SocketCAN)")
+
+    @property
+    def available(self) -> bool:
+        """CAN 버스가 실제로 열렸는지. False면 송수신 무시."""
+        return self._available
 
     def start(self):
-        # ★ Apollo CAN SDK 초기화
-        # 예: self._sock = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
-        #     self._sock.bind((self.channel,))
-        log.warning("ApolloCanInterface.start(): ★ 실제 SDK로 교체 필요")
+        # 1) python-can 우선
+        if self.use_python_can:
+            try:
+                import can as pycan
+                self._bus = pycan.interface.Bus(
+                    channel=self.channel, bustype="socketcan")
+                self._available = True
+                log.info(f"ApolloCAN: python-can 으로 {self.channel} 열림")
+                return
+            except Exception as e:
+                log.warning(f"ApolloCAN: python-can 사용 불가 ({e}) → socket 폴백")
+
+        # 2) 순수 SocketCAN 폴백
+        try:
+            import socket
+            s = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
+            s.bind((self.channel,))
+            s.setblocking(False)            # recv non-blocking
+            self._sock = s
+            self._available = True
+            log.info(f"ApolloCAN: raw socket 으로 {self.channel} 열림")
+        except Exception as e:
+            self._available = False
+            log.error(f"ApolloCAN.start() 실패: {e} "
+                      f"— 하드웨어/SocketCAN 확인 (PC 테스트는 MockCanInterface 사용)")
 
     def stop(self):
-        if self._sock:
-            self._sock.close()
+        if self._bus is not None:
+            try: self._bus.shutdown()
+            except Exception: pass
+            self._bus = None
+        if self._sock is not None:
+            try: self._sock.close()
+            except Exception: pass
+            self._sock = None
+        self._available = False
 
     def send(self, can_id: int, data: bytes):
-        # ★ 실제 CAN 프레임 전송
+        if not self._available:
+            return
+        data = bytes(data)[:8]
+        if self._bus is not None:
+            import can as pycan
+            self._bus.send(pycan.Message(
+                arbitration_id=can_id, data=data, is_extended_id=False))
+        elif self._sock is not None:
+            frame = struct.pack(self._FRAME_FMT, can_id,
+                                len(data), data.ljust(8, b"\x00"))
+            try:
+                self._sock.send(frame)
+            except OSError as e:
+                log.debug(f"ApolloCAN TX 실패: {e}")
         log.debug(f"CAN TX id=0x{can_id:03X} data={data.hex()}")
 
     def recv(self) -> Optional[tuple]:
-        # ★ 실제 CAN 프레임 수신
+        """non-blocking 수신. (can_id, data) 또는 None."""
+        if not self._available:
+            return None
+        if self._bus is not None:
+            msg = self._bus.recv(timeout=0.0)
+            return (msg.arbitration_id, bytes(msg.data)) if msg else None
+        if self._sock is not None:
+            try:
+                frame = self._sock.recv(self._FRAME_SIZE)
+            except (BlockingIOError, OSError):
+                return None
+            if len(frame) < self._FRAME_SIZE:
+                return None
+            can_id, dlc, payload = struct.unpack(self._FRAME_FMT, frame)
+            can_id &= 0x1FFFFFFF      # EFF/RTR/ERR 플래그 비트 제거
+            return (can_id, payload[:dlc])
         return None
 
 class MockCanInterface(CanInterface):
@@ -1186,6 +1522,24 @@ class SteeringActuator:
         self._measured_angle= 0.0
         self._lock          = threading.Lock()
 
+        # 조향각 피드백 소스:
+        #   use_motor_encoder=False → WAS(SENSOR_ANGLE_ID)  (기본)
+        #   use_motor_encoder=True  → 모터 하트비트 누적각 (AGMO 등 WAS 미사용)
+        # 하트비트가 아직 안 들어오면 자동으로 WAS 로 폴백(시뮬/초기 안전).
+        self.use_motor_encoder = False
+        self.steer_ratio       = 17.5     # 조향비(AgNav 확인값): 모터/컬럼각 → 조향각
+        self._motor_angle_zero = 0.0      # 직진(중앙) 기준 모터 누적각(deg) — 캘리브레이션
+        self._hb               = {}       # 최신 모터 하트비트(angle/rpm/current/faults)
+        self._hb_seen          = False
+        self._last_raw         = None     # 직전 누적각 raw(0~65535) — wrap 언랩용
+        self._motor_cont_deg   = 0.0      # 언랩된 연속 모터각(deg)
+        # 실모터(Keya) 속도제어 모드: True 면 cmd_speed(SDO)로 직접 구동(무WAS).
+        # 부호 규약(현장 확정): +permille=좌회전, -permille=우회전.
+        self.speed_control     = False
+        self._speed_enabled    = False    # Keya 드라이브 Enable 상태(첫 명령 전 CMD_ENABLE 필요)
+        self.steer_permille_max = 400     # 조향 속도 상한(‰) — CanSpec.STEER_SPEED_MAX
+        self._est_angle        = 0.0      # 하트비트 없을 때 명령속도 적분 추정 조향각(rad)
+
         # 모터 보호 (AgNav 과부하 전류/시간/연성)
         mp = motor_params or DEFAULT_MOTOR_PROTECTION
         self._mp         = mp
@@ -1210,26 +1564,68 @@ class SteeringActuator:
         log.info(f"모터 게인: pos_kp={self.pos_kp:.2f} vel_kp={self.vel_kp:.2f} "
                  f"(WAS={profile.was_gain}, U={profile.u_gain})")
 
-    # ── 앵글센서 수신 ──────────────────────────────
+    # ── 조향각 피드백 수신 (WAS 또는 모터 하트비트) ──────────────
     def process_can_recv(self):
         """호출 루프에서 계속 호출: CAN 수신 처리."""
         msg = self.can.recv()
         while msg:
             can_id, data = msg
-            if can_id == CanSpec.SENSOR_ANGLE_ID and len(data) >= 2:
-                raw = int.from_bytes(
-                    data[CanSpec.SENSOR_BYTE_HI:CanSpec.SENSOR_BYTE_LO+1],
-                    'big', signed=CanSpec.SENSOR_SIGNED)
-                angle_rad = math.radians(
-                    raw / CanSpec.SENSOR_ANGLE_SCALE
-                    - CanSpec.SENSOR_ANGLE_OFFSET)
-                with self._lock:
-                    self._measured_angle = angle_rad
+            # 1) 모터 하트비트 (Keya 0x07000001) — WAS 미사용 시 조향각 피드백 + 보호용
+            if can_id == CanSpec.MOTOR_HEARTBEAT_ID and len(data) >= 8:
+                hb = CanSpec.parse_heartbeat(data)
+                if hb:
+                    self._hb = hb
+                    self._hb_seen = True
+                    # 누적각 raw(0~65535) 언랩 → 연속 모터각(deg)
+                    raw = hb.get('angle_raw', 0)
+                    if self._last_raw is not None:
+                        d = raw - self._last_raw
+                        if d > 32768:   d -= 65536
+                        elif d < -32768: d += 65536
+                        self._motor_cont_deg += d
+                    self._last_raw = raw
+                    if self.use_motor_encoder:
+                        # 연속 모터각 → 중앙기준 → 조향비로 나눠 조향각(rad)
+                        motor_deg = self._motor_cont_deg - self._motor_angle_zero
+                        steer_rad = math.radians(motor_deg / max(1e-6, self.steer_ratio))
+                        with self._lock:
+                            self._measured_angle = steer_rad
+            # 2) WAS(SENSOR_ANGLE_ID) — WAS 모드, 또는 하트비트 아직 없을 때 폴백
+            elif can_id == CanSpec.SENSOR_ANGLE_ID and len(data) >= 2:
+                if (not self.use_motor_encoder) or (not self._hb_seen):
+                    raw = int.from_bytes(
+                        data[CanSpec.SENSOR_BYTE_HI:CanSpec.SENSOR_BYTE_LO+1],
+                        'big', signed=CanSpec.SENSOR_SIGNED)
+                    angle_rad = math.radians(
+                        raw / CanSpec.SENSOR_ANGLE_SCALE
+                        - CanSpec.SENSOR_ANGLE_OFFSET)
+                    with self._lock:
+                        self._measured_angle = angle_rad
             msg = self.can.recv()
+
+    def set_motor_center(self):
+        """현재 연속 모터각을 직진(중앙) 기준으로 캘리브레이션 (WAS 미사용 모드)."""
+        self._motor_angle_zero = self._motor_cont_deg
+        self._est_angle = 0.0
+        with self._lock:
+            self._measured_angle = 0.0
+        log.info(f"모터 중앙 캘리브레이션: zero={self._motor_angle_zero:.1f}deg")
+
+    def latest_heartbeat(self) -> dict:
+        """최신 모터 하트비트(angle_deg/speed_rpm/current/faults). 없으면 빈 dict."""
+        return dict(self._hb)
 
     def get_measured_angle(self) -> float:
         with self._lock:
             return self._measured_angle
+
+    def get_motor_angle_rad(self):
+        """모터 하트비트 누적각(중앙=0 기준, rad) — steer_ratio 측정용 원시값.
+        하트비트 미수신이면 None(추정각이 아닌 실측만 사용)."""
+        if not self._hb_seen:
+            return None
+        with self._lock:
+            return math.radians(self._motor_cont_deg - self._motor_angle_zero)
 
     # ── 제어 루프 ──────────────────────────────────
     def update(self, target_angle: float,
@@ -1243,6 +1639,10 @@ class SteeringActuator:
         # 과부하 보호 체크
         if self._protection.is_disabled:
             return 0.0
+
+        # 실모터(Keya) 속도제어 모드 — cmd_speed(SDO)로 직접 구동(무WAS)
+        if self.speed_control:
+            return self._update_speed(target_angle, dt)
 
         measured   = self.get_measured_angle()
         angle_err  = target_angle - measured
@@ -1277,8 +1677,66 @@ class SteeringActuator:
         self._send_motor(cmd)
         return cmd
 
+    def _update_speed(self, target_angle: float, dt: float) -> float:
+        """
+        Keya 속도제어 조향 (무WAS):
+          조향각 오차 → 목표 조향각속도(P) → 모터 RPM(조향비) → permille → cmd_speed.
+        피드백 = 모터 하트비트 누적각(use_motor_encoder). 부호: +permille=좌, -permille=우.
+
+        ★ 안전: 모터 인코더 모드인데 하트비트 미수신이면 명령 금지(폭주 방지).
+        """
+        # 피드백 소스: 하트비트(실측) > 없으면 데드레커닝 추정각
+        #   (Keya 내부 Hall 이 속도명령을 충실히 실행 → 명령 permille 적분으로 조향각 추정.
+        #    실제 경로 오차는 GNSS 헤딩 외부루프가 보정.)
+        if self.use_motor_encoder and not self._hb_seen:
+            measured = self._est_angle
+        else:
+            measured = self.get_measured_angle()
+        angle_err = target_angle - measured
+        if abs(angle_err) < self.deadband:
+            self._send_speed(0)
+            return 0.0
+        # 각도오차 → 목표 조향각속도(rad/s)
+        rate = max(-self.max_ang_vel, min(self.max_ang_vel, self.pos_kp * angle_err))
+        # 조향각속도 → 모터 RPM (조향비) → permille
+        motor_rpm = rate * self.steer_ratio * 60.0 / (2 * math.pi)
+        permille  = CanSpec.rpm_to_permille(motor_rpm, CanSpec.RATED_RPM)
+        permille  = int(max(-self.steer_permille_max, min(self.steer_permille_max, permille)))
+        # 과부하 보호(하트비트 전류 있으면 실값, 없으면 명령크기 추정)
+        cur = abs(self._hb.get('current', 0)) or abs(permille) * (self._mp.max_overload_current / 400.0)
+        if self._protection.check_overload(cur):
+            self.disable()
+            return 0.0
+        # 하트비트 없으면: 실제 송신 permille 로 추정각 적분(포화 반영)
+        if self.use_motor_encoder and not self._hb_seen:
+            actual_rate = (permille / 1000.0 * CanSpec.RATED_RPM) * (2 * math.pi / 60.0) \
+                          / max(1e-6, self.steer_ratio)
+            # ±60° 로 클램프(추정 폭주 방지 — 물리 조향 한계 안)
+            self._est_angle = max(-1.05, min(1.05, self._est_angle + actual_rate * dt))
+            with self._lock:
+                self._measured_angle = self._est_angle
+        # ★ Keya 드라이브는 cmd_speed 전에 CMD_ENABLE 을 받아야 회전한다(안 그러면
+        #   Disabled 상태로 0RPM). 첫 비-0 명령 직전에 한 번 Enable(워치독은 control_step
+        #   의 주기적 cmd_speed 재전송이 유지). disable() 에서 플래그 해제.
+        if not self._speed_enabled:
+            self.can.send(CanSpec.MOTOR_CMD_ID, CanSpec.CMD_ENABLE)
+            self._speed_enabled = True
+        self._send_speed(permille)
+        return float(permille)
+
+    def _send_speed(self, permille: int):
+        """Keya 속도 명령 전송 (워치독 1s 이내 재전송은 제어루프가 보장)."""
+        self.can.send(CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(int(permille)))
+
     def _send_motor(self, cmd_val: float):
-        """★ 명령값을 CAN 바이트로 인코딩. 규격 확인 후 수정 필요."""
+        """
+        ★ 명령값을 CAN 바이트로 인코딩 (제네릭 바이트레이아웃 placeholder).
+
+        실모터(Keya KY170)는 속도제어 SDO 프로토콜이다 — 실차 배선 시
+        `CanSpec.cmd_speed(CanSpec.rpm_to_permille(rpm))` 로 교체할 것.
+        (cmd_val[rad/s 영역] → 조향비(17.5) → 모터 RPM → permille → cmd_speed)
+        SITL 재검증 후 적용. 현재는 Mock/SITL 호환 placeholder 유지.
+        """
         data = bytearray(8)
         data[CanSpec.MOTOR_BYTE_MODE] = CanSpec.MOTOR_MODE_ANGLE
         # cmd_val을 각도 단위로 변환 (현재 목표각으로 변환)
@@ -1287,13 +1745,20 @@ class SteeringActuator:
         raw = int(target_deg * CanSpec.MOTOR_ANGLE_SCALE)
         raw = max(-32768, min(32767, raw))
         struct.pack_into('>h', data, CanSpec.MOTOR_BYTE_CMD_HI, raw)
-        data[CanSpec.MOTOR_BYTE_SPEED_LIM] = CanSpec.MOTOR_MAX_SPEED
+        if CanSpec.MOTOR_BYTE_SPEED_LIM >= 0:
+            data[CanSpec.MOTOR_BYTE_SPEED_LIM] = min(255, max(0, CanSpec.MOTOR_MAX_SPEED))
         if CanSpec.MOTOR_BYTE_CHECKSUM >= 0:
             data[CanSpec.MOTOR_BYTE_CHECKSUM] = sum(data[:CanSpec.MOTOR_BYTE_CHECKSUM]) & 0xFF
         self.can.send(CanSpec.MOTOR_CMD_ID, bytes(data))
 
     def disable(self):
         """모터 비활성화."""
+        if self.speed_control:
+            self.can.send(CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(0))
+            self.can.send(CanSpec.MOTOR_CMD_ID, CanSpec.CMD_DISABLE)
+            self._speed_enabled = False
+            self._vel_integral = 0.0
+            return
         data = bytearray(8)
         data[CanSpec.MOTOR_BYTE_MODE] = CanSpec.MOTOR_MODE_DISABLE
         self.can.send(CanSpec.MOTOR_CMD_ID, bytes(data))
@@ -1340,7 +1805,7 @@ class SafetyMonitor:
         now = time.time()
         dt = now - self._prev_angle_t
         if dt > 0 and 0 < dt < 0.5:
-            rate = abs(measured_angle - self._prev_angle) / dt
+            rate = abs(_wrap(measured_angle - self._prev_angle)) / dt
             # 120 deg/s 이상 급변 = 운전자 조작 (실제값; Mock에서는 발동 안 됨)
             if rate > math.radians(120):
                 self._override = True
@@ -1369,6 +1834,80 @@ class SafetyMonitor:
     @property
     def is_safe(self) -> bool:
         return self.state == SafetyState.SAFE
+
+
+# ═══════════════════════════════════════════════════════════════
+#  GNSS 소스 중재 — PA-3(주) + F9P(백업) 이중화
+# ═══════════════════════════════════════════════════════════════
+
+class GnssArbiter:
+    """
+    다중 GNSS 소스 중재기 (이중화/페일오버).
+
+    정책:
+      1순위) priority 순서대로 "사용 가능"(fresh + 품질 4/5) 한 소스를 active
+      2순위) 모두 사용 불가면, fresh 한 최우선 소스를 active 로
+             (품질은 그대로 전달 → SafetyMonitor 가 RTK_LOW 로 거부)
+      3순위) 둘 다 stale 이면 active=None (SafetyMonitor 가 RTK_LOST 처리)
+
+    submit() 은 들어온 소스가 현재 active 일 때만 fix 를 반환 →
+    EKF 는 active 소스 한 곳에서만 갱신되어 이중 카운팅이 없다.
+    PA-3 가 끊기면 다음 F9P submit 에서 자동 페일오버, 복구되면 다시 PA-3.
+
+    예 (PA-3 주 / F9P 백업):
+        arb = GnssArbiter(priority=("pa3", "f9p"))
+    """
+    def __init__(self, priority=("pa3", "f9p"),
+                 stale_timeout: float = 1.0,
+                 good_quality=(4, 5)):
+        self.priority = list(priority)
+        self.stale_timeout = stale_timeout
+        self.good_quality = set(good_quality)
+        self._last: dict = {}              # source -> (lat, lon, quality, t)
+        self.active: Optional[str] = None
+
+    @property
+    def primary(self) -> str:
+        return self.priority[0]
+
+    def _fresh(self, src: str, now: float) -> bool:
+        d = self._last.get(src)
+        return d is not None and (now - d[3]) <= self.stale_timeout
+
+    def _usable(self, src: str, now: float) -> bool:
+        d = self._last.get(src)
+        return self._fresh(src, now) and d[2] in self.good_quality
+
+    def _select(self, now: float) -> Optional[str]:
+        for s in self.priority:                 # 1순위: fresh + 품질 양호
+            if self._usable(s, now):
+                return s
+        for s in self.priority:                 # 2순위: fresh (품질 무관)
+            if self._fresh(s, now):
+                return s
+        return None                             # 모두 stale
+
+    def submit(self, source: str, lat: float, lon: float,
+               quality: int) -> Optional[tuple]:
+        """소스 갱신. 이 소스가 active 면 (lat,lon,quality,source) 반환, 아니면 None."""
+        now = time.time()
+        if source not in self.priority:         # 미등록 소스 → 최하 우선
+            self.priority.append(source)
+        self._last[source] = (lat, lon, quality, now)
+        new_active = self._select(now)
+        if new_active != self.active:
+            log.info(f"GNSS 소스 전환: {self.active} → {new_active}")
+            self.active = new_active
+        if source == self.active:
+            return (lat, lon, quality, source)
+        return None
+
+    def status(self) -> dict:
+        now = time.time()
+        return {s: {"fresh": self._fresh(s, now),
+                    "quality": self._last.get(s, (0, 0, 0, 0))[2],
+                    "active": s == self.active}
+                for s in self.priority}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1403,21 +1942,100 @@ class AutoSteerSystem:
                  params:       TractorParams        = None,
                  algo:         str                  = "pure_pursuit",
                  motor_params: MotorProtectionParams = None,
-                 max_speed_mps: float               = 2.5):
+                 max_speed_mps: float               = 2.5,
+                 vendor:       str                  = None):
         self.params    = params or KUBOTA_MR1157
         self.estimator = StateEstimator(self.params)
+        # EKF 는 GNSS 콜백 스레드(on_rtk/heading/gyro…)와 50Hz 루프(control_step predict)
+        # 양쪽에서 접근 → 동시 mutate 방지용 재진입 락(짧은 임계영역).
+        self._ekf_lock = threading.RLock()
         self.actuator  = SteeringActuator(can, motor_params=motor_params)
         self.safety    = SafetyMonitor(max_speed_mps)
         self.path: List[Waypoint] = []
         self._profile  = PROFILE_NORMAL
         self.tracking  = TrackingParams()
         self._engaged  = False
+        self._imu_fed  = False        # IMU 입력 여부 — 없으면 control_step 이 predict
+        self.heading_bias_deg = 0.0   # 듀얼안테나 베이스라인 yaw 바이어스(HeadingCalibrator)
+
+        # 무빙베이스 RTK 헤딩(방법 1·3·4) — 에폭별 적응형 R + fix 게이팅
+        # ★ AGMO ver1 안테나 마운트(오너 확인): base=좌측·rover=우측(진행방향 기준).
+        #   base→rover 벡터가 우현(starboard) → relPosHeading = 차체heading + 90° → 90° 차감.
+        #   relPosD>0(우 안테나 하강=우측 하강) → roll +(우측하강), 슬로프보정 규약과 일치.
+        #   부호는 실차 틸트테스트로 최종 확인(아니면 두 상수만 뒤집으면 됨).
+        self.dual_baseline_offset_deg = 90.0   # base=좌/rover=우 → +90°
+        self.dual_roll_sign           = 1.0    # +1: relPosD>0 → roll+(우측하강)
+        self.max_hdg_acc_deg    = 0.6   # 이보다 거친 헤딩은 거부(σ 상한)
+        self.accept_float_heading = False  # carrSoln=float(1) 헤딩 수용 여부
+        self.phase_floor_m      = 0.005  # 베이스라인 위상오차 하한(과신뢰 방지)
+        self.max_hdg_coast_s    = 2.0   # 헤딩 미갱신 허용시간(초) — 초과 시 degraded
+        self._hdg_meas_active   = False  # on_heading_meas 수신 시작 여부
+        self._hdg_last_accept_t = 0.0
+        self.heading_degraded   = False
+        # 진로각(COG) 보조(방법 5)
+        self.cog_min_speed = 1.0    # m/s 미만은 진로각 신뢰불가 → 무시
+        self.cog_sigma_deg = 3.0    # COG 측정 표준편차(도)
+        self.k_slip        = 0.0    # 횡슬립 모델 계수(heavy/sand 에서 상향)
+        # 가속도 기반 roll 보완(옵션, IMU 가속도 있을 때만)
+        self._rp = None
         self._target_idx = 0
         self._prev_angle   = 0.0
         self._prev_angle_t = time.time()
         self.on_disengage: Optional[Callable[[str], None]] = None
 
+        # GNSS 이중화: PA-3(주) + F9P(백업)
+        self.gnss = GnssArbiter(priority=("pa3", "f9p"))
+        self._active_gnss: Optional[str] = None
+
+        # 벤더(제조사) 프로파일 — 미선택 시 기존 동작(검증된 것으로 간주)
+        self.vendor = None
+        self.motor_verified = True
+
         self.set_algorithm(algo, self.params.wheelbase)
+
+        if vendor:
+            self.select_vendor(vendor)
+
+    def select_vendor(self, key: str):
+        """
+        제조사 프로파일 활성화 (앱 시작 시 선택).
+        해당 벤더의 모터 CAN(CanSpec) + GNSS 우선순위 + EKF 튜닝 + 기본 알고리즘을 적용.
+
+        can_verified=False 인 벤더(모터 프로토콜 미확정)는 안전을 위해
+        조향 출력을 비활성한다(engage 거부). GNSS/상태표시는 계속 동작.
+        """
+        import vendor_profiles as vp
+        p = vp.apply_vendor(key)
+        self.vendor = p
+        self.motor_verified = p.can_verified
+        # WAS 미사용 벤더(AGMO 등)는 모터 하트비트 누적각으로 조향각 피드백
+        self.actuator.use_motor_encoder = not getattr(p, "uses_was", False)
+
+        # GNSS 소스 우선순위 재구성 + 수신기 기반 EKF 튜닝
+        self.gnss = GnssArbiter(priority=p.gnss_priority)
+        self._active_gnss = None
+        self.estimator.tune_for_receiver(p.gnss_primary)
+
+        # 벤더 추종 튜닝 오버라이드(CHCNAV 문서값 등) 적용
+        tr = getattr(p, "tracking", None)
+        if tr:
+            for k, v in tr.items():
+                if hasattr(self.tracking, k):
+                    setattr(self.tracking, k, v)
+            log.info(f"추종 튜닝 적용({p.display_name}): {tr}")
+
+        # 기본 알고리즘 적용 (self.tracking 이 follower 로 전달됨)
+        self.set_algorithm(p.default_algo, self.params.wheelbase)
+
+        if not p.can_verified:
+            self._engaged = False
+            log.warning(f"[{p.display_name}] 모터 CAN 프로토콜 ★미확정 — "
+                        f"조향 출력 비활성(engage 거부). 문서 입수 후 "
+                        f"vendor_profiles 의 canspec/can_verified 갱신 필요.")
+        log.info(f"벤더 선택: {p.display_name} "
+                 f"(모터확정={p.can_verified}, GNSS={p.gnss_primary.name}, "
+                 f"우선순위={p.gnss_priority})")
+        return p
 
     def set_algorithm(self, algo: str, wheelbase: float):
         """
@@ -1426,8 +2044,12 @@ class AutoSteerSystem:
           "stanley"      — 직선 정밀 중요
           "implement"    — 쟁기/균평: 작업기 기준 제어 + 3모드 프로파일 적용
         """
+        self._algo = algo            # 현재 알고리즘명(set_wheelbase 등이 보존용으로 사용)
         if algo == "stanley":
             self.follower = Stanley(wheelbase)
+        elif algo == "implement_ff":
+            # 작업기 곡선 피드포워드 = pure_pursuit + 곡선 작업기 보정(안정). 쟁기/균평 곡선용.
+            self.follower = PurePursuitImplementFF(self.params)
         elif algo == "implement":
             self.follower = ImplementReferenced(
                 self.params,
@@ -1474,11 +2096,45 @@ class AutoSteerSystem:
         self._target_idx = 0
         log.info(f"경로 설정: {len(self.path)} 웨이포인트")
 
+    def nudge_path(self, dx_m: float):
+        """경로를 좌측 법선 방향으로 dx_m 만큼 횡이동(넛지). +=좌, -=우."""
+        if not self.path or len(self.path) < 2:
+            return
+        dx0 = self.path[1].x - self.path[0].x
+        dy0 = self.path[1].y - self.path[0].y
+        L = math.hypot(dx0, dy0) or 1.0
+        nx, ny = -dy0 / L, dx0 / L          # 진행방향 좌측 법선
+        for w in self.path:
+            w.x += nx * dx_m; w.y += ny * dx_m
+
     # ── 센서 입력 콜백 ──────────────────────────────
-    def on_rtk(self, lat: float, lon: float, quality: int):
-        """파라미터 2, 3 보정은 StateEstimator 내부에서 자동 적용."""
-        self.estimator.update_rtk(lat, lon, quality)
-        self.safety.update_rtk(quality)
+    def on_rtk(self, lat: float, lon: float, quality: int,
+               source: Optional[str] = None):
+        """
+        GNSS fix 수신 + 다중 소스(PA-3/F9P) 이중화 중재.
+          - source=None → 기본(주) 소스로 간주
+          - GnssArbiter 가 active 소스 한 곳만 EKF/안전에 반영 (페일오버 자동)
+        파라미터 2, 3 보정은 StateEstimator 내부에서 자동 적용.
+        """
+        src = source or self.gnss.primary
+        sel = self.gnss.submit(src, lat, lon, quality)
+        if sel is None:                       # active 소스가 아니면 무시
+            return
+        s_lat, s_lon, s_quality, s_src = sel
+        self._active_gnss = s_src
+        with self._ekf_lock:
+            self.estimator.update_rtk(s_lat, s_lon, s_quality)
+        self.safety.update_rtk(s_quality)
+
+    def rtk_callback(self, source: str):
+        """
+        외부 GNSS 클라이언트(F9pUsbClient / ChcnavPa3SerialClient)를
+        특정 source 라벨로 on_rtk 에 연결하는 3-인자 콜백 생성.
+            pa3 = ChcnavPa3SerialClient(on_rtk=sys.rtk_callback("pa3"))
+            f9p = F9pUsbClient(on_rtk=sys.rtk_callback("f9p"))
+        """
+        return lambda lat, lon, quality: self.on_rtk(lat, lon, quality,
+                                                     source=source)
 
     def on_imu(self, raw_heading: float, ang_vel: float,
                fwd_accel: float, dt: float,
@@ -1487,9 +2143,110 @@ class AutoSteerSystem:
         파라미터 5(IMU 오프셋) 보정은 StateEstimator 내부에서 자동 적용.
         raw_roll, raw_pitch를 전달하면 경사 보정(파라미터 2)도 연동됨.
         """
-        self.estimator.predict(dt)
-        self.estimator.update_imu(raw_heading, ang_vel, fwd_accel, dt,
-                                   raw_roll, raw_pitch)
+        with self._ekf_lock:
+            self.estimator.predict(dt)
+            self.estimator.update_imu(raw_heading, ang_vel, fwd_accel, dt,
+                                       raw_roll, raw_pitch)
+        self._imu_fed = True            # IMU 가 predict 담당(control_step 중복 방지)
+
+    def on_gyro(self, ang_vel: float, fwd_accel: float = 0.0, dt: float = 0.02,
+                raw_roll: float = 0.0, raw_pitch: float = 0.0):
+        """
+        IMU 각속도(yaw rate)/가속도/자세 입력 — **절대 heading 없는 IMU**용.
+        듀얼안테나 ver1 구성: on_heading(듀얼 절대 heading) + on_gyro(IMU 레이트) 동시 공급
+        → EKF 가 절대 heading + 고레이트 평활을 융합(스네이크/지연 억제, INS급 헤딩).
+        """
+        with self._ekf_lock:
+            self.estimator.predict(dt)
+            self.estimator.update_rate(ang_vel, fwd_accel, dt, raw_roll, raw_pitch)
+        self._imu_fed = True
+
+    def on_heading(self, heading_deg: float):
+        """
+        INS/듀얼안테나 **진북기준 진헤딩(나침반: 북=0°, 시계방향)** → EKF heading 갱신.
+        EKF 는 수학각(동=0, 반시계)을 쓰므로 변환: math = 90° - compass.
+        predict 는 control_step 이 담당. NMEA HDT → f9p_client.on_heading 경로.
+        """
+        # 듀얼안테나 베이스라인 바이어스 보정(ver1, HeadingCalibrator) → 수학각 변환
+        corrected = float(heading_deg) - self.heading_bias_deg
+        with self._ekf_lock:
+            self.estimator.update_heading(math.radians(90.0 - corrected))
+
+    def set_heading_bias(self, bias_deg: float):
+        """듀얼안테나 헤딩 바이어스(나침반°) 설정 — HeadingCalibrator.finish().value."""
+        self.heading_bias_deg = float(bias_deg)
+        log.info(f"헤딩 바이어스 적용: {self.heading_bias_deg:+.2f}°")
+
+    def on_heading_meas(self, meas: dict):
+        """
+        무빙베이스 RTK 헤딩 측정(UBX-NAV-RELPOSNED, f9p_client.parse_relposned)을
+        fix 게이팅 + 에폭별 적응형 R 로 EKF 에 반영(방법 1·3). 베이스라인 down 성분으로
+        차체 틸트(횡baseline=roll)를 유도해 경사 보정에 공급(방법 4).
+
+        meas dict 키: heading_deg, acc_deg, baseline_m, rel_d_m,
+                      fix_ok, valid, heading_valid, carr_soln(0/1/2)
+        """
+        self._hdg_meas_active = True
+        carr = int(meas.get("carr_soln", 0))
+        fixed = (carr == 2)
+        floaty = (carr == 1)
+        acc = float(meas.get("acc_deg", 99.0))
+
+        # 게이팅: fix·valid·heading_valid + 정확도 상한. float 은 옵션.
+        ok = (meas.get("fix_ok") and meas.get("valid") and meas.get("heading_valid")
+              and acc <= self.max_hdg_acc_deg
+              and (fixed or (floaty and self.accept_float_heading)))
+        if not ok:
+            return   # 헤딩 미갱신 → EKF 는 predict 로 coast
+
+        # 베이스라인 벡터(base=좌→rover=우)는 우현 → +90° 마운트 오프셋 차감,
+        # 잔여 미세 바이어스는 HeadingCalibrator(heading_bias_deg). → 수학각 변환
+        corrected = (float(meas["heading_deg"])
+                     - self.dual_baseline_offset_deg - self.heading_bias_deg)
+        baseline = float(meas.get("baseline_m", 0.0)) or 1.0
+        # σ 하한: 베이스라인 길이에 따른 위상오차 하한(과신뢰 방지)
+        floor_deg = math.degrees(math.atan2(self.phase_floor_m, baseline))
+        sigma = math.radians(max(acc, floor_deg))
+        rel_d = meas.get("rel_d_m")
+        with self._ekf_lock:
+            self.estimator.update_heading_adaptive(
+                math.radians(90.0 - corrected), sigma)
+            # 방법 4: 가로 베이스라인 down성분 → roll(우측하강=+). 경사 보정에 공급.
+            # base=좌/rover=우 이므로 relPosD>0 = 우 안테나 하강 = 우측 하강(roll+).
+            if rel_d is not None and baseline > 0.1 and self._rp is None:
+                ratio = max(-1.0, min(1.0, float(rel_d) / baseline))
+                self.estimator._current_roll = self.dual_roll_sign * math.asin(ratio)
+        self._hdg_last_accept_t = time.time()
+
+    def on_velocity(self, course_deg: float, speed_mps: float):
+        """
+        GNSS 속도벡터(NMEA VTG/RMC) 진로각 보조(방법 5).
+        저속에서는 진로각이 신뢰불가 → 무시. 횡슬립(beta)은 lateral_accel≈v·yawrate
+        모델로 보정(k_slip). 직진/일반에선 k_slip=0(=순수 COG).
+        """
+        if speed_mps < self.cog_min_speed:
+            return
+        with self._ekf_lock:
+            st = self.estimator.get_state()
+            lat_acc = speed_mps * st.angular_vel
+            beta = self.k_slip * lat_acc / max(speed_mps, self.cog_min_speed)
+            course_math = math.radians(90.0 - float(course_deg))
+            self.estimator.update_cog(course_math, math.radians(self.cog_sigma_deg),
+                                      beta_rad=beta)
+
+    def on_accel(self, ay: float, az: float, roll_rate: float = 0.0,
+                 dt: float = 0.02, lin_acc: float = 0.0, yaw_rate: float = 0.0):
+        """
+        (옵션) IMU 가속도가 있을 때 가속도 기반 roll 보완필터로 경사 보정 정밀화(방법 4).
+        원심가속 오염 배제: 직진·저가속 구간에서만 가속도 보정 반영.
+        호출되면 베이스라인 틸트보다 우선(_rp 활성).
+        """
+        if self._rp is None:
+            from calibration import RollPitchEstimator
+            self._rp = RollPitchEstimator()
+        roll = self._rp.update(ay, az, roll_rate, dt, lin_acc, yaw_rate)
+        with self._ekf_lock:
+            self.estimator._current_roll = roll
 
     def get_implement_position(self) -> tuple:
         """
@@ -1512,8 +2269,15 @@ class AutoSteerSystem:
           engaged, safety_state, target_angle, measured_angle,
           motor_cmd, xte_m, progress, waypoint_section
         """
+        # IMU 가 없으면(GNSS-only) EKF 전파를 제어주기로 수행. IMU 있으면 on_imu 가 담당.
+        # 콜백 스레드(on_rtk/heading/gyro)와의 동시 mutate 방지 위해 락 안에서 predict+read.
+        with self._ekf_lock:
+            if not self._imu_fed:
+                self.estimator.predict(dt)
+            state = self.estimator.get_state()
+        self._imu_fed = False
+
         self.actuator.process_can_recv()
-        state = self.estimator.get_state()
 
         # 앵글센서 각속도 계산 (미분)
         measured = self.actuator.get_measured_angle()
@@ -1582,6 +2346,10 @@ class AutoSteerSystem:
             "engaged": self._engaged,
             "safety": safety.name,
             "profile": self._profile.name,
+            "vendor": self.vendor.key if self.vendor else None,
+            "vendor_name": self.vendor.display_name if self.vendor else None,
+            "motor_verified": self.motor_verified,
+            "active_gnss": self._active_gnss,
             "slope_correction": self.params.slope_correction,
             "target_angle_deg": math.degrees(target),
             "measured_angle_deg": math.degrees(measured),
@@ -1593,10 +2361,31 @@ class AutoSteerSystem:
             "speed_mps": state.speed,
             "pos": (state.x, state.y),
             "heading_deg": math.degrees(state.heading),
+            "heading_degraded": self._heading_degraded(),
         }
+
+    def _heading_degraded(self) -> bool:
+        """무빙베이스 헤딩이 max_hdg_coast_s 이상 미수용 → degraded(자이로-only 경고)."""
+        if not self._hdg_meas_active:
+            return False
+        deg = (time.time() - self._hdg_last_accept_t) > self.max_hdg_coast_s
+        if deg and not self.heading_degraded:
+            log.warning("헤딩 측정 미수용 지속 → degraded(자이로/예측 의존). "
+                        "RTK fix/스카이뷰 확인.")
+        self.heading_degraded = deg
+        return deg
 
     # ── 모드 전환 ───────────────────────────────────
     def engage(self) -> bool:
+        if not self.motor_verified:
+            vn = self.vendor.display_name if self.vendor else "?"
+            log.warning(f"engage 거부: [{vn}] 모터 CAN 프로토콜 미확정")
+            return False
+        # ★ 신선한 안전검사: 50Hz 루프의 캐시 상태에 의존하면 setDeadman(true) 직후
+        #   engage 가 직전 DEADMAN 상태로 잘못 거부될 수 있음(홀드투런 경쟁). 즉시 재평가.
+        with self._ekf_lock:
+            spd = self.estimator.get_state().speed
+        self.safety.check(spd)
         if not self.safety.is_safe:
             log.warning(f"engage 거부: {self.safety.state.name}")
             return False

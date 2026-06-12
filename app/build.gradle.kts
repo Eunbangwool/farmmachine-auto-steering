@@ -1,0 +1,82 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+    id("com.chaquo.python")
+}
+
+android {
+    namespace = "com.farmmachine.autosteer"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.farmmachine.autosteer"
+        minSdk = 24                 // Apollo 10 Pro = Android 9 (API 28)
+        targetSdk = 35
+        versionCode = (project.findProperty("versionCodeOverride") as? String)?.toIntOrNull() ?: 1
+        versionName = "0.1"
+
+        // Apollo 10 Pro ABI. Chaquopy 가 이 ABI 용 Python + numpy 를 번들.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+    }
+
+    // 고정 debug 키스토어로 서명 → CI 빌드마다 서명이 동일 → 덮어쓰기 설치 가능.
+    // (기본값은 러너마다 새로 생성되는 ~/.android/debug.keystore 라 서명 충돌 발생)
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = "17" }
+    buildFeatures { compose = true }
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+        // EKF(numpy) 필요. pyserial = GNSS 시리얼(내부 UART/USB) 수신 필수
+        //   — 빠지면 scan/configure/start 가 전부 "no-pyserial" 로 실패해 GNSS 불능.
+        pip {
+            install("numpy")
+            install("pyserial")
+        }
+        // Chaquopy 진입점은 앱에서 Python.getModule("app_main") 으로 직접 호출.
+    }
+    // 자율조향 Python 소스 = 상위 auto-steering/src (복사 없이 직접 참조).
+    // Kotlin DSL 에선 android.sourceSets 가 아니라 chaquopy.sourceSets 로 지정.
+    sourceSets {
+        getByName("main") {
+            srcDir("../auto-steering/src")
+        }
+    }
+}
+
+dependencies {
+    val composeBom = platform("androidx.compose:compose-bom:2024.09.03")
+    implementation(composeBom)
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
+    implementation("androidx.activity:activity-compose:1.9.2")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+}
