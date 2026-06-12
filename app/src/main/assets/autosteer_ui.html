@@ -412,584 +412,1067 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 
 <script>
 "use strict";
-const $ = id => document.getElementById(id);
-const BR = window.AndroidSteer || null;   // 실기기 Python 브리지 (없으면 브라우저 시뮬)
+
+var $ = function $(id) {
+  return document.getElementById(id);
+};
+var BR = window.AndroidSteer || null; // 실기기 Python 브리지 (없으면 브라우저 시뮬)
 
 // ───────── 상태 ─────────
-const S = { engaged:false, xte:0, speed:0, sensorOk:false, motorVerified:true,
-            vendorName:"", line:4, section:4, nudge_cm:0, profile:"", algo:"", hb:null, sys:{net:true,gps:false,rtk:false,imu:false,motor:true} };
-
-function closeAllLayers(){ document.querySelectorAll('.overlay,.modal,.detail').forEach(o=>o.classList.remove('on')); }
-function show(id){ try{jogStop();}catch(e){} closeAllLayers(); document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on')); $(id).classList.add('on');
-  const es=$('estop'); if(es) es.classList.toggle('on', id==='main'||id==='work'); }
-function setOverlay(id,on){ $(id).classList.toggle('on',on); }
-function setModal(id,on){ $(id).classList.toggle('on',on); }
+var S = {
+  engaged: false,
+  xte: 0,
+  speed: 0,
+  sensorOk: false,
+  motorVerified: true,
+  vendorName: "",
+  line: 4,
+  section: 4,
+  nudge_cm: 0,
+  profile: "",
+  algo: "",
+  hb: null,
+  sys: {
+    net: true,
+    gps: false,
+    rtk: false,
+    imu: false,
+    motor: true
+  }
+};
+function closeAllLayers() {
+  document.querySelectorAll('.overlay,.modal,.detail').forEach(function (o) {
+    return o.classList.remove('on');
+  });
+}
+function show(id) {
+  try {
+    jogStop();
+  } catch (e) {}
+  closeAllLayers();
+  document.querySelectorAll('.screen').forEach(function (s) {
+    return s.classList.remove('on');
+  });
+  $(id).classList.add('on');
+  var es = $('estop');
+  if (es) es.classList.toggle('on', id === 'main' || id === 'work');
+}
+function setOverlay(id, on) {
+  $(id).classList.toggle('on', on);
+}
+function setModal(id, on) {
+  $(id).classList.toggle('on', on);
+}
 
 // ───────── 원근 필드 그리기 ─────────
-function drawField(svg){
-  const VX=500, VY=20, W=1000, H=560;       // 소실점
-  let s='';
-  for(let i=-6;i<=6;i++){                    // 세로 수렴선
-    const bx=500+i*150;
-    s+=`<line x1="${bx}" y1="${H}" x2="${VX+i*14}" y2="${VY}" stroke="var(--field-line)" stroke-width="1.2"/>`;
+function drawField(svg) {
+  var VX = 500,
+    VY = 20,
+    W = 1000,
+    H = 560; // 소실점
+  var s = '';
+  for (var i = -6; i <= 6; i++) {
+    // 세로 수렴선
+    var bx = 500 + i * 150;
+    s += "<line x1=\"" + bx + "\" y1=\"" + H + "\" x2=\"" + (VX + i * 14) + "\" y2=\"" + VY + "\" stroke=\"var(--field-line)\" stroke-width=\"1.2\"/>";
   }
-  for(let j=1;j<=7;j++){                      // 가로선 (원근 간격)
-    const t=j/8, y=VY+(H-VY)*t*t;
-    s+=`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="var(--field-line)" stroke-width="0.8" opacity="${0.3+t*0.5}"/>`;
+  for (var j = 1; j <= 7; j++) {
+    // 가로선 (원근 간격)
+    var t = j / 8,
+      y = VY + (H - VY) * t * t;
+    s += "<line x1=\"0\" y1=\"" + y + "\" x2=\"" + W + "\" y2=\"" + y + "\" stroke=\"var(--field-line)\" stroke-width=\"0.8\" opacity=\"" + (0.3 + t * 0.5) + "\"/>";
   }
-  svg.innerHTML=s;
+  svg.innerHTML = s;
 }
-const TRACTOR_SVG = `<svg width="48" height="54" viewBox="0 0 48 54">
-  <rect x="14" y="16" width="20" height="20" rx="3" fill="#3a7d32"/>
-  <rect x="17" y="6" width="14" height="12" rx="2" fill="#2f6b29"/>
-  <circle cx="14" cy="40" r="9" fill="#1f1f1f"/><circle cx="14" cy="40" r="4" fill="#6cc04a"/>
-  <circle cx="34" cy="40" r="9" fill="#1f1f1f"/><circle cx="34" cy="40" r="4" fill="#6cc04a"/>
-  <rect x="20" y="2" width="8" height="6" rx="1" fill="#f3c43f"/></svg>`;
+var TRACTOR_SVG = "<svg width=\"48\" height=\"54\" viewBox=\"0 0 48 54\">\n  <rect x=\"14\" y=\"16\" width=\"20\" height=\"20\" rx=\"3\" fill=\"#3a7d32\"/>\n  <rect x=\"17\" y=\"6\" width=\"14\" height=\"12\" rx=\"2\" fill=\"#2f6b29\"/>\n  <circle cx=\"14\" cy=\"40\" r=\"9\" fill=\"#1f1f1f\"/><circle cx=\"14\" cy=\"40\" r=\"4\" fill=\"#6cc04a\"/>\n  <circle cx=\"34\" cy=\"40\" r=\"9\" fill=\"#1f1f1f\"/><circle cx=\"34\" cy=\"40\" r=\"4\" fill=\"#6cc04a\"/>\n  <rect x=\"20\" y=\"2\" width=\"8\" height=\"6\" rx=\"1\" fill=\"#f3c43f\"/></svg>";
 
 // ───────── 상단 상태바 렌더 ─────────
-function statusbarHTML(){
-  const act = S.engaged;
-  const ex = Math.abs(S.xte).toFixed(0);
-  const hot = Math.abs(S.xte) > 20;
-  const arrL = S.xte < -1 ? 'hot' : '', arrR = S.xte > 1 ? 'hot' : '';
-  const sens = S.sensorOk ? 'good' : '';
-  const sensTxt = S.sensorOk ? '수신 양호' : '수신 대기';
-  return `
-    <div class="cell mode">
-      <div class="k">⦿ 자율주행 모드</div>
-      <div class="st ${act?'act':''}">${act?'활성화':'비활성화'}</div>
-    </div>
-    <div class="cell"><div class="k">예상 종료 시간</div><div class="v num">00:00</div></div>
-    <div class="cell"><div class="k">오차</div>
-      <div class="err"><span class="arr ${arrL}">◀◀◀</span><span class="e num">${ex}</span><span class="u">cm</span><span class="arr ${arrR}">▶▶▶</span></div>
-    </div>
-    <div class="cell"><div class="k">현재 속도</div><div class="v num">${(S.speed*3.6).toFixed(1)}<span class="u" style="font-size:12px"> km/h</span></div></div>
-    <div class="cell"><div class="k">센서 상태</div><div class="sensor ${sens}"><span class="ic">🛰</span>${sensTxt}</div></div>`;
+function statusbarHTML() {
+  var act = S.engaged;
+  var ex = Math.abs(S.xte).toFixed(0);
+  var hot = Math.abs(S.xte) > 20;
+  var arrL = S.xte < -1 ? 'hot' : '',
+    arrR = S.xte > 1 ? 'hot' : '';
+  var sens = S.sensorOk ? 'good' : '';
+  var sensTxt = S.sensorOk ? '수신 양호' : '수신 대기';
+  return "\n    <div class=\"cell mode\">\n      <div class=\"k\">\u29BF \uC790\uC728\uC8FC\uD589 \uBAA8\uB4DC</div>\n      <div class=\"st " + (act ? 'act' : '') + "\">" + (act ? '활성화' : '비활성화') + "</div>\n    </div>\n    <div class=\"cell\"><div class=\"k\">\uC608\uC0C1 \uC885\uB8CC \uC2DC\uAC04</div><div class=\"v num\">00:00</div></div>\n    <div class=\"cell\"><div class=\"k\">\uC624\uCC28</div>\n      <div class=\"err\"><span class=\"arr " + arrL + "\">\u25C0\u25C0\u25C0</span><span class=\"e num\">" + ex + "</span><span class=\"u\">cm</span><span class=\"arr " + arrR + "\">\u25B6\u25B6\u25B6</span></div>\n    </div>\n    <div class=\"cell\"><div class=\"k\">\uD604\uC7AC \uC18D\uB3C4</div><div class=\"v num\">" + (S.speed * 3.6).toFixed(1) + "<span class=\"u\" style=\"font-size:12px\"> km/h</span></div></div>\n    <div class=\"cell\"><div class=\"k\">\uC13C\uC11C \uC0C1\uD0DC</div><div class=\"sensor " + sens + "\"><span class=\"ic\">\uD83D\uDEF0</span>" + sensTxt + "</div></div>";
 }
-function renderStatusbars(){ $('sbMain').innerHTML=statusbarHTML(); $('sbWork').innerHTML=statusbarHTML(); }
+function renderStatusbars() {
+  $('sbMain').innerHTML = statusbarHTML();
+  $('sbWork').innerHTML = statusbarHTML();
+}
 
 // ───────── 설정 메뉴 ─────────
-const MENU = [
-  {key:'user', label:'사용자 정보', ic:'M12 12a4 4 0 100-8 4 4 0 000 8zM4 20c0-4 4-6 8-6s8 2 8 6'},
-  {key:'vehicle', label:'차량 정보', ic:'M3 13h18v5H3zM6 13V8h7l4 5'},
-  {key:'optim', label:'최적화', ic:'M4 6l6 6-6 6M14 6l6 6-6 6'},
-  {key:'rtk', label:'RTK 보정 신호', ic:'M5 19a9 9 0 019-9M5 19a5 5 0 015-5M5 19h.01'},
-  {key:'gnss', label:'GNSS(안테나)', ic:'M12 2v4M12 18v4M2 12h4M18 12h4M12 8a4 4 0 100 8 4 4 0 000-8z'},
-  {key:'tuning', label:'주행 튜닝', ic:'M6 4v16M6 8h6M18 4v16M12 16h6'},
-  {key:'system', label:'시스템 상태', ic:'M12 3v9M7 6a8 8 0 1010 0'},
-  {key:'motortest', label:'모터 점검', ic:'M12 3v6M12 3a9 9 0 109 9'},
-];
-function renderSetList(sel){
-  $('setList').innerHTML = MENU.map(m=>`
-    <div class="mitem ${m.key===sel?'sel':''}" data-k="${m.key}">
-      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${m.ic}"/></svg>
-      <span class="lbl">${m.label}</span><span class="ch">›</span></div>`).join('');
-  $('setList').querySelectorAll('.mitem').forEach(el=>el.onclick=()=>openDetail(el.dataset.k));
+var MENU = [{
+  key: 'user',
+  label: '사용자 정보',
+  ic: 'M12 12a4 4 0 100-8 4 4 0 000 8zM4 20c0-4 4-6 8-6s8 2 8 6'
+}, {
+  key: 'vehicle',
+  label: '차량 정보',
+  ic: 'M3 13h18v5H3zM6 13V8h7l4 5'
+}, {
+  key: 'optim',
+  label: '최적화',
+  ic: 'M4 6l6 6-6 6M14 6l6 6-6 6'
+}, {
+  key: 'rtk',
+  label: 'RTK 보정 신호',
+  ic: 'M5 19a9 9 0 019-9M5 19a5 5 0 015-5M5 19h.01'
+}, {
+  key: 'gnss',
+  label: 'GNSS(안테나)',
+  ic: 'M12 2v4M12 18v4M2 12h4M18 12h4M12 8a4 4 0 100 8 4 4 0 000-8z'
+}, {
+  key: 'tuning',
+  label: '주행 튜닝',
+  ic: 'M6 4v16M6 8h6M18 4v16M12 16h6'
+}, {
+  key: 'system',
+  label: '시스템 상태',
+  ic: 'M12 3v9M7 6a8 8 0 1010 0'
+}, {
+  key: 'motortest',
+  label: '모터 점검',
+  ic: 'M12 3v6M12 3a9 9 0 109 9'
+}];
+function renderSetList(sel) {
+  $('setList').innerHTML = MENU.map(function (m) {
+    return "\n    <div class=\"mitem " + (m.key === sel ? 'sel' : '') + "\" data-k=\"" + m.key + "\">\n      <svg class=\"ic\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"" + m.ic + "\"/></svg>\n      <span class=\"lbl\">" + m.label + "</span><span class=\"ch\">\u203A</span></div>";
+  }).join('');
+  $('setList').querySelectorAll('.mitem').forEach(function (el) {
+    return el.onclick = function () {
+      return openDetail(el.dataset.k);
+    };
+  });
 }
-function toggleRow(k,on,ro){ return `<div class="row"><span class="k">${k}</span><div class="tg ${on?'on':''} ${ro?'ro':''}"></div></div>`; }
-function openDetail(key){
+function toggleRow(k, on, ro) {
+  return "<div class=\"row\"><span class=\"k\">" + k + "</span><div class=\"tg " + (on ? 'on' : '') + " " + (ro ? 'ro' : '') + "\"></div></div>";
+}
+function openDetail(key) {
   renderSetList(key);
-  const T={user:'사용자 정보',vehicle:'차량 정보',optim:'최적화',rtk:'RTK 보정 신호',gnss:'GNSS(안테나)',system:'시스템 상태',motortest:'모터 점검',tuning:'주행 튜닝'};
-  $('detailTitle').textContent=T[key];
-  let h='';
-  if(key==='user'){
-    h=`<div class="row"><span class="k">사용자 ID</span><span class="val">Kf53QrH8wAWm0NUNSL</span></div>
-       <div class="row"><span class="k">언어</span><span class="val">한국어 ▾</span></div>
-       ${toggleRow('과속 경고 알림',true)}${toggleRow('주행 오차 경고 알림',true)}
-       <div class="row"><span class="k">AB 근접 알림</span><span class="val">OFF ▾</span></div>
-       ${toggleRow('경로 이탈 자동 중지',false)}
-       <div class="ver"><span class="mk">◭</span><div>자율주행<br><span style="font-size:11px">v0.1</span></div></div>`;
-  }else if(key==='vehicle'){
-    h=`<div style="text-align:center;padding:8px 0">${TRACTOR_SVG.replace('width="48" height="54"','width="130" height="104"')}</div>
-       <div class="row"><span class="k">휠베이스 (앞↔뒤차축, m)</span><input class="nti" id="vpWB" value="2.47" inputmode="decimal"></div>
-       <div class="row"><span class="k">안테나 높이 (지면, m)</span><input class="nti" id="vpAH" value="2.73" inputmode="decimal"></div>
-       <div class="row"><span class="k">안테나↔뒤차축 (전방 +, m)</span><input class="nti" id="vpAA" value="-0.50" inputmode="decimal"></div>
-       <div class="row"><span class="k">안테나↔작업기 (후방 +, m)</span><input class="nti" id="vpAI" value="1.20" inputmode="decimal"></div>
-       <button class="pill" id="vpSave" style="background:var(--brand);color:#fff;margin-top:12px">차량 변수 저장 · 적용</button>
-       <div id="vpHint" style="font-size:12px;color:var(--sub);margin-top:10px;line-height:1.6">
-         ★ <b>휠베이스</b>와 <b>안테나↔뒤차축</b>은 줄자 실측 권장. 저장 시 즉시 조향 기하에 반영되고 다음 부팅에도 유지됩니다.</div>`;
-  }else if(key==='optim'){
-    const row=(act,l,r)=>`<div class="optrow" data-act="${act}"><span>${l}</span><span class="oa" id="oa_${act}">${r}</span></div>`;
-    h=row('imuzero','IMU 영점 설정','실행')
-     +row('gpscenter','GPS 중심 설정','실행')
-     +row('turnspeed','배속 선회 설정','설정')
-     +row('hcalib','헤딩 바이어스 캘리브 (ver1 · 직선 20m)','시작')
-     +row('steercal','조향비 자동측정 (S자/사인 주행)','시작');
-  }else if(key==='tuning'){
-    h=`<div class="row"><span class="k">제조사</span><span class="val" id="tnVendor">-</span></div>
-       <div style="font-size:13px;color:var(--sub);margin:10px 0 6px">작업 모드 (CHCNAV 3-모드 튜닝)</div>
-       <div style="display:flex;gap:8px;flex-wrap:wrap">
-         <button class="dbtn modebtn" data-mode="normal">일반(로터리/방제)</button>
-         <button class="dbtn modebtn" data-mode="heavy">과부하(쟁기/균평)</button>
-         <button class="dbtn modebtn" data-mode="sand">사질토</button>
-       </div>
-       <div style="font-size:13px;color:var(--sub);margin:14px 0 6px">경로 추종 알고리즘</div>
-       <div style="display:flex;gap:8px;flex-wrap:wrap">
-         <button class="dbtn algobtn" data-algo="pure_pursuit">기본(Pure Pursuit)</button>
-         <button class="dbtn algobtn" data-algo="implement_ff">작업기 곡선보정 (쟁기/균평)</button>
-       </div>
-       <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">곡선 작업 시 작업기가 안쪽으로 밀리는 오차를 곡률 피드포워드로 선보정합니다. 직선에는 영향 없음.</div>
-       <div id="tnInfo" style="font-size:12px;color:var(--muted);margin-top:12px;line-height:1.6">현재 튜닝 로딩…</div>`;
-  }else if(key==='rtk'){
-    const cfg=loadNtrip();
-    const inp=(k,label,val,type)=>`<div class="row"><span class="k">${label}</span>`
-      +`<input class="nti" data-k="${k}" type="${type||'text'}" value="${val||''}" `
-      +`autocapitalize="off" autocorrect="off" spellcheck="false"/></div>`;
-    h=inp('host','서버 IP',cfg.host)
-      +inp('port','서버 포트',cfg.port)
-      +inp('mount','마운트 포인트',cfg.mount)
-      +inp('user','계정 ID',cfg.user)
-      +inp('pw','계정 비밀번호',cfg.pw,'password')
-      +`<button class="pill" id="ntConnect">연결</button>`
-      +`<button class="pill" id="ntDisc" style="background:var(--off);margin-top:8px">해제</button>`
-      +`<div id="ntStat" style="text-align:center;font-size:12px;color:var(--sub);margin-top:12px">상태 확인 중…</div>`;
-  }else if(key==='gnss'){
-    h=`<div style="font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:10px">
-         자율조향 1단계 = <b>AGMO ver1 안테나(내부 UART)</b>. 순서대로 진행하세요.<br>
-         (USB는 레벨러 전용 — 여기 아님)</div>
-       <button class="pill" id="gPwr">① 전원 ON (내부 u-blox)</button>
-       <button class="pill" id="gScan" style="margin-top:8px">② 포트 자동 탐지 (수 초 소요)</button>
-       <div id="gScanR" style="font-size:12px;color:var(--sub);margin:8px 0;white-space:pre-line">—</div>
-       <div class="row"><span class="k">포트</span><input class="nti" id="gPort" value="/dev/ttyHSL0"
-            autocapitalize="off" autocorrect="off" spellcheck="false"/></div>
-       <div class="row"><span class="k">보레이트(0=자동)</span><input class="nti" id="gBaud" value="0"/></div>
-       <button class="pill" id="gCfg" style="margin-top:8px">③ 무빙베이스 설정(듀얼헤딩 RELPOSNED)</button>
-       <button class="pill" id="gStart" style="margin-top:8px">④ GNSS 시작</button>
-       <div id="gStat" style="text-align:center;font-size:12px;color:var(--sub);margin-top:12px">상태 확인 중…</div>
-       <div style="border-top:1px solid var(--line,#ddd);margin:14px 0 8px"></div>
-       <div style="font-size:13px;color:var(--sub)">듀얼안테나 base/rover·부호 진단 (직선 ~15m 주행, 끝에 우측으로 살짝 기울임)</div>
-       <button class="pill" id="gDiag" style="background:var(--off);margin-top:8px">마운트 진단 시작</button>
-       <div id="gDiagR" style="font-size:12px;color:var(--sub);margin-top:8px">미실행</div>`;
-  }else if(key==='system'){
-    const s=S.sys;
-    const sr=(k,on)=>`<div class="row"><span class="k">${k}</span><div style="display:flex;align-items:center"><span class="statlabel ${on?'on':''}">${on?'ON':'OFF'}</span><div class="tg ${on?'on':''} ro"></div></div></div>`;
-    h=sr('네트워크',s.net)+sr('GPS',s.gps)+sr('RTK',s.rtk)+sr('IMU',s.imu)+sr('조향 모터',s.motor);
-  }else if(key==='motortest'){
-    h=`<div id="canStat" style="text-align:center;font-weight:700;font-size:14px;padding:8px;
-         border-radius:8px;background:#f1f3f5;margin-bottom:12px">CAN 상태 확인 중…</div>
-       <div style="font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:14px">
-         안테나 없이 <b>모터 회전</b>을 점검합니다. 버튼을 <b>누르고 있는 동안</b>만
-         저속(±12RPM)으로 돌고, 떼면 즉시 정지합니다.<br>
-         ⚠ 바퀴·조향 주변에 사람/장애물이 없는지 확인 후 시험하세요.</div>
-       <div style="display:flex;gap:14px;justify-content:center;margin:10px 0">
-         <button class="jogbtn" data-dir="1" data-name="좌회전">◀ 좌회전<br><span>누르는 동안</span></button>
-         <button class="jogbtn" data-dir="-1" data-name="우회전">우회전 ▶<br><span>누르는 동안</span></button>
-       </div>
-       <button class="pill jogstop" id="jogStop">■ 정지</button>
-       <div id="jogState" style="text-align:center;color:var(--sub);font-size:12px;margin-top:12px">대기</div>
-       <div class="diag">
-         <div class="drow">
-           <span>채널</span>
-           <button class="dbtn" data-k="ch" data-v="0">0</button>
-           <button class="dbtn" data-k="ch" data-v="1">1</button>
-           <button class="dbtn" data-k="ch" data-v="2">2</button>
-           <span>속도</span>
-           <button class="dbtn" data-k="br" data-v="250000">250k</button>
-           <button class="dbtn" data-k="br" data-v="500000">500k</button>
-           <span>확장ID</span>
-           <button class="dbtn" data-k="eff" data-v="0">자동</button>
-           <button class="dbtn" data-k="eff" data-v="1">강제</button>
-         </div>
-         <div class="drow">
-           <span>수신(RX)</span>
-           <button class="dbtn" data-k="rx" data-v="0">끔(모터우선)</button>
-           <button class="dbtn" data-k="rx" data-v="1">켬(피드백)</button>
-           <span style="font-size:10px;color:var(--sub)">모터 안 돌면 '끔'</span>
-         </div>
-         <div id="txInfo">송신: -</div>
-       </div>
-       <button class="pill" id="btnCenter" style="background:var(--off);margin-top:10px">⊙ 중앙(직진) 설정</button>
-       <div id="hbInfo" style="text-align:center;font-size:11px;color:var(--muted);margin-top:8px">하트비트(모터 피드백): 수신 없음</div>`;
+  var T = {
+    user: '사용자 정보',
+    vehicle: '차량 정보',
+    optim: '최적화',
+    rtk: 'RTK 보정 신호',
+    gnss: 'GNSS(안테나)',
+    system: '시스템 상태',
+    motortest: '모터 점검',
+    tuning: '주행 튜닝'
+  };
+  $('detailTitle').textContent = T[key];
+  var h = '';
+  if (key === 'user') {
+    h = "<div class=\"row\"><span class=\"k\">\uC0AC\uC6A9\uC790 ID</span><span class=\"val\">Kf53QrH8wAWm0NUNSL</span></div>\n       <div class=\"row\"><span class=\"k\">\uC5B8\uC5B4</span><span class=\"val\">\uD55C\uAD6D\uC5B4 \u25BE</span></div>\n       " + toggleRow('과속 경고 알림', true) + toggleRow('주행 오차 경고 알림', true) + "\n       <div class=\"row\"><span class=\"k\">AB \uADFC\uC811 \uC54C\uB9BC</span><span class=\"val\">OFF \u25BE</span></div>\n       " + toggleRow('경로 이탈 자동 중지', false) + "\n       <div class=\"ver\"><span class=\"mk\">\u25ED</span><div>\uC790\uC728\uC8FC\uD589<br><span style=\"font-size:11px\">v0.1</span></div></div>";
+  } else if (key === 'vehicle') {
+    h = "<div style=\"text-align:center;padding:8px 0\">" + TRACTOR_SVG.replace('width="48" height="54"', 'width="130" height="104"') + "</div>\n       <div class=\"row\"><span class=\"k\">\uD720\uBCA0\uC774\uC2A4 (\uC55E\u2194\uB4A4\uCC28\uCD95, m)</span><input class=\"nti\" id=\"vpWB\" value=\"2.47\" inputmode=\"decimal\"></div>\n       <div class=\"row\"><span class=\"k\">\uC548\uD14C\uB098 \uB192\uC774 (\uC9C0\uBA74, m)</span><input class=\"nti\" id=\"vpAH\" value=\"2.73\" inputmode=\"decimal\"></div>\n       <div class=\"row\"><span class=\"k\">\uC548\uD14C\uB098\u2194\uB4A4\uCC28\uCD95 (\uC804\uBC29 +, m)</span><input class=\"nti\" id=\"vpAA\" value=\"-0.50\" inputmode=\"decimal\"></div>\n       <div class=\"row\"><span class=\"k\">\uC548\uD14C\uB098\u2194\uC791\uC5C5\uAE30 (\uD6C4\uBC29 +, m)</span><input class=\"nti\" id=\"vpAI\" value=\"1.20\" inputmode=\"decimal\"></div>\n       <button class=\"pill\" id=\"vpSave\" style=\"background:var(--brand);color:#fff;margin-top:12px\">\uCC28\uB7C9 \uBCC0\uC218 \uC800\uC7A5 \xB7 \uC801\uC6A9</button>\n       <div id=\"vpHint\" style=\"font-size:12px;color:var(--sub);margin-top:10px;line-height:1.6\">\n         \u2605 <b>\uD720\uBCA0\uC774\uC2A4</b>\uC640 <b>\uC548\uD14C\uB098\u2194\uB4A4\uCC28\uCD95</b>\uC740 \uC904\uC790 \uC2E4\uCE21 \uAD8C\uC7A5. \uC800\uC7A5 \uC2DC \uC989\uC2DC \uC870\uD5A5 \uAE30\uD558\uC5D0 \uBC18\uC601\uB418\uACE0 \uB2E4\uC74C \uBD80\uD305\uC5D0\uB3C4 \uC720\uC9C0\uB429\uB2C8\uB2E4.</div>";
+  } else if (key === 'optim') {
+    var row = function row(act, l, r) {
+      return "<div class=\"optrow\" data-act=\"" + act + "\"><span>" + l + "</span><span class=\"oa\" id=\"oa_" + act + "\">" + r + "</span></div>";
+    };
+    h = row('imuzero', 'IMU 영점 설정', '실행') + row('gpscenter', 'GPS 중심 설정', '실행') + row('turnspeed', '배속 선회 설정', '설정') + row('hcalib', '헤딩 바이어스 캘리브 (ver1 · 직선 20m)', '시작') + row('steercal', '조향비 자동측정 (S자/사인 주행)', '시작');
+  } else if (key === 'tuning') {
+    h = "<div class=\"row\"><span class=\"k\">\uC81C\uC870\uC0AC</span><span class=\"val\" id=\"tnVendor\">-</span></div>\n       <div style=\"font-size:13px;color:var(--sub);margin:10px 0 6px\">\uC791\uC5C5 \uBAA8\uB4DC (CHCNAV 3-\uBAA8\uB4DC \uD29C\uB2DD)</div>\n       <div style=\"display:flex;gap:8px;flex-wrap:wrap\">\n         <button class=\"dbtn modebtn\" data-mode=\"normal\">\uC77C\uBC18(\uB85C\uD130\uB9AC/\uBC29\uC81C)</button>\n         <button class=\"dbtn modebtn\" data-mode=\"heavy\">\uACFC\uBD80\uD558(\uC7C1\uAE30/\uADE0\uD3C9)</button>\n         <button class=\"dbtn modebtn\" data-mode=\"sand\">\uC0AC\uC9C8\uD1A0</button>\n       </div>\n       <div style=\"font-size:13px;color:var(--sub);margin:14px 0 6px\">\uACBD\uB85C \uCD94\uC885 \uC54C\uACE0\uB9AC\uC998</div>\n       <div style=\"display:flex;gap:8px;flex-wrap:wrap\">\n         <button class=\"dbtn algobtn\" data-algo=\"pure_pursuit\">\uAE30\uBCF8(Pure Pursuit)</button>\n         <button class=\"dbtn algobtn\" data-algo=\"implement_ff\">\uC791\uC5C5\uAE30 \uACE1\uC120\uBCF4\uC815 (\uC7C1\uAE30/\uADE0\uD3C9)</button>\n       </div>\n       <div style=\"font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5\">\uACE1\uC120 \uC791\uC5C5 \uC2DC \uC791\uC5C5\uAE30\uAC00 \uC548\uCABD\uC73C\uB85C \uBC00\uB9AC\uB294 \uC624\uCC28\uB97C \uACE1\uB960 \uD53C\uB4DC\uD3EC\uC6CC\uB4DC\uB85C \uC120\uBCF4\uC815\uD569\uB2C8\uB2E4. \uC9C1\uC120\uC5D0\uB294 \uC601\uD5A5 \uC5C6\uC74C.</div>\n       <div id=\"tnInfo\" style=\"font-size:12px;color:var(--muted);margin-top:12px;line-height:1.6\">\uD604\uC7AC \uD29C\uB2DD \uB85C\uB529\u2026</div>";
+  } else if (key === 'rtk') {
+    var cfg = loadNtrip();
+    var inp = function inp(k, label, val, type) {
+      return "<div class=\"row\"><span class=\"k\">" + label + "</span>" + ("<input class=\"nti\" data-k=\"" + k + "\" type=\"" + (type || 'text') + "\" value=\"" + (val || '') + "\" ") + "autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"/></div>";
+    };
+    h = inp('host', '서버 IP', cfg.host) + inp('port', '서버 포트', cfg.port) + inp('mount', '마운트 포인트', cfg.mount) + inp('user', '계정 ID', cfg.user) + inp('pw', '계정 비밀번호', cfg.pw, 'password') + "<button class=\"pill\" id=\"ntConnect\">\uC5F0\uACB0</button>" + "<button class=\"pill\" id=\"ntDisc\" style=\"background:var(--off);margin-top:8px\">\uD574\uC81C</button>" + "<div id=\"ntStat\" style=\"text-align:center;font-size:12px;color:var(--sub);margin-top:12px\">\uC0C1\uD0DC \uD655\uC778 \uC911\u2026</div>";
+  } else if (key === 'gnss') {
+    h = "<div style=\"font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:10px\">\n         \uC790\uC728\uC870\uD5A5 1\uB2E8\uACC4 = <b>AGMO ver1 \uC548\uD14C\uB098(\uB0B4\uBD80 UART)</b>. \uC21C\uC11C\uB300\uB85C \uC9C4\uD589\uD558\uC138\uC694.<br>\n         (USB\uB294 \uB808\uBCA8\uB7EC \uC804\uC6A9 \u2014 \uC5EC\uAE30 \uC544\uB2D8)</div>\n       <button class=\"pill\" id=\"gPwr\">\u2460 \uC804\uC6D0 ON (\uB0B4\uBD80 u-blox)</button>\n       <button class=\"pill\" id=\"gScan\" style=\"margin-top:8px\">\u2461 \uD3EC\uD2B8 \uC790\uB3D9 \uD0D0\uC9C0 (\uC218 \uCD08 \uC18C\uC694)</button>\n       <div id=\"gScanR\" style=\"font-size:12px;color:var(--sub);margin:8px 0;white-space:pre-line\">\u2014</div>\n       <div class=\"row\"><span class=\"k\">\uD3EC\uD2B8</span><input class=\"nti\" id=\"gPort\" value=\"/dev/ttyHSL0\"\n            autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"/></div>\n       <div class=\"row\"><span class=\"k\">\uBCF4\uB808\uC774\uD2B8(0=\uC790\uB3D9)</span><input class=\"nti\" id=\"gBaud\" value=\"0\"/></div>\n       <button class=\"pill\" id=\"gCfg\" style=\"margin-top:8px\">\u2462 \uBB34\uBE59\uBCA0\uC774\uC2A4 \uC124\uC815(\uB4C0\uC5BC\uD5E4\uB529 RELPOSNED)</button>\n       <button class=\"pill\" id=\"gStart\" style=\"margin-top:8px\">\u2463 GNSS \uC2DC\uC791</button>\n       <div id=\"gStat\" style=\"text-align:center;font-size:12px;color:var(--sub);margin-top:12px\">\uC0C1\uD0DC \uD655\uC778 \uC911\u2026</div>\n       <div style=\"border-top:1px solid var(--line,#ddd);margin:14px 0 8px\"></div>\n       <div style=\"font-size:13px;color:var(--sub)\">\uB4C0\uC5BC\uC548\uD14C\uB098 base/rover\xB7\uBD80\uD638 \uC9C4\uB2E8 (\uC9C1\uC120 ~15m \uC8FC\uD589, \uB05D\uC5D0 \uC6B0\uCE21\uC73C\uB85C \uC0B4\uC9DD \uAE30\uC6B8\uC784)</div>\n       <button class=\"pill\" id=\"gDiag\" style=\"background:var(--off);margin-top:8px\">\uB9C8\uC6B4\uD2B8 \uC9C4\uB2E8 \uC2DC\uC791</button>\n       <div id=\"gDiagR\" style=\"font-size:12px;color:var(--sub);margin-top:8px\">\uBBF8\uC2E4\uD589</div>";
+  } else if (key === 'system') {
+    var s = S.sys;
+    var sr = function sr(k, on) {
+      return "<div class=\"row\"><span class=\"k\">" + k + "</span><div style=\"display:flex;align-items:center\"><span class=\"statlabel " + (on ? 'on' : '') + "\">" + (on ? 'ON' : 'OFF') + "</span><div class=\"tg " + (on ? 'on' : '') + " ro\"></div></div></div>";
+    };
+    h = sr('네트워크', s.net) + sr('GPS', s.gps) + sr('RTK', s.rtk) + sr('IMU', s.imu) + sr('조향 모터', s.motor);
+  } else if (key === 'motortest') {
+    h = "<div id=\"canStat\" style=\"text-align:center;font-weight:700;font-size:14px;padding:8px;\n         border-radius:8px;background:#f1f3f5;margin-bottom:12px\">CAN \uC0C1\uD0DC \uD655\uC778 \uC911\u2026</div>\n       <div style=\"font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:14px\">\n         \uC548\uD14C\uB098 \uC5C6\uC774 <b>\uBAA8\uD130 \uD68C\uC804</b>\uC744 \uC810\uAC80\uD569\uB2C8\uB2E4. \uBC84\uD2BC\uC744 <b>\uB204\uB974\uACE0 \uC788\uB294 \uB3D9\uC548</b>\uB9CC\n         \uC800\uC18D(\xB112RPM)\uC73C\uB85C \uB3CC\uACE0, \uB5BC\uBA74 \uC989\uC2DC \uC815\uC9C0\uD569\uB2C8\uB2E4.<br>\n         \u26A0 \uBC14\uD034\xB7\uC870\uD5A5 \uC8FC\uBCC0\uC5D0 \uC0AC\uB78C/\uC7A5\uC560\uBB3C\uC774 \uC5C6\uB294\uC9C0 \uD655\uC778 \uD6C4 \uC2DC\uD5D8\uD558\uC138\uC694.</div>\n       <div style=\"display:flex;gap:14px;justify-content:center;margin:10px 0\">\n         <button class=\"jogbtn\" data-dir=\"1\" data-name=\"\uC88C\uD68C\uC804\">\u25C0 \uC88C\uD68C\uC804<br><span>\uB204\uB974\uB294 \uB3D9\uC548</span></button>\n         <button class=\"jogbtn\" data-dir=\"-1\" data-name=\"\uC6B0\uD68C\uC804\">\uC6B0\uD68C\uC804 \u25B6<br><span>\uB204\uB974\uB294 \uB3D9\uC548</span></button>\n       </div>\n       <button class=\"pill jogstop\" id=\"jogStop\">\u25A0 \uC815\uC9C0</button>\n       <div id=\"jogState\" style=\"text-align:center;color:var(--sub);font-size:12px;margin-top:12px\">\uB300\uAE30</div>\n       <div class=\"diag\">\n         <div class=\"drow\">\n           <span>\uCC44\uB110</span>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"0\">0</button>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"1\">1</button>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"2\">2</button>\n           <span>\uC18D\uB3C4</span>\n           <button class=\"dbtn\" data-k=\"br\" data-v=\"250000\">250k</button>\n           <button class=\"dbtn\" data-k=\"br\" data-v=\"500000\">500k</button>\n           <span>\uD655\uC7A5ID</span>\n           <button class=\"dbtn\" data-k=\"eff\" data-v=\"0\">\uC790\uB3D9</button>\n           <button class=\"dbtn\" data-k=\"eff\" data-v=\"1\">\uAC15\uC81C</button>\n         </div>\n         <div class=\"drow\">\n           <span>\uC218\uC2E0(RX)</span>\n           <button class=\"dbtn\" data-k=\"rx\" data-v=\"0\">\uB054(\uBAA8\uD130\uC6B0\uC120)</button>\n           <button class=\"dbtn\" data-k=\"rx\" data-v=\"1\">\uCF2C(\uD53C\uB4DC\uBC31)</button>\n           <span style=\"font-size:10px;color:var(--sub)\">\uBAA8\uD130 \uC548 \uB3CC\uBA74 '\uB054'</span>\n         </div>\n         <div id=\"txInfo\">\uC1A1\uC2E0: -</div>\n       </div>\n       <button class=\"pill\" id=\"btnCenter\" style=\"background:var(--off);margin-top:10px\">\u2299 \uC911\uC559(\uC9C1\uC9C4) \uC124\uC815</button>\n       <div id=\"hbInfo\" style=\"text-align:center;font-size:11px;color:var(--muted);margin-top:8px\">\uD558\uD2B8\uBE44\uD2B8(\uBAA8\uD130 \uD53C\uB4DC\uBC31): \uC218\uC2E0 \uC5C6\uC74C</div>";
   }
-  $('detailBody').innerHTML=h;
+  $('detailBody').innerHTML = h;
   $('detail').classList.add('on');
-  if(key==='motortest') wireJog();
-  if(key==='rtk') wireNtrip();
+  if (key === 'motortest') wireJog();
+  if (key === 'rtk') wireNtrip();
   wireDetail(key);
 }
 
 // ───────── 설정 디테일 패널 버튼 배선 ─────────
-function wireDetail(key){
-  const $$=s=>document.querySelectorAll('#detailBody '+s);
-  if(key==='user'){
-    $$('.tg:not(.ro)').forEach(t=>t.onclick=()=>{ t.classList.toggle('on'); toast('설정 변경됨'); });
-  } else if(key==='vehicle'){
+function wireDetail(key) {
+  var $$ = function $$(s) {
+    return document.querySelectorAll('#detailBody ' + s);
+  };
+  if (key === 'user') {
+    $$('.tg:not(.ro)').forEach(function (t) {
+      return t.onclick = function () {
+        t.classList.toggle('on');
+        toast('설정 변경됨');
+      };
+    });
+  } else if (key === 'vehicle') {
     // 현재(또는 저장된) 차량 변수 로드 → 입력칸 채움
-    if(BR&&BR.getVehicleParams){ try{ const p=JSON.parse(BR.getVehicleParams()||'{}');
-      const set=(id,v)=>{ const e=$(id); if(e&&v!=null&&!isNaN(+v)) e.value=(+v).toFixed(2); };
-      set('vpWB',p.wheelbase); set('vpAH',p.antenna_height);
-      set('vpAA',p.antenna_to_axle); set('vpAI',p.antenna_to_impl);
-    }catch(e){} }
-    const sv=$('vpSave');
-    if(sv) sv.onclick=()=>{
-      const g=(id,d)=>{ const f=parseFloat($(id)&&$(id).value); return isNaN(f)?d:f; };
-      const wb=g('vpWB',2.47), ah=g('vpAH',2.73), aa=g('vpAA',-0.5), ai=g('vpAI',1.2);
-      if(!(wb>0)){ toast('휠베이스는 0보다 커야 합니다'); return; }
-      if(BR&&BR.setVehicleParams){ try{ BR.setVehicleParams(wb,ah,aa,ai); }catch(e){} }
-      toast('차량 변수 저장·적용됨 (휠베이스 '+wb.toFixed(2)+'m)');
+    if (BR && BR.getVehicleParams) {
+      try {
+        var p = JSON.parse(BR.getVehicleParams() || '{}');
+        var set = function set(id, v) {
+          var e = $(id);
+          if (e && v != null && !isNaN(+v)) e.value = (+v).toFixed(2);
+        };
+        set('vpWB', p.wheelbase);
+        set('vpAH', p.antenna_height);
+        set('vpAA', p.antenna_to_axle);
+        set('vpAI', p.antenna_to_impl);
+      } catch (e) {}
+    }
+    var sv = $('vpSave');
+    if (sv) sv.onclick = function () {
+      var g = function g(id, d) {
+        var f = parseFloat($(id) && $(id).value);
+        return isNaN(f) ? d : f;
+      };
+      var wb = g('vpWB', 2.47),
+        ah = g('vpAH', 2.73),
+        aa = g('vpAA', -0.5),
+        ai = g('vpAI', 1.2);
+      if (!(wb > 0)) {
+        toast('휠베이스는 0보다 커야 합니다');
+        return;
+      }
+      if (BR && BR.setVehicleParams) {
+        try {
+          BR.setVehicleParams(wb, ah, aa, ai);
+        } catch (e) {}
+      }
+      toast('차량 변수 저장·적용됨 (휠베이스 ' + wb.toFixed(2) + 'm)');
     };
-  } else if(key==='optim'){
-    $$('.optrow').forEach(r=>r.onclick=()=>{
-      const a=r.dataset.act;
-      if(a==='hcalib'){ if(BR&&BR.startHeadingCalibDrive){try{BR.startHeadingCalibDrive();}catch(e){}}
-        else if(BR&&BR.startHeadingCalib){try{BR.startHeadingCalib();}catch(e){}}
-        toast('전방 20m 직선 자동생성+헤딩캘리브 — 데드맨 누르고 주행하면 자동 보정'); }
-      else if(a==='imuzero'){ if(BR&&BR.startImuCalib){try{BR.startImuCalib();}catch(e){}}
-        toast('IMU 영점 시작 — 평지 정차 후 30초 유지 (IMU 데이터 들어와야 진행)'); }
-      else if(a==='steercal'){ if(BR&&BR.startSteerRatioCalib){try{BR.startSteerRatioCalib();}catch(e){}}
-        toast('조향비 측정 시작 — 좌우로 S자/사인 조향하며 저속 주행 (모터 하트비트 필요)'); }
-      else toast(({gpscenter:'GPS 중심(안테나↔차축) 설정',
-                   turnspeed:'배속 선회(유턴 속도) 설정'})[a]||''); });
-  } else if(key==='tuning'){
-    $$('.modebtn').forEach(b=>b.onclick=()=>{
-      const m=b.dataset.mode; if(BR&&BR.setProfile){try{BR.setProfile(m);}catch(e){}}
-      $$('.modebtn').forEach(x=>x.classList.remove('sel')); b.classList.add('sel');
-      toast('주행 모드: '+b.textContent); });
-    $$('.algobtn').forEach(b=>b.onclick=()=>{
-      const a=b.dataset.algo; if(BR&&BR.setAlgorithm){try{BR.setAlgorithm(a);}catch(e){}}
-      $$('.algobtn').forEach(x=>x.classList.remove('sel')); b.classList.add('sel');
-      toast('알고리즘: '+b.textContent); });
-  } else if(key==='gnss'){
-    const port=()=>(($('gPort')&&$('gPort').value)||'/dev/ttyHSL0').trim();
-    const baud=()=>parseInt(($('gBaud')&&$('gBaud').value)||'0',10)||0;
+  } else if (key === 'optim') {
+    $$('.optrow').forEach(function (r) {
+      return r.onclick = function () {
+        var a = r.dataset.act;
+        if (a === 'hcalib') {
+          if (BR && BR.startHeadingCalibDrive) {
+            try {
+              BR.startHeadingCalibDrive();
+            } catch (e) {}
+          } else if (BR && BR.startHeadingCalib) {
+            try {
+              BR.startHeadingCalib();
+            } catch (e) {}
+          }
+          toast('전방 20m 직선 자동생성+헤딩캘리브 — 데드맨 누르고 주행하면 자동 보정');
+        } else if (a === 'imuzero') {
+          if (BR && BR.startImuCalib) {
+            try {
+              BR.startImuCalib();
+            } catch (e) {}
+          }
+          toast('IMU 영점 시작 — 평지 정차 후 30초 유지 (IMU 데이터 들어와야 진행)');
+        } else if (a === 'steercal') {
+          if (BR && BR.startSteerRatioCalib) {
+            try {
+              BR.startSteerRatioCalib();
+            } catch (e) {}
+          }
+          toast('조향비 측정 시작 — 좌우로 S자/사인 조향하며 저속 주행 (모터 하트비트 필요)');
+        } else toast({
+          gpscenter: 'GPS 중심(안테나↔차축) 설정',
+          turnspeed: '배속 선회(유턴 속도) 설정'
+        }[a] || '');
+      };
+    });
+  } else if (key === 'tuning') {
+    $$('.modebtn').forEach(function (b) {
+      return b.onclick = function () {
+        var m = b.dataset.mode;
+        if (BR && BR.setProfile) {
+          try {
+            BR.setProfile(m);
+          } catch (e) {}
+        }
+        $$('.modebtn').forEach(function (x) {
+          return x.classList.remove('sel');
+        });
+        b.classList.add('sel');
+        toast('주행 모드: ' + b.textContent);
+      };
+    });
+    $$('.algobtn').forEach(function (b) {
+      return b.onclick = function () {
+        var a = b.dataset.algo;
+        if (BR && BR.setAlgorithm) {
+          try {
+            BR.setAlgorithm(a);
+          } catch (e) {}
+        }
+        $$('.algobtn').forEach(function (x) {
+          return x.classList.remove('sel');
+        });
+        b.classList.add('sel');
+        toast('알고리즘: ' + b.textContent);
+      };
+    });
+  } else if (key === 'gnss') {
+    var port = function port() {
+      return ($('gPort') && $('gPort').value || '/dev/ttyHSL0').trim();
+    };
+    var baud = function baud() {
+      return parseInt($('gBaud') && $('gBaud').value || '0', 10) || 0;
+    };
     // ★ GNSS 작업(포트탐지/설정/시작)은 블로킹(탐지 수십 초)이라 비동기로 돌리고
     //   gnssJobStatus() 를 폴링한다. 동기 호출은 WebView JS 스레드를 막아 화면이 멈춤.
-    function pollGnssJob(onDone){
-      const t=setInterval(()=>{
-        if(!(BR&&BR.gnssJobStatus)){ clearInterval(t); onDone(null); return; }
-        let j={}; try{ j=JSON.parse(BR.gnssJobStatus()||'{}'); }catch(e){}
-        if(!j.running){ clearInterval(t); onDone(j.result||{}); }
+    function pollGnssJob(onDone) {
+      var t = setInterval(function () {
+        if (!(BR && BR.gnssJobStatus)) {
+          clearInterval(t);
+          onDone(null);
+          return;
+        }
+        var j = {};
+        try {
+          j = JSON.parse(BR.gnssJobStatus() || '{}');
+        } catch (e) {}
+        if (!j.running) {
+          clearInterval(t);
+          onDone(j.result || {});
+        }
       }, 400);
     }
-    $('gPwr')&&($('gPwr').onclick=()=>{ let r='-'; if(BR&&BR.gnssPowerOn){try{r=BR.gnssPowerOn();}catch(e){}} toast('전원 ON: '+r); });
-    $('gScan')&&($('gScan').onclick=()=>{ const el=$('gScanR'); if(el) el.textContent='탐지 중… (수 초~수십 초 · 화면은 계속 동작합니다)';
-      if(!(BR&&BR.scanGnssAsync)){ if(el) el.textContent='데모(브리지 없음)'; return; }
-      try{ BR.scanGnssAsync(1.0); }catch(e){}
-      pollGnssJob((o)=>{ o=o||{}; const best=o.best||null;
-        const lines=(o.ports||[]).map(p=>p.port+': '+(p.found?('OK '+(p.baud||'')+' '+((p.formats||[]).join('/'))):(p.open_error?('✗ '+p.open_error):'데이터 없음')));
-        if(typeof o.opened==='number') lines.push('— 열림 '+o.opened+' · 부재 '+(o.absent||0));
-        if(o.note) lines.push(o.note);
-        const txt=lines.join('\n')||(o.error?('오류: '+o.error):'포트 없음');
-        if(best&&$('gPort')) $('gPort').value=best.port;
-        if(el) el.textContent=(best?('✓ 추천 '+best.port+' @'+best.baud+'\n'):'')+txt; }); });
-    $('gCfg')&&($('gCfg').onclick=()=>{ toast('무빙베이스 설정 중…');
-      if(BR&&BR.configureMovingBaseAsync){ try{BR.configureMovingBaseAsync(port(),baud());}catch(e){} }
-      pollGnssJob((o)=>toast('무빙베이스 설정: '+((o&&o.result)||'-'))); });
-    $('gStart')&&($('gStart').onclick=()=>{ toast('GNSS 시작 중…');
-      if(BR&&BR.startGnssAsync){ try{BR.startGnssAsync(port(),baud());}catch(e){} }
-      pollGnssJob((o)=>toast('GNSS 시작: '+((o&&o.result)||'-'))); });
-    $('gDiag')&&($('gDiag').onclick=()=>{ if(BR&&BR.startMountDiag){try{BR.startMountDiag();}catch(e){}} toast('마운트 진단 시작 — 직선 15m 주행'); });
+    $('gPwr') && ($('gPwr').onclick = function () {
+      var r = '-';
+      if (BR && BR.gnssPowerOn) {
+        try {
+          r = BR.gnssPowerOn();
+        } catch (e) {}
+      }
+      toast('전원 ON: ' + r);
+    });
+    $('gScan') && ($('gScan').onclick = function () {
+      var el = $('gScanR');
+      if (el) el.textContent = '탐지 중… (수 초~수십 초 · 화면은 계속 동작합니다)';
+      if (!(BR && BR.scanGnssAsync)) {
+        if (el) el.textContent = '데모(브리지 없음)';
+        return;
+      }
+      try {
+        BR.scanGnssAsync(1.0);
+      } catch (e) {}
+      pollGnssJob(function (o) {
+        o = o || {};
+        var best = o.best || null;
+        var lines = (o.ports || []).map(function (p) {
+          return p.port + ': ' + (p.found ? 'OK ' + (p.baud || '') + ' ' + (p.formats || []).join('/') : p.open_error ? '✗ ' + p.open_error : '데이터 없음');
+        });
+        if (typeof o.opened === 'number') lines.push('— 열림 ' + o.opened + ' · 부재 ' + (o.absent || 0));
+        if (o.note) lines.push(o.note);
+        var txt = lines.join('\n') || (o.error ? '오류: ' + o.error : '포트 없음');
+        if (best && $('gPort')) $('gPort').value = best.port;
+        if (el) el.textContent = (best ? '✓ 추천 ' + best.port + ' @' + best.baud + '\n' : '') + txt;
+      });
+    });
+    $('gCfg') && ($('gCfg').onclick = function () {
+      toast('무빙베이스 설정 중…');
+      if (BR && BR.configureMovingBaseAsync) {
+        try {
+          BR.configureMovingBaseAsync(port(), baud());
+        } catch (e) {}
+      }
+      pollGnssJob(function (o) {
+        return toast('무빙베이스 설정: ' + (o && o.result || '-'));
+      });
+    });
+    $('gStart') && ($('gStart').onclick = function () {
+      toast('GNSS 시작 중…');
+      if (BR && BR.startGnssAsync) {
+        try {
+          BR.startGnssAsync(port(), baud());
+        } catch (e) {}
+      }
+      pollGnssJob(function (o) {
+        return toast('GNSS 시작: ' + (o && o.result || '-'));
+      });
+    });
+    $('gDiag') && ($('gDiag').onclick = function () {
+      if (BR && BR.startMountDiag) {
+        try {
+          BR.startMountDiag();
+        } catch (e) {}
+      }
+      toast('마운트 진단 시작 — 직선 15m 주행');
+    });
   }
 }
-
-function toast(msg){
-  const t=$('toast'); if(!t) return;
-  t.textContent=msg; t.classList.add('on');
-  clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('on'), 2200);
+function toast(msg) {
+  var t = $('toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.add('on');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function () {
+    return t.classList.remove('on');
+  }, 2200);
 }
 
 // ───────── NTRIP(RTK 보정신호) 설정 ─────────
-function loadNtrip(){
-  try{ const s=localStorage.getItem('ntrip'); if(s) return JSON.parse(s); }catch(e){}
-  return {host:'', port:'2101', mount:'', user:'', pw:''};
+function loadNtrip() {
+  try {
+    var s = localStorage.getItem('ntrip');
+    if (s) return JSON.parse(s);
+  } catch (e) {}
+  return {
+    host: '',
+    port: '2101',
+    mount: '',
+    user: '',
+    pw: ''
+  };
 }
-function saveNtrip(c){ try{ localStorage.setItem('ntrip', JSON.stringify(c)); }catch(e){} }
-function readNtripForm(){
-  const c={}; document.querySelectorAll('.nti').forEach(i=>c[i.dataset.k]=(i.value||'').trim()); return c;
+function saveNtrip(c) {
+  try {
+    localStorage.setItem('ntrip', JSON.stringify(c));
+  } catch (e) {}
 }
-function ntripConnect(c){
-  if(BR&&BR.ntripConnect){ try{ const r=BR.ntripConnect(c.host, parseInt(c.port||'2101',10), c.mount, c.user, c.pw);
-    toast('RTK 보정: '+(r==='ok'?'접속':r==='ok-gnss먼저'?'접속됨 — 먼저 GNSS를 시작해야 보정이 전달됩니다':(''+r))); }catch(e){} }
+function readNtripForm() {
+  var c = {};
+  document.querySelectorAll('.nti').forEach(function (i) {
+    return c[i.dataset.k] = (i.value || '').trim();
+  });
+  return c;
 }
-function wireNtrip(){
-  const cn=$('ntConnect'), dc=$('ntDisc');
-  if(cn) cn.onclick=()=>{ const c=readNtripForm(); saveNtrip(c); ntripConnect(c); };
-  if(dc) dc.onclick=()=>{ if(BR&&BR.ntripDisconnect){ try{ BR.ntripDisconnect(); }catch(e){} } };
+function ntripConnect(c) {
+  if (BR && BR.ntripConnect) {
+    try {
+      var r = BR.ntripConnect(c.host, parseInt(c.port || '2101', 10), c.mount, c.user, c.pw);
+      toast('RTK 보정: ' + (r === 'ok' ? '접속' : r === 'ok-gnss먼저' ? '접속됨 — 먼저 GNSS를 시작해야 보정이 전달됩니다' : '' + r));
+    } catch (e) {}
+  }
+}
+function wireNtrip() {
+  var cn = $('ntConnect'),
+    dc = $('ntDisc');
+  if (cn) cn.onclick = function () {
+    var c = readNtripForm();
+    saveNtrip(c);
+    ntripConnect(c);
+  };
+  if (dc) dc.onclick = function () {
+    if (BR && BR.ntripDisconnect) {
+      try {
+        BR.ntripDisconnect();
+      } catch (e) {}
+    }
+  };
 }
 
 // ───────── 모터 조그(hold-to-run) ─────────
-const JOG_PERMILLE=150;     // app_main JOG_MAX_PERMILLE 와 동일(저속 점검)
-let jogTimer=null;
+var JOG_PERMILLE = 150; // app_main JOG_MAX_PERMILLE 와 동일(저속 점검)
+var jogTimer = null;
 // CAN 진단 설정(현장에서 되는 조합 찾기용)
-let curCh=0, curBr=250000, curEff=false, curRx=false;   // curRx 기본 false = RX 끔(TX전용, 모터 회전 우선)
-function applyCanParams(){ if(BR&&BR.setCanParams){ try{ BR.setCanParams(curCh,curBr,curEff); }catch(e){} } }
-function jogSend(p){ if(BR&&BR.motorJog){ try{ return BR.motorJog(p); }catch(e){} return 'error'; } return 'demo'; }
-function jogStop(){ if(jogTimer){ clearInterval(jogTimer); jogTimer=null; } jogSend(0); const st=$('jogState'); if(st) st.textContent='정지'; }
-function wireJog(){
-  document.querySelectorAll('.jogbtn').forEach(btn=>{
-    const dir=parseInt(btn.dataset.dir,10);
-    const start=e=>{ e.preventDefault(); if(jogTimer) return;
-      const r=jogSend(dir*JOG_PERMILLE), st=$('jogState');
-      const nm=btn.dataset.name||'회전';
-      if(st) st.textContent = r==='demo'?'데모 모드(실 CAN 없음)': r==='blocked'?'미확정 벤더 — 출력 차단': r==='error'?'CAN 미연결':(nm+' 중…');
-      if(r==='ok'||r==='demo') jogTimer=setInterval(()=>jogSend(dir*JOG_PERMILLE),150); };
-    const end=e=>{ e.preventDefault(); jogStop(); };
-    btn.onpointerdown=start; btn.onpointerup=end; btn.onpointerleave=end; btn.onpointercancel=end;
+var curCh = 0,
+  curBr = 250000,
+  curEff = false,
+  curRx = false; // curRx 기본 false = RX 끔(TX전용, 모터 회전 우선)
+function applyCanParams() {
+  if (BR && BR.setCanParams) {
+    try {
+      BR.setCanParams(curCh, curBr, curEff);
+    } catch (e) {}
+  }
+}
+function jogSend(p) {
+  if (BR && BR.motorJog) {
+    try {
+      return BR.motorJog(p);
+    } catch (e) {}
+    return 'error';
+  }
+  return 'demo';
+}
+function jogStop() {
+  if (jogTimer) {
+    clearInterval(jogTimer);
+    jogTimer = null;
+  }
+  jogSend(0);
+  var st = $('jogState');
+  if (st) st.textContent = '정지';
+}
+function wireJog() {
+  document.querySelectorAll('.jogbtn').forEach(function (btn) {
+    var dir = parseInt(btn.dataset.dir, 10);
+    var start = function start(e) {
+      e.preventDefault();
+      if (jogTimer) return;
+      var r = jogSend(dir * JOG_PERMILLE),
+        st = $('jogState');
+      var nm = btn.dataset.name || '회전';
+      if (st) st.textContent = r === 'demo' ? '데모 모드(실 CAN 없음)' : r === 'blocked' ? '미확정 벤더 — 출력 차단' : r === 'error' ? 'CAN 미연결' : nm + ' 중…';
+      if (r === 'ok' || r === 'demo') jogTimer = setInterval(function () {
+        return jogSend(dir * JOG_PERMILLE);
+      }, 150);
+    };
+    var end = function end(e) {
+      e.preventDefault();
+      jogStop();
+    };
+    btn.onpointerdown = start;
+    btn.onpointerup = end;
+    btn.onpointerleave = end;
+    btn.onpointercancel = end;
   });
-  const sb=$('jogStop'); if(sb) sb.onclick=jogStop;
-  const bc=$('btnCenter'); if(bc) bc.onclick=()=>{ if(BR&&BR.motorCenter){ try{ BR.motorCenter(); }catch(e){} } };
+  var sb = $('jogStop');
+  if (sb) sb.onclick = jogStop;
+  var bc = $('btnCenter');
+  if (bc) bc.onclick = function () {
+    if (BR && BR.motorCenter) {
+      try {
+        BR.motorCenter();
+      } catch (e) {}
+    }
+  };
   // 진단 토글 (채널/비트레이트/확장ID)
-  document.querySelectorAll('.dbtn').forEach(b=>{
-    const k=b.dataset.k, v=b.dataset.v;
-    const cur = k==='ch'?String(curCh) : k==='br'?String(curBr) : k==='eff'?(curEff?'1':'0') : (curRx?'1':'0');
-    if(v===cur) b.classList.add('sel');
-    b.onclick=()=>{
-      document.querySelectorAll('.dbtn[data-k="'+k+'"]').forEach(x=>x.classList.remove('sel'));
+  document.querySelectorAll('.dbtn').forEach(function (b) {
+    var k = b.dataset.k,
+      v = b.dataset.v;
+    var cur = k === 'ch' ? String(curCh) : k === 'br' ? String(curBr) : k === 'eff' ? curEff ? '1' : '0' : curRx ? '1' : '0';
+    if (v === cur) b.classList.add('sel');
+    b.onclick = function () {
+      document.querySelectorAll('.dbtn[data-k="' + k + '"]').forEach(function (x) {
+        return x.classList.remove('sel');
+      });
       b.classList.add('sel');
-      jogStop();           // 설정 바꾸면 일단 정지
-      if(k==='rx'){ curRx=(v==='1'); if(BR&&BR.setCanRx){try{BR.setCanRx(curRx);}catch(e){}} toast('CAN 수신 '+(curRx?'켬':'끔(모터 우선)')); return; }
-      if(k==='ch')curCh=parseInt(v,10); else if(k==='br')curBr=parseInt(v,10); else curEff=(v==='1');
+      jogStop(); // 설정 바꾸면 일단 정지
+      if (k === 'rx') {
+        curRx = v === '1';
+        if (BR && BR.setCanRx) {
+          try {
+            BR.setCanRx(curRx);
+          } catch (e) {}
+        }
+        toast('CAN 수신 ' + (curRx ? '켬' : '끔(모터 우선)'));
+        return;
+      }
+      if (k === 'ch') curCh = parseInt(v, 10);else if (k === 'br') curBr = parseInt(v, 10);else curEff = v === '1';
       applyCanParams();
     };
   });
 }
 
 // ───────── 벤더 선택 ─────────
-function vendorList(){
-  let v=null;
-  if(BR && BR.listVendors){ try{ v=JSON.parse(BR.listVendors()||"[]"); }catch(e){} }
-  if(Array.isArray(v) && v.length) return v;       // Python 정상 → 사용
-  return [                                          // 비었거나 실패 → 항상 보이는 기본 목록
-    {key:"agmo",name:"기본",tagline:"Apollo 10 Pro · Keya 조향모터",can_verified:true,gnss:"내장 GNSS"},
-    {key:"chcnav",name:"CHCNAV",tagline:"NX510 / AgNav · PA-3 안테나",can_verified:false,gnss:"CHCNAV PA-3"},
-    {key:"fjd",name:"FJDynamics",tagline:"AT2 dome · FJD 전동조향",can_verified:false,gnss:"FJDynamics AT2"},
-  ];
+function vendorList() {
+  var v = null;
+  if (BR && BR.listVendors) {
+    try {
+      v = JSON.parse(BR.listVendors() || "[]");
+    } catch (e) {}
+  }
+  if (Array.isArray(v) && v.length) return v; // Python 정상 → 사용
+  return [
+  // 비었거나 실패 → 항상 보이는 기본 목록
+  {
+    key: "agmo",
+    name: "기본",
+    tagline: "Apollo 10 Pro · Keya 조향모터",
+    can_verified: true,
+    gnss: "내장 GNSS"
+  }, {
+    key: "chcnav",
+    name: "CHCNAV",
+    tagline: "NX510 / AgNav · PA-3 안테나",
+    can_verified: false,
+    gnss: "CHCNAV PA-3"
+  }, {
+    key: "fjd",
+    name: "FJDynamics",
+    tagline: "AT2 dome · FJD 전동조향",
+    can_verified: false,
+    gnss: "FJDynamics AT2"
+  }];
 }
-function initVendors(){
-  $('vcards').innerHTML = vendorList().map(v=>`
-    <div class="vcard" data-k="${v.key}">
-      <div class="vn">${v.name}</div><div class="vt">${v.tagline||''}</div>
-      <div class="vg">GNSS: ${v.gnss||'-'}</div>
-      <span class="vbadge ${v.can_verified?'ok':'todo'}">${v.can_verified?'조향 지원':'GNSS만 · 모터 준비중'}</span>
-    </div>`).join('');
-  $('vcards').querySelectorAll('.vcard').forEach(el=>el.onclick=()=>{
-    if(BR&&BR.setVendor){ try{ BR.setVendor(el.dataset.k); }catch(e){} }
-    show('main');
+function initVendors() {
+  $('vcards').innerHTML = vendorList().map(function (v) {
+    return "\n    <div class=\"vcard\" data-k=\"" + v.key + "\">\n      <div class=\"vn\">" + v.name + "</div><div class=\"vt\">" + (v.tagline || '') + "</div>\n      <div class=\"vg\">GNSS: " + (v.gnss || '-') + "</div>\n      <span class=\"vbadge " + (v.can_verified ? 'ok' : 'todo') + "\">" + (v.can_verified ? '조향 지원' : 'GNSS만 · 모터 준비중') + "</span>\n    </div>";
+  }).join('');
+  $('vcards').querySelectorAll('.vcard').forEach(function (el) {
+    return el.onclick = function () {
+      if (BR && BR.setVendor) {
+        try {
+          BR.setVendor(el.dataset.k);
+        } catch (e) {}
+      }
+      show('main');
+    };
   });
 }
 
 // ───────── 이벤트 ─────────
-$('consentChk').onclick=()=>{ const c=$('consentChk'); c.classList.toggle('ok'); $('consentOk').classList.toggle('en',c.classList.contains('ok')); };
-$('consentOk').onclick=()=>{ if($('consentChk').classList.contains('ok')){ initVendors(); show('vendor'); } };
-$('btnSettings').onclick=()=>{ renderSetList('user'); openDetail('user'); setOverlay('settings',true); };
-$('setClose').onclick=()=>{ try{jogStop();}catch(e){} setOverlay('settings',false); };
-$('detailClose').onclick=()=>$('detail').classList.remove('on');
-$('btnDrive').onclick=()=>setModal('modeModal',true);
-$('modeX').onclick=()=>setModal('modeModal',false);
-document.querySelectorAll('#modeModal .choice').forEach(c=>c.onclick=()=>{ setModal('modeModal',false); setModal('pathModal',true); });
-$('pathX').onclick=()=>setModal('pathModal',false);
-$('pathBack').onclick=()=>{ setModal('pathModal',false); setModal('modeModal',true); };
-function gotoWork(){ setModal('pathModal',false); if(BR&&BR.setDemoAbLine){try{BR.setDemoAbLine();}catch(e){}} show('work'); }
-// ⑥ 새 경로 = 현장 A/B 마킹. 기존 경로 = 데모 라인(빠른 확인용 폴백).
-function refreshAb(){ if(!(BR&&BR.abStatus)) return;
-  try{ const s=JSON.parse(BR.abStatus()||'{}');
-    $('abAv').textContent=s.a?('('+s.a[0].toFixed(1)+', '+s.a[1].toFixed(1)+')'):'미설정';
-    $('abBv').textContent=s.b?('('+s.b[0].toFixed(1)+', '+s.b[1].toFixed(1)+')'):'미설정'; }catch(e){} }
-$('pathNew').onclick=()=>{ setModal('pathModal',false); setModal('abModal',true); refreshAb(); };
-$('pathOld').onclick=gotoWork;
-$('abX').onclick=()=>setModal('abModal',false);
-$('abBack').onclick=()=>{ setModal('abModal',false); setModal('pathModal',true); };
-$('abMarkA').onclick=()=>{ if(BR&&BR.markAb){try{BR.markAb('a');}catch(e){}} refreshAb(); toast('A 지점 마킹'); };
-$('abMarkB').onclick=()=>{ if(BR&&BR.markAb){try{BR.markAb('b');}catch(e){}} refreshAb(); toast('B 지점 마킹'); };
-$('abBuild').onclick=()=>{
-  const w=parseFloat(($('abW')&&$('abW').value)||'3')||3, p=parseInt(($('abP')&&$('abP').value)||'4',10)||4;
-  let r='need-ab'; if(BR&&BR.buildAb){try{ r=BR.buildAb(w,p,1.2); }catch(e){ r='error'; }}
-  else { r='ok'; }   // 브라우저 데모
-  if(r==='ok'){ setModal('abModal',false); show('work'); }
-  else { toast(r==='need-ab'?'A·B 두 지점을 먼저 찍으세요':r==='too-short'?'A↔B 거리가 너무 가깝습니다(≥1m)':('경로 생성 실패: '+r)); }
+$('consentChk').onclick = function () {
+  var c = $('consentChk');
+  c.classList.toggle('ok');
+  $('consentOk').classList.toggle('en', c.classList.contains('ok'));
 };
-$('btnEnd').onclick=()=>{ if(BR&&BR.setDeadman){try{BR.setDeadman(false);}catch(e){}} if(BR&&BR.disengage){try{BR.disengage();}catch(e){}} show('main'); };
+$('consentOk').onclick = function () {
+  if ($('consentChk').classList.contains('ok')) {
+    initVendors();
+    show('vendor');
+  }
+};
+$('btnSettings').onclick = function () {
+  renderSetList('user');
+  openDetail('user');
+  setOverlay('settings', true);
+};
+$('setClose').onclick = function () {
+  try {
+    jogStop();
+  } catch (e) {}
+  setOverlay('settings', false);
+};
+$('detailClose').onclick = function () {
+  return $('detail').classList.remove('on');
+};
+$('btnDrive').onclick = function () {
+  return setModal('modeModal', true);
+};
+$('modeX').onclick = function () {
+  return setModal('modeModal', false);
+};
+document.querySelectorAll('#modeModal .choice').forEach(function (c) {
+  return c.onclick = function () {
+    setModal('modeModal', false);
+    setModal('pathModal', true);
+  };
+});
+$('pathX').onclick = function () {
+  return setModal('pathModal', false);
+};
+$('pathBack').onclick = function () {
+  setModal('pathModal', false);
+  setModal('modeModal', true);
+};
+function gotoWork() {
+  setModal('pathModal', false);
+  if (BR && BR.setDemoAbLine) {
+    try {
+      BR.setDemoAbLine();
+    } catch (e) {}
+  }
+  show('work');
+}
+// ⑥ 새 경로 = 현장 A/B 마킹. 기존 경로 = 데모 라인(빠른 확인용 폴백).
+function refreshAb() {
+  if (!(BR && BR.abStatus)) return;
+  try {
+    var s = JSON.parse(BR.abStatus() || '{}');
+    $('abAv').textContent = s.a ? '(' + s.a[0].toFixed(1) + ', ' + s.a[1].toFixed(1) + ')' : '미설정';
+    $('abBv').textContent = s.b ? '(' + s.b[0].toFixed(1) + ', ' + s.b[1].toFixed(1) + ')' : '미설정';
+  } catch (e) {}
+}
+$('pathNew').onclick = function () {
+  setModal('pathModal', false);
+  setModal('abModal', true);
+  refreshAb();
+};
+$('pathOld').onclick = gotoWork;
+$('abX').onclick = function () {
+  return setModal('abModal', false);
+};
+$('abBack').onclick = function () {
+  setModal('abModal', false);
+  setModal('pathModal', true);
+};
+$('abMarkA').onclick = function () {
+  if (BR && BR.markAb) {
+    try {
+      BR.markAb('a');
+    } catch (e) {}
+  }
+  refreshAb();
+  toast('A 지점 마킹');
+};
+$('abMarkB').onclick = function () {
+  if (BR && BR.markAb) {
+    try {
+      BR.markAb('b');
+    } catch (e) {}
+  }
+  refreshAb();
+  toast('B 지점 마킹');
+};
+$('abBuild').onclick = function () {
+  var w = parseFloat($('abW') && $('abW').value || '3') || 3,
+    p = parseInt($('abP') && $('abP').value || '4', 10) || 4;
+  var r = 'need-ab';
+  if (BR && BR.buildAb) {
+    try {
+      r = BR.buildAb(w, p, 1.2);
+    } catch (e) {
+      r = 'error';
+    }
+  } else {
+    r = 'ok';
+  } // 브라우저 데모
+  if (r === 'ok') {
+    setModal('abModal', false);
+    show('work');
+  } else {
+    toast(r === 'need-ab' ? 'A·B 두 지점을 먼저 찍으세요' : r === 'too-short' ? 'A↔B 거리가 너무 가깝습니다(≥1m)' : '경로 생성 실패: ' + r);
+  }
+};
+$('btnEnd').onclick = function () {
+  if (BR && BR.setDeadman) {
+    try {
+      BR.setDeadman(false);
+    } catch (e) {}
+  }
+  if (BR && BR.disengage) {
+    try {
+      BR.disengage();
+    } catch (e) {}
+  }
+  show('main');
+};
 // ★ 데드맨(홀드투런): "주행" 버튼을 누르고 있는 동안만 조향이 활성. 떼면 즉시 정지.
 //   안전상 deadman 이 false 면 control_step 이 매 주기 자동 disengage 한다.
 //   (물리 데드맨 스위치/시트센서가 생기면 그쪽에서 setDeadman 을 호출하도록 교체)
-function startEngage(){
-  if(BR&&BR.setDeadman){try{BR.setDeadman(true);}catch(e){}}
-  let ok=false; if(BR&&BR.engage){try{ ok=BR.engage(); }catch(e){}} else { ok=S.sensorOk; }
-  if(!ok){ // 엔게이지 거부 → 데드맨 해제 + 경고 다이얼로그
-    if(BR&&BR.setDeadman){try{BR.setDeadman(false);}catch(e){}}
-    const items=[]; if(!S.sys.gps) items.push('GPS 연결이 원활하지 않습니다');
-    if(!S.sys.imu) items.push('IMU 연결이 원활하지 않습니다');
-    if(!S.motorVerified) items.push((S.vendorName||'이 제조사')+' 모터 CAN 프로토콜이 미확정입니다');
-    if(!items.length) items.push('자율주행을 시작할 수 없습니다');
-    $('warnList').innerHTML=items.map(t=>`<li>${t}</li>`).join(''); setModal('warn',true);
+function startEngage() {
+  if (BR && BR.setDeadman) {
+    try {
+      BR.setDeadman(true);
+    } catch (e) {}
+  }
+  var ok = false;
+  if (BR && BR.engage) {
+    try {
+      ok = BR.engage();
+    } catch (e) {}
+  } else {
+    ok = S.sensorOk;
+  }
+  if (!ok) {
+    // 엔게이지 거부 → 데드맨 해제 + 경고 다이얼로그
+    if (BR && BR.setDeadman) {
+      try {
+        BR.setDeadman(false);
+      } catch (e) {}
+    }
+    var items = [];
+    if (!S.sys.gps) items.push('GPS 연결이 원활하지 않습니다');
+    if (!S.sys.imu) items.push('IMU 연결이 원활하지 않습니다');
+    if (!S.motorVerified) items.push((S.vendorName || '이 제조사') + ' 모터 CAN 프로토콜이 미확정입니다');
+    if (!items.length) items.push('자율주행을 시작할 수 없습니다');
+    $('warnList').innerHTML = items.map(function (t) {
+      return "<li>" + t + "</li>";
+    }).join('');
+    setModal('warn', true);
   }
 }
-function stopEngage(){
-  if(BR&&BR.setDeadman){try{BR.setDeadman(false);}catch(e){}}
-  if(BR&&BR.disengage){try{BR.disengage();}catch(e){}}
+function stopEngage() {
+  if (BR && BR.setDeadman) {
+    try {
+      BR.setDeadman(false);
+    } catch (e) {}
+  }
+  if (BR && BR.disengage) {
+    try {
+      BR.disengage();
+    } catch (e) {}
+  }
 }
-(function(){ const bs=$('btnStart'); if(!bs) return;
-  bs.addEventListener('pointerdown', e=>{ e.preventDefault(); startEngage(); });
-  ['pointerup','pointercancel','pointerleave'].forEach(ev=>
-    bs.addEventListener(ev, e=>{ e.preventDefault(); stopEngage(); }));
+(function () {
+  var bs = $('btnStart');
+  if (!bs) return;
+  bs.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    startEngage();
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
+    return bs.addEventListener(ev, function (e) {
+      e.preventDefault();
+      stopEngage();
+    });
+  });
 })();
-$('warnClose').onclick=()=>{ if(BR&&BR.setDeadman){try{BR.setDeadman(false);}catch(e){}} if(BR&&BR.disengage){try{BR.disengage();}catch(e){}} setModal('warn',false); };
+$('warnClose').onclick = function () {
+  if (BR && BR.setDeadman) {
+    try {
+      BR.setDeadman(false);
+    } catch (e) {}
+  }
+  if (BR && BR.disengage) {
+    try {
+      BR.disengage();
+    } catch (e) {}
+  }
+  setModal('warn', false);
+};
 
 // ───────── 상태 폴링 ─────────
-function poll(){
-  if(BR){
-    try{
-      const st=JSON.parse(BR.statusJson()||"{}");
-      if(typeof st.engaged==='boolean') S.engaged=st.engaged;
-      if(typeof st.xte_cm==='number') S.xte=st.xte_cm;
-      if(typeof st.speed_mps==='number') S.speed=st.speed_mps;
-      if(typeof st.motor_verified==='boolean') S.motorVerified=st.motor_verified;
-      if(st.vendor_name) S.vendorName=st.vendor_name;
-      if(st.profile) S.profile=st.profile;
-      if(st.algo) S.algo=st.algo;
+function poll() {
+  if (BR) {
+    try {
+      var st = JSON.parse(BR.statusJson() || "{}");
+      if (typeof st.engaged === 'boolean') S.engaged = st.engaged;
+      if (typeof st.xte_cm === 'number') S.xte = st.xte_cm;
+      if (typeof st.speed_mps === 'number') S.speed = st.speed_mps;
+      if (typeof st.motor_verified === 'boolean') S.motorVerified = st.motor_verified;
+      if (st.vendor_name) S.vendorName = st.vendor_name;
+      if (st.profile) S.profile = st.profile;
+      if (st.algo) S.algo = st.algo;
       S.hb = st.heartbeat || null;
       S.sensorOk = !!st.active_gnss;
-      S.sys.gps = !!st.active_gnss; S.sys.rtk = (st.safety!=='RTK_LOW'&&st.safety!=='RTK_LOST'&&!!st.active_gnss);
-      S.sys.imu = !!st.active_gnss; S.sys.motor = (st.can_available!==false) && S.motorVerified;
-      if(typeof st.line_no==='number') S.line=st.line_no;
+      S.sys.gps = !!st.active_gnss;
+      S.sys.rtk = st.safety !== 'RTK_LOW' && st.safety !== 'RTK_LOST' && !!st.active_gnss;
+      S.sys.imu = !!st.active_gnss;
+      S.sys.motor = st.can_available !== false && S.motorVerified;
+      if (typeof st.line_no === 'number') S.line = st.line_no;
       S.activeGnss = st.active_gnss || null;
-      S.headingDeg = (typeof st.heading_deg==='number') ? st.heading_deg : null;
+      S.headingDeg = typeof st.heading_deg === 'number' ? st.heading_deg : null;
       S.headingDegraded = !!st.heading_degraded;
       // 미확정 벤더 배너
-      const w=$('motorWarn');
-      if(st.motor_verified===false){ w.classList.add('on');
-        w.textContent='⚠ '+(st.vendor_name||'이 제조사')+' 모터 CAN 프로토콜 미확정 — 자율조향 비활성 (GNSS·표시만 동작)'; }
-      else w.classList.remove('on');
-    }catch(e){}
+      var w = $('motorWarn');
+      if (st.motor_verified === false) {
+        w.classList.add('on');
+        w.textContent = '⚠ ' + (st.vendor_name || '이 제조사') + ' 모터 CAN 프로토콜 미확정 — 자율조향 비활성 (GNSS·표시만 동작)';
+      } else w.classList.remove('on');
+    } catch (e) {}
   } else {
     // 브라우저 시뮬: 약간 움직임
-    S.speed=1.2; S.xte=Math.sin(Date.now()/1500)*8; S.sensorOk=true;
-    S.sys.gps=S.sys.imu=S.sys.rtk=true;
+    S.speed = 1.2;
+    S.xte = Math.sin(Date.now() / 1500) * 8;
+    S.sensorOk = true;
+    S.sys.gps = S.sys.imu = S.sys.rtk = true;
   }
   renderStatusbars();
-  $('lineNo').textContent=String(S.line).padStart(2,'0');
+  $('lineNo').textContent = String(S.line).padStart(2, '0');
   // 트랙터 가로 위치 = 오차 반영
-  const t=$('tractorMain'); if(t) t.style.left=(50 + Math.max(-12,Math.min(12,S.xte*0.4)))+'%';
+  var t = $('tractorMain');
+  if (t) t.style.left = 50 + Math.max(-12, Math.min(12, S.xte * 0.4)) + '%';
   // 시작 버튼 상태
-  const sb=$('btnStart'); if(sb) sb.classList.toggle('go',S.engaged);
+  var sb = $('btnStart');
+  if (sb) sb.classList.toggle('go', S.engaged);
   // 모터 점검 화면 열려있으면 CAN 상태 갱신
-  const cs=$('canStat');
-  if(cs && BR && BR.canStatus){
-    try{
-      const c=JSON.parse(BR.canStatus());
-      if(c.canReady){ cs.textContent='CAN: 연결됨 ✓ (모터 제어 가능)'; cs.style.background='var(--brand-lt)'; cs.style.color='var(--brand-dk)'; }
-      else if(!c.vanmcu){ cs.textContent='CAN: libsysmcu.so 미탑재 (비-Apollo 기기)'; cs.style.background='#fdeede'; cs.style.color='#b9760f'; }
-      else { cs.textContent='CAN: 채널 열기 실패 (setCanSpeed)'; cs.style.background='#fdeede'; cs.style.color='var(--danger)'; }
-      const ti=$('txInfo');
-      if(ti) ti.textContent='송신 '+(c.txCount||0)+' · 수신 '+(c.rxCount||0)+'프레임 · CanWrite '+(c.lastTxOk?'성공':'실패/없음')
-             +' · ch='+curCh+' '+(curBr/1000)+'k '+(curEff?'확장강제':'자동')+' · RX '+(c.rxEnabled?'켬':'끔');
-    }catch(e){ cs.textContent='CAN: 상태 불명(브리지 미연결)'; }
-  } else if(cs){ cs.textContent='CAN: 데모 모드(실 기기 아님)'; }
+  var cs = $('canStat');
+  if (cs && BR && BR.canStatus) {
+    try {
+      var c = JSON.parse(BR.canStatus());
+      if (c.canReady) {
+        cs.textContent = 'CAN: 연결됨 ✓ (모터 제어 가능)';
+        cs.style.background = 'var(--brand-lt)';
+        cs.style.color = 'var(--brand-dk)';
+      } else if (!c.vanmcu) {
+        cs.textContent = 'CAN: libsysmcu.so 미탑재 (비-Apollo 기기)';
+        cs.style.background = '#fdeede';
+        cs.style.color = '#b9760f';
+      } else {
+        cs.textContent = 'CAN: 채널 열기 실패 (setCanSpeed)';
+        cs.style.background = '#fdeede';
+        cs.style.color = 'var(--danger)';
+      }
+      var ti = $('txInfo');
+      if (ti) ti.textContent = '송신 ' + (c.txCount || 0) + ' · 수신 ' + (c.rxCount || 0) + '프레임 · CanWrite ' + (c.lastTxOk ? '성공' : '실패/없음') + ' · ch=' + curCh + ' ' + curBr / 1000 + 'k ' + (curEff ? '확장강제' : '자동') + ' · RX ' + (c.rxEnabled ? '켬' : '끔');
+    } catch (e) {
+      cs.textContent = 'CAN: 상태 불명(브리지 미연결)';
+    }
+  } else if (cs) {
+    cs.textContent = 'CAN: 데모 모드(실 기기 아님)';
+  }
   // RTK 화면 열려있으면 NTRIP 상태 갱신
-  const ns=$('ntStat');
-  if(ns && BR && BR.ntripStatus){
-    try{ const n=JSON.parse(BR.ntripStatus());
-      ns.textContent = n.connected ? ('연결됨 ✓ · 보정수신 '+(n.bytes||0)+' B') : (n.error ? ('미연결: '+n.error) : '미연결');
+  var ns = $('ntStat');
+  if (ns && BR && BR.ntripStatus) {
+    try {
+      var n = JSON.parse(BR.ntripStatus());
+      ns.textContent = n.connected ? '연결됨 ✓ · 보정수신 ' + (n.bytes || 0) + ' B' : n.error ? '미연결: ' + n.error : '미연결';
       ns.style.color = n.connected ? 'var(--brand)' : 'var(--danger)';
-    }catch(e){}
-  } else if(ns){ ns.textContent='데모 모드(실 기기 아님)'; }
+    } catch (e) {}
+  } else if (ns) {
+    ns.textContent = '데모 모드(실 기기 아님)';
+  }
   // GNSS 화면 열려있으면 상태/진단 갱신
-  const gs=$('gStat');
-  if(gs){ gs.textContent='소스: '+(S.activeGnss||'-')
-      +' · heading '+(S.headingDeg!=null?Math.round(S.headingDeg)+'°':'-')
-      +(S.headingDegraded?' ⚠열화':'')
-      +' · 오차 '+(typeof S.xte==='number'?Math.round(S.xte):'-')+'cm'; }
-  const gd=$('gDiagR');
-  if(gd && BR && BR.mountDiagStatus){ try{ const c=JSON.parse(BR.mountDiagStatus());
-    gd.textContent = (c.active===false||c.active===undefined) ? '미실행'
-      : ('진행 '+Math.round((c.progress||0)*100)+'% · base='+(c.base_antenna||'-')
-         +' · offset='+(c.rec_baseline_offset_deg!=null?c.rec_baseline_offset_deg+'°':'-')
-         +' · roll='+(c.rec_dual_roll_sign!=null?(c.rec_dual_roll_sign>0?'+1':'-1'):'-'));
-  }catch(e){} }
+  var gs = $('gStat');
+  if (gs) {
+    gs.textContent = '소스: ' + (S.activeGnss || '-') + ' · heading ' + (S.headingDeg != null ? Math.round(S.headingDeg) + '°' : '-') + (S.headingDegraded ? ' ⚠열화' : '') + ' · 오차 ' + (typeof S.xte === 'number' ? Math.round(S.xte) : '-') + 'cm';
+  }
+  var gd = $('gDiagR');
+  if (gd && BR && BR.mountDiagStatus) {
+    try {
+      var _c = JSON.parse(BR.mountDiagStatus());
+      gd.textContent = _c.active === false || _c.active === undefined ? '미실행' : '진행 ' + Math.round((_c.progress || 0) * 100) + '% · base=' + (_c.base_antenna || '-') + ' · offset=' + (_c.rec_baseline_offset_deg != null ? _c.rec_baseline_offset_deg + '°' : '-') + ' · roll=' + (_c.rec_dual_roll_sign != null ? _c.rec_dual_roll_sign > 0 ? '+1' : '-1' : '-');
+    } catch (e) {}
+  }
   // 모터 하트비트(피드백) 표시
-  const hi=$('hbInfo');
-  if(hi){
-    const h=S.hb;
-    if(h && (('angle_deg' in h)||('speed_rpm' in h))){
-      const f=(h.faults&&h.faults.length)?('⚠ '+h.faults.join(', ')):'정상';
-      hi.textContent='각도 '+Math.round(h.angle_deg||0)+'° · '+(h.speed_rpm||0)+'RPM · 전류 '+(h.current||0)+' · '+f;
-      hi.style.color=(h.faults&&h.faults.length)?'var(--danger)':'var(--muted)';
-    } else { hi.textContent='하트비트(모터 피드백): 수신 없음'; hi.style.color='var(--muted)'; }
+  var hi = $('hbInfo');
+  if (hi) {
+    var h = S.hb;
+    if (h && ('angle_deg' in h || 'speed_rpm' in h)) {
+      var f = h.faults && h.faults.length ? '⚠ ' + h.faults.join(', ') : '정상';
+      hi.textContent = '각도 ' + Math.round(h.angle_deg || 0) + '° · ' + (h.speed_rpm || 0) + 'RPM · 전류 ' + (h.current || 0) + ' · ' + f;
+      hi.style.color = h.faults && h.faults.length ? 'var(--danger)' : 'var(--muted)';
+    } else {
+      hi.textContent = '하트비트(모터 피드백): 수신 없음';
+      hi.style.color = 'var(--muted)';
+    }
   }
   // 주행 튜닝 패널(열려있을 때)
-  const tv=$('tnVendor'); if(tv) tv.textContent=S.vendorName||'-';
-  const tnf=$('tnInfo');
-  if(tnf){
-    const pf={normal:'일반(로터리/방제)',heavy:'과부하(쟁기/균평)',sand:'사질토'}[S.profile]||S.profile||'-';
-    tnf.textContent='현재 모드: '+pf+(S.vendorName?(' · '+S.vendorName+' 튜닝값 적용됨'):'');
+  var tv = $('tnVendor');
+  if (tv) tv.textContent = S.vendorName || '-';
+  var tnf = $('tnInfo');
+  if (tnf) {
+    var pf = {
+      normal: '일반(로터리/방제)',
+      heavy: '과부하(쟁기/균평)',
+      sand: '사질토'
+    }[S.profile] || S.profile || '-';
+    tnf.textContent = '현재 모드: ' + pf + (S.vendorName ? ' · ' + S.vendorName + ' 튜닝값 적용됨' : '');
     // 현재 모드 버튼 하이라이트
-    document.querySelectorAll('#detailBody .modebtn').forEach(b=>
-      b.classList.toggle('sel', b.dataset.mode===S.profile));
+    document.querySelectorAll('#detailBody .modebtn').forEach(function (b) {
+      return b.classList.toggle('sel', b.dataset.mode === S.profile);
+    });
     // 현재 알고리즘 버튼 하이라이트 (implement_ff = 작업기 곡선보정)
-    document.querySelectorAll('#detailBody .algobtn').forEach(b=>
-      b.classList.toggle('sel', b.dataset.algo===(S.algo||'pure_pursuit')));
+    document.querySelectorAll('#detailBody .algobtn').forEach(function (b) {
+      return b.classList.toggle('sel', b.dataset.algo === (S.algo || 'pure_pursuit'));
+    });
   }
   // 헤딩 바이어스 캘리브 진행률
-  const hc=$('oa_hcalib');
-  if(hc && BR && BR.headingCalibStatus){ try{ const c=JSON.parse(BR.headingCalibStatus());
-    hc.textContent = c.active ? ('수집 '+Math.round((c.progress||0)*100)+'%')
-      : (Math.abs(c.bias_deg||0)>0.01 ? ('보정 '+Number(c.bias_deg).toFixed(2)+'°') : '시작'); }catch(e){} }
+  var hc = $('oa_hcalib');
+  if (hc && BR && BR.headingCalibStatus) {
+    try {
+      var _c2 = JSON.parse(BR.headingCalibStatus());
+      hc.textContent = _c2.active ? '수집 ' + Math.round((_c2.progress || 0) * 100) + '%' : Math.abs(_c2.bias_deg || 0) > 0.01 ? '보정 ' + Number(_c2.bias_deg).toFixed(2) + '°' : '시작';
+    } catch (e) {}
+  }
   // IMU 영점 캘리브 진행률 (데이터 들어와야 progress 증가)
-  const ic=$('oa_imuzero');
-  if(ic && BR && BR.imuCalibStatus){ try{ const c=JSON.parse(BR.imuCalibStatus());
-    ic.textContent = c.active ? ('수집 '+Math.round((c.progress||0)*100)+'% ('+(c.samples||0)+')')
-      : (c.applied ? ('완료 roll '+(c.roll*57.2958).toFixed(1)+'°') : '실행'); }catch(e){} }
+  var ic = $('oa_imuzero');
+  if (ic && BR && BR.imuCalibStatus) {
+    try {
+      var _c3 = JSON.parse(BR.imuCalibStatus());
+      ic.textContent = _c3.active ? '수집 ' + Math.round((_c3.progress || 0) * 100) + '% (' + (_c3.samples || 0) + ')' : _c3.applied ? '완료 roll ' + (_c3.roll * 57.2958).toFixed(1) + '°' : '실행';
+    } catch (e) {}
+  }
   // 조향비 자동측정 진행/결과
-  const sc=$('oa_steercal');
-  if(sc && BR && BR.steerRatioCalibStatus){ try{ const c=JSON.parse(BR.steerRatioCalibStatus());
-    sc.textContent = c.active ? ('수집 n='+(c.n||0)+' R²='+(c.r2!=null?c.r2:'-'))
-      : (c.applied ? ('완료 비율 '+Number(c.steer_ratio).toFixed(2)) : ('현재 '+Number(c.steer_ratio).toFixed(1))); }catch(e){} }
+  var sc = $('oa_steercal');
+  if (sc && BR && BR.steerRatioCalibStatus) {
+    try {
+      var _c4 = JSON.parse(BR.steerRatioCalibStatus());
+      sc.textContent = _c4.active ? '수집 n=' + (_c4.n || 0) + ' R²=' + (_c4.r2 != null ? _c4.r2 : '-') : _c4.applied ? '완료 비율 ' + Number(_c4.steer_ratio).toFixed(2) : '현재 ' + Number(_c4.steer_ratio).toFixed(1);
+    } catch (e) {}
+  }
 }
 
 // ───────── 부팅 시퀀스 ─────────
-function bootSeq(){
-  let p=8; const t=setInterval(()=>{
-    p+=Math.random()*22; if(p>=100){ p=100; clearInterval(t); setTimeout(()=>show('consent'),350); }
-    $('boot').querySelector('.track').style.setProperty('--p',p+'%');
-    $('bootPct').textContent=Math.round(p)+'%';
-  },240);
+function bootSeq() {
+  var p = 8;
+  var t = setInterval(function () {
+    p += Math.random() * 22;
+    if (p >= 100) {
+      p = 100;
+      clearInterval(t);
+      setTimeout(function () {
+        return show('consent');
+      }, 350);
+    }
+    $('boot').querySelector('.track').style.setProperty('--p', p + '%');
+    $('bootPct').textContent = Math.round(p) + '%';
+  }, 240);
 }
 
 // ── 작업화면 컨트롤(넛지/유턴/섹션) + 비상정지 ──
-document.querySelectorAll('.nbtn').forEach(b=>b.onclick=()=>{
-  const cm=parseInt(b.dataset.nudge,10);
-  if(cm===0){ if(BR&&BR.nudge){try{BR.nudge(-S.nudge_cm);}catch(e){}} S.nudge_cm=0; toast('중앙 복귀'); }
-  else { if(BR&&BR.nudge){try{BR.nudge(cm);}catch(e){}} S.nudge_cm=(S.nudge_cm||0)+cm; toast((cm>0?'좌':'우')+' 넛지 '+Math.abs(S.nudge_cm)+'cm'); }
+document.querySelectorAll('.nbtn').forEach(function (b) {
+  return b.onclick = function () {
+    var cm = parseInt(b.dataset.nudge, 10);
+    if (cm === 0) {
+      if (BR && BR.nudge) {
+        try {
+          BR.nudge(-S.nudge_cm);
+        } catch (e) {}
+      }
+      S.nudge_cm = 0;
+      toast('중앙 복귀');
+    } else {
+      if (BR && BR.nudge) {
+        try {
+          BR.nudge(cm);
+        } catch (e) {}
+      }
+      S.nudge_cm = (S.nudge_cm || 0) + cm;
+      toast((cm > 0 ? '좌' : '우') + ' 넛지 ' + Math.abs(S.nudge_cm) + 'cm');
+    }
+  };
 });
-document.querySelectorAll('.ubtn').forEach(b=>b.onclick=()=>{
-  toast('유턴 '+(b.dataset.uturn==='L'?'좌':'우')+' (헤드랜드 회전)'); });
-const _secAdj=(d)=>{ S.section=Math.max(1,Math.min(24,(S.section||4)+d));
-  if(BR&&BR.setSectionCount){try{BR.setSectionCount(S.section);}catch(e){}}
-  const e=$('secN'); if(e)e.textContent=S.section; };
-$('secUp')&&($('secUp').onclick=()=>_secAdj(1));
-$('secDn')&&($('secDn').onclick=()=>_secAdj(-1));
-$('estop')&&($('estop').onclick=()=>{ if(BR&&BR.estop){try{BR.estop();}catch(e){}} S.steerOn=false; toast('■ 비상정지'); });
+document.querySelectorAll('.ubtn').forEach(function (b) {
+  return b.onclick = function () {
+    toast('유턴 ' + (b.dataset.uturn === 'L' ? '좌' : '우') + ' (헤드랜드 회전)');
+  };
+});
+var _secAdj = function _secAdj(d) {
+  S.section = Math.max(1, Math.min(24, (S.section || 4) + d));
+  if (BR && BR.setSectionCount) {
+    try {
+      BR.setSectionCount(S.section);
+    } catch (e) {}
+  }
+  var e = $('secN');
+  if (e) e.textContent = S.section;
+};
+$('secUp') && ($('secUp').onclick = function () {
+  return _secAdj(1);
+});
+$('secDn') && ($('secDn').onclick = function () {
+  return _secAdj(-1);
+});
+$('estop') && ($('estop').onclick = function () {
+  if (BR && BR.estop) {
+    try {
+      BR.estop();
+    } catch (e) {}
+  }
+  S.steerOn = false;
+  toast('■ 비상정지');
+});
 
 // 백드롭(빈 배경) 탭으로 오버레이/모달 닫기 → 어떤 경우에도 갇히지 않음
-$('settings').addEventListener('click',e=>{ if(e.target===$('settings')) setOverlay('settings',false); });
-['modeModal','pathModal','warn'].forEach(id=>$(id).addEventListener('click',e=>{ if(e.target===$(id)) setModal(id,false); }));
+$('settings').addEventListener('click', function (e) {
+  if (e.target === $('settings')) setOverlay('settings', false);
+});
+['modeModal', 'pathModal', 'warn'].forEach(function (id) {
+  return $(id).addEventListener('click', function (e) {
+    if (e.target === $(id)) setModal(id, false);
+  });
+});
 
 // ───────── 화면 자동 맞춤 (scale-to-fit) ─────────
-const DESIGN_W=1024, DESIGN_H=600;
-function fitScreen(){
-  const vw=window.innerWidth, vh=window.innerHeight;
-  const s=Math.min(vw/DESIGN_W, vh/DESIGN_H);
-  const x=Math.round((vw-DESIGN_W*s)/2), y=Math.round((vh-DESIGN_H*s)/2);
-  const app=$('app');
-  if(app) app.style.transform=`translate(${x}px,${y}px) scale(${s})`;
+var DESIGN_W = 1024,
+  DESIGN_H = 600;
+function fitScreen() {
+  var vw = window.innerWidth,
+    vh = window.innerHeight;
+  var s = Math.min(vw / DESIGN_W, vh / DESIGN_H);
+  var x = Math.round((vw - DESIGN_W * s) / 2),
+    y = Math.round((vh - DESIGN_H * s) / 2);
+  var app = $('app');
+  if (app) app.style.transform = "translate(" + x + "px," + y + "px) scale(" + s + ")";
 }
-window.addEventListener('resize',fitScreen);
-window.addEventListener('orientationchange',fitScreen);
-window.addEventListener('load',fitScreen);
-setTimeout(fitScreen,150);   // WebView 초기 치수 보정
+window.addEventListener('resize', fitScreen);
+window.addEventListener('orientationchange', fitScreen);
+window.addEventListener('load', fitScreen);
+setTimeout(fitScreen, 150); // WebView 초기 치수 보정
 
 // init
 fitScreen();
-drawField($('fieldSvgMain')); drawField($('fieldSvgWork'));
-$('tractorMain').innerHTML=TRACTOR_SVG;
-closeAllLayers();                 // 부팅 시 어떤 오버레이/모달도 열려있지 않도록 강제
-renderSetList('user');            // 설정 리스트 미리 렌더(빈 드로어 방지)
-initVendors();                    // 벤더 카드 미리 렌더(빈 화면 방지)
+drawField($('fieldSvgMain'));
+drawField($('fieldSvgWork'));
+$('tractorMain').innerHTML = TRACTOR_SVG;
+closeAllLayers(); // 부팅 시 어떤 오버레이/모달도 열려있지 않도록 강제
+renderSetList('user'); // 설정 리스트 미리 렌더(빈 드로어 방지)
+initVendors(); // 벤더 카드 미리 렌더(빈 화면 방지)
 renderStatusbars();
 // 저장된 NTRIP 설정이 있으면 부팅 시 자동 접속
-(function(){ const c=loadNtrip(); if(c && c.host && c.mount) ntripConnect(c); })();
+(function () {
+  var c = loadNtrip();
+  if (c && c.host && c.mount) ntripConnect(c);
+})();
 bootSeq();
-setInterval(poll,120);
+setInterval(poll, 120);
 </script>
 </body>
 </html>
