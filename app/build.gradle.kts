@@ -11,7 +11,7 @@ android {
 
     defaultConfig {
         applicationId = "com.farmmachine.autosteer"
-        minSdk = 24                 // Apollo 10 Pro = Android 9 (API 28)
+        minSdk = 23                 // Apollo 10 Pro 변종 = Android 6.0.1(API 23, armeabi-v7a). 실기기 getprop 확인
         targetSdk = 35
         versionCode = (project.findProperty("versionCodeOverride") as? String)?.toIntOrNull() ?: 1
         versionName = "0.1"
