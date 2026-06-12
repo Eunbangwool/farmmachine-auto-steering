@@ -47,7 +47,14 @@ class AutoSteerService : Service() {
                 NotificationChannel(channelId, "자율조향",
                     NotificationManager.IMPORTANCE_LOW))
         }
-        val notif: Notification = Notification.Builder(this, channelId)
+        // Notification.Builder(Context, channelId) 생성자는 API 26+. API 23~25 는
+        // 채널 없는 deprecated 생성자를 써야 함(채널은 O 미만에서 무의미) → SDK_INT 분기.
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, channelId)
+        } else {
+            @Suppress("DEPRECATION") Notification.Builder(this)
+        }
+        val notif: Notification = builder
             .setContentTitle("팜머신 자율조향")
             .setContentText("CAN 브릿지 + 제어 루프 실행 중")
             .setSmallIcon(android.R.drawable.ic_menu_compass)

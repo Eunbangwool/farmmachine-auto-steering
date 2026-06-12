@@ -1,18 +1,17 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose")
     id("com.chaquo.python")
 }
 
 android {
     namespace = "com.farmmachine.autosteer"
-    compileSdk = 35
+    compileSdk = 34             // AGP 8.2 상한(35 는 AGP 8.6+ 필요). Chaquopy 15.0.1 스택과 정합
 
     defaultConfig {
         applicationId = "com.farmmachine.autosteer"
-        minSdk = 24                 // Apollo 10 Pro = Android 9 (API 28)
-        targetSdk = 35
+        minSdk = 23                 // Apollo 10 Pro 변종 = Android 6.0.1(API 23, armeabi-v7a). 실기기 getprop 확인
+        targetSdk = 34
         versionCode = (project.findProperty("versionCodeOverride") as? String)?.toIntOrNull() ?: 1
         versionName = "0.1"
 
@@ -45,7 +44,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    // Compose 미사용(운영 UI 는 WebView+assets HTML). Chaquopy 15.0.1 다운그레이드 시 제거.
 }
 
 chaquopy {
@@ -69,14 +68,8 @@ chaquopy {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2024.09.03")
-    implementation(composeBom)
+    // Compose 제거 — UI 는 WebView(MainActivity.setContentView). ComponentActivity 는 activity-ktx 제공.
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
-    implementation("androidx.activity:activity-compose:1.9.2")
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
-    debugImplementation("androidx.compose.ui:ui-tooling")
+    implementation("androidx.activity:activity-ktx:1.9.2")
 }
