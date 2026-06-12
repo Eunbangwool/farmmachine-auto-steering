@@ -467,6 +467,9 @@ if (!Object.values) {
     return r;
   };
 }
+if (window.NodeList && !NodeList.prototype.forEach) {
+  NodeList.prototype.forEach = Array.prototype.forEach;
+}
 
 var $ = function $(id) {
   return document.getElementById(id);
