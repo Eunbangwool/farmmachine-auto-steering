@@ -441,7 +441,7 @@ var S = {
   }
 };
 function closeAllLayers() {
-  document.querySelectorAll('.overlay,.modal,.detail').forEach(function (o) {
+  Array.prototype.forEach.call(document.querySelectorAll('.overlay,.modal,.detail'), function (o) {
     return o.classList.remove('on');
   });
 }
@@ -450,7 +450,7 @@ function show(id) {
     jogStop();
   } catch (e) {}
   closeAllLayers();
-  document.querySelectorAll('.screen').forEach(function (s) {
+  Array.prototype.forEach.call(document.querySelectorAll('.screen'), function (s) {
     return s.classList.remove('on');
   });
   $(id).classList.add('on');
@@ -540,7 +540,7 @@ function renderSetList(sel) {
   $('setList').innerHTML = MENU.map(function (m) {
     return "\n    <div class=\"mitem " + (m.key === sel ? 'sel' : '') + "\" data-k=\"" + m.key + "\">\n      <svg class=\"ic\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"" + m.ic + "\"/></svg>\n      <span class=\"lbl\">" + m.label + "</span><span class=\"ch\">\u203A</span></div>";
   }).join('');
-  $('setList').querySelectorAll('.mitem').forEach(function (el) {
+  Array.prototype.forEach.call($('setList').querySelectorAll('.mitem'), function (el) {
     return el.onclick = function () {
       return openDetail(el.dataset.k);
     };
@@ -834,7 +834,7 @@ function saveNtrip(c) {
 }
 function readNtripForm() {
   var c = {};
-  document.querySelectorAll('.nti').forEach(function (i) {
+  Array.prototype.forEach.call(document.querySelectorAll('.nti'), function (i) {
     return c[i.dataset.k] = (i.value || '').trim();
   });
   return c;
@@ -898,7 +898,7 @@ function jogStop() {
   if (st) st.textContent = '정지';
 }
 function wireJog() {
-  document.querySelectorAll('.jogbtn').forEach(function (btn) {
+  Array.prototype.forEach.call(document.querySelectorAll('.jogbtn'), function (btn) {
     var dir = parseInt(btn.dataset.dir, 10);
     var start = function start(e) {
       e.preventDefault();
@@ -931,13 +931,13 @@ function wireJog() {
     }
   };
   // 진단 토글 (채널/비트레이트/확장ID)
-  document.querySelectorAll('.dbtn').forEach(function (b) {
+  Array.prototype.forEach.call(document.querySelectorAll('.dbtn'), function (b) {
     var k = b.dataset.k,
       v = b.dataset.v;
     var cur = k === 'ch' ? String(curCh) : k === 'br' ? String(curBr) : k === 'eff' ? curEff ? '1' : '0' : curRx ? '1' : '0';
     if (v === cur) b.classList.add('sel');
     b.onclick = function () {
-      document.querySelectorAll('.dbtn[data-k="' + k + '"]').forEach(function (x) {
+      Array.prototype.forEach.call(document.querySelectorAll('.dbtn[data-k="' + k + '"]'), function (x) {
         return x.classList.remove('sel');
       });
       b.classList.add('sel');
@@ -993,7 +993,7 @@ function initVendors() {
   $('vcards').innerHTML = vendorList().map(function (v) {
     return "\n    <div class=\"vcard\" data-k=\"" + v.key + "\">\n      <div class=\"vn\">" + v.name + "</div><div class=\"vt\">" + (v.tagline || '') + "</div>\n      <div class=\"vg\">GNSS: " + (v.gnss || '-') + "</div>\n      <span class=\"vbadge " + (v.can_verified ? 'ok' : 'todo') + "\">" + (v.can_verified ? '조향 지원' : 'GNSS만 · 모터 준비중') + "</span>\n    </div>";
   }).join('');
-  $('vcards').querySelectorAll('.vcard').forEach(function (el) {
+  Array.prototype.forEach.call($('vcards').querySelectorAll('.vcard'), function (el) {
     return el.onclick = function () {
       if (BR && BR.setVendor) {
         try {
@@ -1037,7 +1037,7 @@ $('btnDrive').onclick = function () {
 $('modeX').onclick = function () {
   return setModal('modeModal', false);
 };
-document.querySelectorAll('#modeModal .choice').forEach(function (c) {
+Array.prototype.forEach.call(document.querySelectorAll('#modeModal .choice'), function (c) {
   return c.onclick = function () {
     setModal('modeModal', false);
     setModal('pathModal', true);
@@ -1325,11 +1325,11 @@ function poll() {
     }[S.profile] || S.profile || '-';
     tnf.textContent = '현재 모드: ' + pf + (S.vendorName ? ' · ' + S.vendorName + ' 튜닝값 적용됨' : '');
     // 현재 모드 버튼 하이라이트
-    document.querySelectorAll('#detailBody .modebtn').forEach(function (b) {
+    Array.prototype.forEach.call(document.querySelectorAll('#detailBody .modebtn'), function (b) {
       return b.classList.toggle('sel', b.dataset.mode === S.profile);
     });
     // 현재 알고리즘 버튼 하이라이트 (implement_ff = 작업기 곡선보정)
-    document.querySelectorAll('#detailBody .algobtn').forEach(function (b) {
+    Array.prototype.forEach.call(document.querySelectorAll('#detailBody .algobtn'), function (b) {
       return b.classList.toggle('sel', b.dataset.algo === (S.algo || 'pure_pursuit'));
     });
   }
@@ -1377,7 +1377,7 @@ function bootSeq() {
 }
 
 // ── 작업화면 컨트롤(넛지/유턴/섹션) + 비상정지 ──
-document.querySelectorAll('.nbtn').forEach(function (b) {
+Array.prototype.forEach.call(document.querySelectorAll('.nbtn'), function (b) {
   return b.onclick = function () {
     var cm = parseInt(b.dataset.nudge, 10);
     if (cm === 0) {
@@ -1399,7 +1399,7 @@ document.querySelectorAll('.nbtn').forEach(function (b) {
     }
   };
 });
-document.querySelectorAll('.ubtn').forEach(function (b) {
+Array.prototype.forEach.call(document.querySelectorAll('.ubtn'), function (b) {
   return b.onclick = function () {
     toast('유턴 ' + (b.dataset.uturn === 'L' ? '좌' : '우') + ' (헤드랜드 회전)');
   };
