@@ -974,10 +974,14 @@ function wireJog() {
       e.preventDefault();
       jogStop();
     };
-    btn.onpointerdown = start;
-    btn.onpointerup = end;
-    btn.onpointerleave = end;
-    btn.onpointercancel = end;
+    // Pointer Events 는 Chrome 44(Android 6.0.1) 미지원 → touch+mouse 로 바인딩.
+    // touchstart 에서 preventDefault 하면 합성 mouse 이벤트가 억제돼 중복 실행 없음.
+    btn.addEventListener('touchstart', start, false);
+    btn.addEventListener('touchend', end, false);
+    btn.addEventListener('touchcancel', end, false);
+    btn.addEventListener('mousedown', start, false);
+    btn.addEventListener('mouseup', end, false);
+    btn.addEventListener('mouseleave', end, false);
   });
   var sb = $('jogStop');
   if (sb) sb.onclick = jogStop;
@@ -1241,15 +1245,13 @@ function stopEngage() {
 (function () {
   var bs = $('btnStart');
   if (!bs) return;
-  bs.addEventListener('pointerdown', function (e) {
-    e.preventDefault();
-    startEngage();
-  });
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
-    return bs.addEventListener(ev, function (e) {
-      e.preventDefault();
-      stopEngage();
-    });
+  // Pointer Events 는 Chrome 44 미지원 → touch+mouse 로.
+  var press = function press(e) { if (e.cancelable) e.preventDefault(); startEngage(); };
+  var release = function release(e) { if (e.cancelable) e.preventDefault(); stopEngage(); };
+  bs.addEventListener('touchstart', press, false);
+  bs.addEventListener('mousedown', press, false);
+  ['touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach(function (ev) {
+    return bs.addEventListener(ev, release, false);
   });
 })();
 $('warnClose').onclick = function () {
