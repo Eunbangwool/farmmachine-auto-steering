@@ -1055,7 +1055,7 @@ function adaptMotorVendor() {
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
     + '<button class="pill" data-cpbaud="250000" style="flex:1;min-width:90px">baud 250k</button>'
     + '<button class="pill" data-cpbaud="500000" style="flex:1;min-width:90px">baud 500k</button></div>'
-    + '<button class="pill" id="cpRxReg" style="background:#5c6bc0;color:#fff;margin-top:8px">RX 등록 (code1) — 재등록</button>'
+    + '<button class="pill" id="cpRxReg" style="background:#8d6e63;color:#fff;margin-top:8px">⚠ RX 등록 (code1) — 서비스 크래시 위험</button>'
     + '<div id="cpTxOut" style="font-size:11px;color:var(--sub);margin-top:8px;white-space:pre-wrap">대기</div>';
   $('detailBody').appendChild(box);
   var out = function (t) { var e = $('cpTxOut'); if (e) e.textContent = t; };
@@ -1094,7 +1094,7 @@ function adaptMotorVendor() {
   };
   if ($('cpRxReg')) $('cpRxReg').onclick = function () {
     var r = '-'; try { if (BR && BR.cpdevRegisterRx) r = BR.cpdevRegisterRx(true); } catch (e) {}
-    out('RX 등록(code1) → ' + r + '  (logcat CpdeviceCan-RX 에 RX 프레임 들어오는지 확인)');
+    out('⚠ RX 등록(code1) → ' + r + '\n경고: 콜백 인터페이스 미확정이라 cpcomm 서비스가 죽을 수 있음. 모터 제어엔 불필요.');
   };
   if ($('cpOpenCan')) $('cpOpenCan').onclick = function () {
     var r = '-'; try { if (BR && BR.cpdevOpenCan) r = BR.cpdevOpenCan(); } catch (e) {}

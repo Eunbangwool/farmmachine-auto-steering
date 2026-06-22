@@ -78,8 +78,9 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
 
         // observe-only: 고주파 자동 스트리밍 TX 만 차단(개통/RX 등록/수동 버튼 TX 는 허용).
         @Volatile var observeOnly = true
-        // ★ 시작 시 registerCallback(code1) 자동 — 단, 반드시 setCANBaudrate(개통) **뒤**에.
-        @Volatile var registerRx = true
+        // ★ registerCallback(code1) 자동등록 기본 OFF — 실측: code1 호출 ~100ms 뒤 서비스 크래시
+        //   (콜백 IBinder 인터페이스 미확정). 반복되면 init 가 서비스를 영구 비활성. 모터 제어는 TX(code7)만으로 가능.
+        @Volatile var registerRx = false
         // ★ Python 고주파 스트리밍 게이트(안전). 수동 점검 버튼(txTestFrame)은 우회.
         @Volatile var txEnabled = false
 
@@ -114,11 +115,17 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
      *   죽은 binder 라 DeadObject. 그래서 개통 후 재시작이 끝나길 기다린 뒤 **안정된 새 인스턴스**에 등록.
      */
     private fun initCan() {
-        openCan()                                   // code3 — 서비스 재시작 유발(canOpened=true)
-        try { Thread.sleep(350) } catch (_: Throwable) {}   // 비동기 크래시(~90ms)가 먼저 일어나도록 양보
-        val b = waitForService(3000)                // 재시작 대기 + 새 핸들(linkToDeath) 재획득
-        if (b == null) { Log.w(TAG, "CpDev: initCan — 서비스 재시작 대기 실패(binder null)"); return }
-        if (registerRx) registerRxCallback()        // 안정된 새 인스턴스에 RX 콜백(code1) 등록
+        // ★ 실측 정정: 서비스를 죽이는 건 setCANBaudrate(code3)가 아니라 registerCallback(code1)였음.
+        //   (code3 후 467ms binder 생존, registerCallback 직후 ~100ms 에 DIED). 콜백 IBinder 인터페이스가
+        //   미확정이라 native 서비스가 크래시 → 반복되면 init 가 서비스를 영구 비활성(getService=null).
+        //   → 모터 제어는 sendCanFrame(code7)만으로 가능. registerCallback 은 registerRx=true 수동일 때만.
+        openCan()                                   // code3 — 서비스 생존(재시작 아님). canOpened=true
+        if (registerRx) {
+            Log.w(TAG, "CpDev: ⚠ registerCallback(code1) — 서비스 크래시 위험(콜백 IF 미확정)")
+            registerRxCallback()
+        } else {
+            Log.i(TAG, "CpDev: RX 콜백 등록 생략(서비스 크래시 방지). 모터 제어=TX(code7)만. RX 는 code1 IF 확정 후.")
+        }
         Log.i(TAG, "CpDev: initCan done binderReady=$binderReady canOpened=$canOpened")
     }
 
@@ -293,8 +300,8 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         if (b != null && (try { b.isBinderAlive } catch (_: Throwable) { false })) return b
         Log.w(TAG, "CpDev: binder dead/null -> reconnect (getService again)")
         connectBinder()
-        // 재시작된 새 인스턴스엔 이전 RX 콜백 등록이 없음 → 재등록. 개통(code3)은 재실행 안 함(또 재시작 유발).
-        if (binderReady && registerRx) registerRxCallback()
+        // ★ 재연결 시 registerCallback 자동호출 **금지** — 이게 죽음의 폭주(reconnect→register→crash→…) 원인이었음.
+        //   RX 콜백은 registerRx 수동일 때만. 개통(code3)도 재실행 안 함(canOpened 유지).
         return binder
     }
 
