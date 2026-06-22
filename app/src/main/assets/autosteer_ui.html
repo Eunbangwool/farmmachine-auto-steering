@@ -570,6 +570,11 @@ function forceRepaint(el) {
     else setTimeout(clear, 16);
   } catch (e) {}
 }
+// 벤더 패밀리(헤딩/CAN 경로) — UI 표시·숨김 기준. (CLAUDE.md: ver1 듀얼 / ver2·chcnav·fjd = INS)
+function vIsDual() { return S.vendorKey === 'agmo_dual'; }            // 듀얼안테나+IMU
+function vIsIns()  { return S.vendorKey === 'agmo_single' || S.vendorKey === 'chcnav' || S.vendorKey === 'fjd'; } // 스마트안테나+INS
+function vIsCpdev(){ return S.vendorKey === 'agmo_single'; }          // cpdevice CAN(모터점검 단발 TX 패널)
+
 function setOverlay(id, on) {
   $(id).classList.toggle('on', on);
   if (on) forceRepaint($(id));
@@ -685,8 +690,8 @@ function openDetail(key) {
     var row = function row(act, l, r) {
       return "<div class=\"optrow\" data-act=\"" + act + "\"><span>" + l + "</span><span class=\"oa\" id=\"oa_" + act + "\">" + r + "</span></div>";
     };
-    var v2o = (S.vendorKey === 'agmo_single');
-    // 안테나 버전별: Ver2(싱글+INS)는 자이로 영점(gz_zero) / ver1(듀얼)은 IMU 영점.
+    var v2o = vIsIns();
+    // 안테나 버전별: INS(싱글+INS·chcnav·fjd)는 자이로 영점(gz_zero) / ver1(듀얼)은 IMU 영점.
     var imuLbl = v2o ? 'INS 자이로 영점 (gz_zero · 평지 정차)' : 'IMU 영점 설정';
     var hcalLbl = v2o ? '헤딩 바이어스 캘리브 (싱글+INS · 직선 20m)'
                       : '헤딩 바이어스 캘리브 (ver1 듀얼 · 직선 20m)';
@@ -700,13 +705,15 @@ function openDetail(key) {
     };
     h = inp('host', '서버 IP', cfg.host) + inp('port', '서버 포트', cfg.port) + inp('mount', '마운트 포인트', cfg.mount) + inp('user', '계정 ID', cfg.user) + inp('pw', '계정 비밀번호', cfg.pw, 'password') + "<button class=\"pill\" id=\"ntConnect\">\uC5F0\uACB0</button>" + "<button class=\"pill\" id=\"ntDisc\" style=\"background:var(--off);margin-top:8px\">\uD574\uC81C</button>" + "<div id=\"ntStat\" style=\"text-align:center;font-size:12px;color:var(--sub);margin-top:12px\">\uC0C1\uD0DC \uD655\uC778 \uC911\u2026</div>";
   } else if (key === 'gnss') {
-    var v2g = (S.vendorKey === 'agmo_single');
-    var gPortDef = S.gnssPort || (v2g ? '/dev/ttyS4' : '/dev/ttyHSL0');
-    if (v2g) {
-      // AGMO Ver2 \u2014 \uC2F1\uAE00\uC548\uD14C\uB098+INS, USB-\uC2DC\uB9AC\uC5BC \uC544\uB2CC \uB0B4\uBD80 /dev/ttyS4. \uBB34\uBE59\uBCA0\uC774\uC2A4/\uB4C0\uC5BC\uB9C8\uC6B4\uD2B8 \uC5C6\uC74C.
-      h = "<div style=\"font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:10px\">"
-        + "<b>AGMO Ver2 \u2014 \uC2F1\uAE00\uC548\uD14C\uB098+INS</b> (/dev/ttyS4). \uD5E4\uB529=\uC18D\uB3C4\uBCA1\uD130+\uC790\uC774\uB85C \uC735\uD569(\uC815\uC9C0 \uC2DC \uBD80\uC815\uD655).<br>"
-        + "\uC804\uC6D0 GPIO\u00B7\uBB34\uBE59\uBCA0\uC774\uC2A4 RELPOSNED\u00B7\uB4C0\uC5BC \uB9C8\uC6B4\uD2B8 \uC9C4\uB2E8\uC740 \uD574\uB2F9 \uC5C6\uC74C.</div>"
+    var insFam = vIsIns();
+    var gPortDef = S.gnssPort || (S.vendorKey === 'agmo_single' ? '/dev/ttyS4' : (insFam ? '' : '/dev/ttyHSL0'));
+    if (insFam) {
+      // INS \uC2A4\uB9C8\uD2B8\uC548\uD14C\uB098(ver2\u00B7chcnav\u00B7fjd) \u2014 \uBB34\uBE59\uBCA0\uC774\uC2A4/\uB4C0\uC5BC\uB9C8\uC6B4\uD2B8 \uC9C4\uB2E8 \uC5C6\uC74C. \uBE44-AGMO \uB294 \uBCA4\uB354\uBA85 \uC911\uB9BD \uD45C\uAE30(\uC0C1\uD45C \uBE44\uD63C\uC6A9).
+      var insName = S.vendorName || '\uC2A4\uB9C8\uD2B8\uC548\uD14C\uB098';
+      var insNote = (S.vendorKey === 'agmo_single')
+        ? '\uC2F1\uAE00\uC548\uD14C\uB098+INS (/dev/ttyS4). \uD5E4\uB529=\uC18D\uB3C4\uBCA1\uD130+\uC790\uC774\uB85C \uC735\uD569(\uC815\uC9C0 \uC2DC \uBD80\uC815\uD655).'
+        : insName + ' \uC2A4\uB9C8\uD2B8\uC548\uD14C\uB098(INS \uB0B4\uC7A5 \uD5E4\uB529). \uD3EC\uD2B8\uB294 \uC790\uB3D9\uD0D0\uC9C0\uB85C \uD655\uC778\uD558\uC138\uC694.';
+      h = "<div style=\"font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:10px\"><b>" + insName + " \u2014 \uC2A4\uB9C8\uD2B8\uC548\uD14C\uB098(INS)</b><br>" + insNote + "</div>"
         + "<button class=\"pill\" id=\"gScan\">\u2460 \uD3EC\uD2B8 \uC790\uB3D9 \uD0D0\uC9C0 (\uC218 \uCD08 \uC18C\uC694)</button>"
         + "<div id=\"gScanR\" style=\"font-size:12px;color:var(--sub);margin:8px 0;white-space:pre-line\">\u2014</div>"
         + "<div class=\"row\"><span class=\"k\">\uD3EC\uD2B8</span><input class=\"nti\" id=\"gPort\" value=\"" + gPortDef + "\" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"/></div>"
@@ -1036,7 +1043,12 @@ function jogStop() {
 // (채널 0/1/2·250k/500k·확장ID·RX = libsysmcu/ApolloCanBridge 전용)을 숨기고 안내로 대체.
 // 모터 회전(jog)·중앙설정·하트비트·스니핑은 그대로(전송 백엔드만 다름).
 function adaptMotorVendor() {
-  if (S.vendorKey !== 'agmo_single') return;
+  if (!vIsCpdev()) {
+    // 비-cpdevice 벤더: CAN 진단(채널/baud/확장ID/RX) 블록 불필요 → 숨김. jog/중앙설정/하트비트만 유지.
+    var diag0 = document.querySelector('#detailBody .diag');
+    if (diag0) diag0.style.display = 'none';
+    return;
+  }
   // ★ Ver2: 기존 jog/브리지 진단 토글 숨기고, cpdevice binder 수동 단발 TX 테스트 패널로 대체.
   var jb = document.querySelectorAll('#detailBody .jogbtn');
   for (var k = 0; k < jb.length; k++) jb[k].disabled = true;
