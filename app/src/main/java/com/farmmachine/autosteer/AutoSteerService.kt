@@ -24,7 +24,7 @@ class AutoSteerService : Service() {
         startForegroundCompat()
         HardwareInit.enable(this)   // GNSS(UM482)/CAN 전원 인에이블(com.van.service 브로드캐스트 + 네이티브 GPIO)
         // 기본 = apollo(ApolloCanBridge/VanMcu, agmo_dual). 벤더 선택 시 JsBridge.selectCanBridge 로 교체.
-        com.farmmachine.autosteer.can.CanBridgeHost.start("apollo")
+        com.farmmachine.autosteer.can.CanBridgeHost.start(this, "apollo")
         PythonEngine.boot(this, backend = "bridge")
     }
 

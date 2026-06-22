@@ -1,5 +1,6 @@
 package com.farmmachine.autosteer.can
 
+import android.content.Context
 import android.util.Log
 
 /**
@@ -18,9 +19,14 @@ object CanBridgeHost {
         private set
     private var apollo: ApolloCanBridge? = null
     private var cpdev: CpdeviceCanBridge? = null
+    // cpdevice 브리지는 com.android.guard 서비스 bindService 에 Context 필요(앱 컨텍스트 보관).
+    @Volatile private var appCtx: Context? = null
 
     @Synchronized
-    fun start(initial: String = "apollo") = select(initial)
+    fun start(context: Context, initial: String = "apollo") {
+        appCtx = context.applicationContext
+        select(initial)
+    }
 
     /** 활성 브리지 교체. agmo_dual=apollo(불변), agmo_single=cpdevice. */
     @Synchronized
@@ -33,7 +39,9 @@ object CanBridgeHost {
         try { cpdev?.stop() } catch (_: Throwable) {}
         apollo = null; cpdev = null
         if (want == "cpdevice") {
-            cpdev = CpdeviceCanBridge(PORT).also { it.start() }
+            val ctx = appCtx
+            if (ctx == null) { Log.e(TAG, "cpdevice 선택 실패: appCtx 없음(start(context) 먼저 호출 필요)"); return }
+            cpdev = CpdeviceCanBridge(ctx, PORT).also { it.start() }
         } else {
             apollo = ApolloCanBridge(port = PORT).also { it.start() }
         }

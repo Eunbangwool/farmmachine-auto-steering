@@ -43,6 +43,7 @@ CI(`.github/workflows/build-autosteer-apk.yml`)에서 검증. 새 파일은 andr
 | 2026-06-12 | CHCNAV 역분석 파라미터 프로파일 적용(작업 1~4), 단일/듀얼 헤딩만 분기 | CHCNAV_PARAM_PROFILE.md / CLAUDE_CODE_TASK.md |
 | 2026-06-16 | AGMO Ver2 추가 + 제조사 4지선다(agmo_dual/agmo_single/chcnav/fjd). agmo_single=싱글+INS·ttyS4·SocketCAN(can1)·can_verified=False(모터 CAN ID 미확정). SocketCAN listen_only+CAN 스니핑(can_sniff) 추가. 기존 agmo→agmo_dual(별칭 유지, 동작 동일). | CLAUDE_CODE_TASK_VER2.md (autokit2 역분석+/proc/fd) |
 | 2026-06-16 | 균평기 레벨 히트맵: 작업기 안테나(별도 USB GNSS) 독립 레이어 `implement_gnss.py` + 2D 탑다운 canvas 히트맵(편차 ±cm 색상). 차체 주행 GNSS 와 완전 분리, 4벤더 공통. | CLAUDE_CODE_TASK_LEVELER_UI.md |
+| 2026-06-22 | **Ver2 CAN 경로 전면 정정**: `CpdeviceCanBridge` 가 쓰던 `com.cpdevice.BnMcuCanService` raw transact(code3/7/1)는 원본 앱이 안 쓰는 경로였음(모터 무반응·code1 서비스 크래시 원인). 원본 확정 경로로 재구현 → **bindService(`com.android.guard.E9631Service`) AIDL `IRemoteService`**(handleData=txn1 송신/registerCallback=txn2/RX=valueChanged) + **프레이밍**(내부명령[type][len][payload]→BCC(b+=x;b2+=b)→0x55 이스케이프→STX 55 02..ETX 55 03). CAN송신 type=0x40 payload=[00][canId4 BE][dlc][data]; 개통 모드0x80=03→baud0x30(125=0x12/250=0x25/500=0x50)→채널0x82(0/1/2); 수신 type=0x41. Context 배선(Service→Host→Bridge)+`<queries>`(com.android.guard). | app-decompiled: IRemoteService/CommunicationService/Command/Spring (clean-room: 기능적 사실만 추출·자체구현) |
 
 ## 균평기 레벨 히트맵 (작업기 안테나) — 2026-06-16
 

@@ -12,6 +12,14 @@
     <!-- USB-CAN/GNSS(USB-serial) 부착 시 -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
+    <!-- Android 11+ 패키지 가시성: cpdevice MCU 서비스(com.android.guard) bindService 에 필요 -->
+    <queries>
+        <package android:name="com.android.guard" />
+        <intent>
+            <action android:name="com.android.guard.E9631Service" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
