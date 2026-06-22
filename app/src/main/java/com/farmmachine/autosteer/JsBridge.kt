@@ -98,6 +98,12 @@ class JsBridge {
         return """{"registerRx":$on,"result":"$r"}"""
     }
 
+    /** Ver2 CAN 개통(setCANBaudrate) code 탐색 — RX(code19)가 살아나는 code 자동 진단. logcat 관찰. */
+    @JavascriptInterface fun cpdevOpenSweep(): String {
+        val r = com.farmmachine.autosteer.can.CpdeviceCanBridge.instance?.openCanSweep() ?: "no-instance"
+        return """{"sweep":"$r"}"""
+    }
+
     /** Ver2 수동 단발 TX 테스트: kind=hb/neutral/plus/minus/enable/disable. 1버튼=1프레임. */
     @JavascriptInterface fun cpdevTxTest(kind: String): String {
         val fr = SteerController.cpdevTestFrame(kind)   // {"id":int,"data":"hex"}
