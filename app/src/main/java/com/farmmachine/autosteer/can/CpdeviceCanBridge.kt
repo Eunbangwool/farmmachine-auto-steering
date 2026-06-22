@@ -99,21 +99,27 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         Log.i(TAG, "CpDev: bridge start — 확정 순서: getService -> setCANBaudrate(code3) -> registerCallback(code1)")
         try {
             connectBinder()
-            initCan()        // ★ 개통 → 콜백등록. 이 순서 뒤에야 sendCanFrame(code7) 이 유효.
+            // ★ 개통→재시작대기→콜백등록은 블로킹(최대 ~3s)이라 백그라운드 스레드로(UI/JsBridge 비블로킹).
+            thread(name = "cpdev-init") { initCan() }
         } catch (e: Throwable) {
             Log.e(TAG, "CpDev ERR: init ${e.message}", e)
         }
         serverThread = thread(name = "cpdevice-can-bridge") { serve() }
-        Log.i(TAG, "CpDev: bridge started :$port (binderReady=$binderReady canOpened=$canOpened)")
+        Log.i(TAG, "CpDev: bridge started :$port (init in background)")
     }
 
-    /** 확정 init 순서: setCANBaudrate(code3) → registerCallback(code1). DeadObject 복구 시 동일하게 재실행. */
+    /**
+     * 확정 init 순서: setCANBaudrate(code3) → **재시작 대기** → registerCallback(code1).
+     * ★ 실측: code3 처리 후 ~90ms 에 서비스가 DIED→재시작(=baudrate 적용). 재시작 전에 콜백 등록하면
+     *   죽은 binder 라 DeadObject. 그래서 개통 후 재시작이 끝나길 기다린 뒤 **안정된 새 인스턴스**에 등록.
+     */
     private fun initCan() {
-        if (openCan()) {
-            if (registerRx) registerRxCallback()
-        } else {
-            Log.w(TAG, "CpDev: initCan — setCANBaudrate 실패 → registerCallback 보류(개통 먼저)")
-        }
+        openCan()                                   // code3 — 서비스 재시작 유발(canOpened=true)
+        try { Thread.sleep(350) } catch (_: Throwable) {}   // 비동기 크래시(~90ms)가 먼저 일어나도록 양보
+        val b = waitForService(3000)                // 재시작 대기 + 새 핸들(linkToDeath) 재획득
+        if (b == null) { Log.w(TAG, "CpDev: initCan — 서비스 재시작 대기 실패(binder null)"); return }
+        if (registerRx) registerRxCallback()        // 안정된 새 인스턴스에 RX 콜백(code1) 등록
+        Log.i(TAG, "CpDev: initCan done binderReady=$binderReady canOpened=$canOpened")
     }
 
     /**
@@ -153,7 +159,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
     fun setChannel(ch: Int) { channel = ch }   // 현장 진단용(채널 스윕)
 
     /** 수동 RX 콜백 등록(code 16) — TX 와 분리. 서비스 죽으면 다음 TX 가 재연결로 복구. */
-    fun registerRxNow(): String { registerRx = true; registerRxCallback(); return lastError }
+    fun registerRxNow(): String { registerRx = true; ensureBinder(); registerRxCallback(); return lastError }
 
     @Volatile private var burstStop = false
 
@@ -287,6 +293,8 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         if (b != null && (try { b.isBinderAlive } catch (_: Throwable) { false })) return b
         Log.w(TAG, "CpDev: binder dead/null -> reconnect (getService again)")
         connectBinder()
+        // 재시작된 새 인스턴스엔 이전 RX 콜백 등록이 없음 → 재등록. 개통(code3)은 재실행 안 함(또 재시작 유발).
+        if (binderReady && registerRx) registerRxCallback()
         return binder
     }
 
@@ -323,10 +331,11 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         }
         Log.i("CpdeviceCan-TX", "CpDev-TX: ch=%d id=0x%08X dlc=%d data=%s".format(
             channel, canId, dlc, data.copyOf(dlc).joinToString("") { "%02X".format(it) }))
-        // 1차 시도 → DeadObject 면 재연결 + setCANBaudrate부터 재실행 후 1회 재시도.
+        // 1차 시도 → DeadObject 면 재연결(+콜백 재등록)만 하고 1회 재시도. ★ 개통(code3)은 재실행 안 함:
+        //   code3 가 서비스 재시작을 유발하므로 매 DeadObject 마다 부르면 재시작 폭주. 재시작은 CAN 열린 채 복구됨.
         if (doTransactCan(canId, dlc, data, attempt = 1)) return true
-        Log.w("CpdeviceCan-TX", "CpDev-TX: retry — 재연결 + setCANBaudrate 재실행")
-        ensureBinder(); openCan(); if (registerRx) registerRxCallback()
+        Log.w("CpdeviceCan-TX", "CpDev-TX: retry — 재연결(콜백 재등록)")
+        ensureBinder()
         return doTransactCan(canId, dlc, data, attempt = 2)
     }
 
@@ -346,8 +355,8 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
             true
         } catch (e: android.os.DeadObjectException) {
             lastTxOk = false; lastError = "DeadObject"
-            binder = null; canOpened = false   // 죽은 핸들 폐기 → 재연결 + setCANBaudrate 재실행 필요
-            Log.w("CpdeviceCan-TX", "CpDev-TX: DeadObjectException (attempt=$attempt) -> drop handle, 재개통 필요")
+            binder = null   // 핸들만 폐기(canOpened 유지) → 재연결+콜백재등록으로 복구(개통 code3 재실행 안 함)
+            Log.w("CpdeviceCan-TX", "CpDev-TX: DeadObjectException (attempt=$attempt) -> drop handle, 재연결")
             false
         } catch (e: Throwable) {
             lastTxOk = false; lastError = "ERR txTest: ${e.message}"
@@ -430,7 +439,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
     }
 
     private fun registerRxCallback() {
-        val b = ensureBinder()
+        val b = binder    // ★ ensureBinder 호출 금지(재연결→재등록 재귀 방지). 호출자가 binder 보장.
         Log.i(TAG, "CpDev: registerCallback(code=$CODE_REGISTER_CALLBACK, IBinder) desc=\"$DESCRIPTOR\" binder=${b != null} canOpened=$canOpened")
         if (b == null) { Log.e(TAG, "CpDev ERR: registerCallback binder=null (getService failed)"); return }
         val p = Parcel.obtain(); val r = Parcel.obtain()
