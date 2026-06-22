@@ -45,7 +45,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
 
     private val REC = 13
     private val HEARTBEAT = 0x7FFFFFFFL
-    private val TAG = "CpdeviceCanBridge"
+    private val TAG = "CpdeviceCan"
 
     companion object {
         const val SERVICE_NAME = "com.cpdevice.BnMcuCanService"
@@ -54,6 +54,9 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         const val TX_REGISTER_CALLBACK = 1     // 확정(registerCallback)
         // ★ TODO(HW): byte[4] 확장ID(ext) 플래그 비트 — 실차 ext 프레임 송신으로 최종확인. 잠정 0x02.
         const val EXT_FLAG = 0x02
+
+        // ★ TX 기본 비활성(안전): RX 검증을 먼저 한다(모터 자동 송신 금지). 채널/ext/RX 확정 후 수동 활성.
+        @Volatile var txEnabled = false
 
         @Volatile var binderReady = false        // BnMcuCanService binder 획득
         @Volatile var clientConnected = false    // Python BridgeBackend 접속
@@ -120,6 +123,11 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
     }
 
     private fun sendCanFrame(canId: Int, dlc: Int, data: ByteArray) {
+        // ★ 안전: TX 기본 비활성(RX 검증 먼저). 모터 자동 송신 금지 — txEnabled 수동 활성 후에만.
+        if (!txEnabled) {
+            if (txCount == 0) Log.w(TAG, "TX 비활성(RX 검증 우선) — txEnabled=true 후 송신")
+            return
+        }
         val b = binder
         if (b == null) { lastTxOk = false; return }   // binder 없음 → 조용히 무시(추측 송신 안 함)
         val p = Parcel.obtain(); val r = Parcel.obtain()
@@ -147,18 +155,30 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
             // ★ TODO: 콜백 transact code/디스크립터 미확정 → code 무시하고 14B 만 읽음(실차검증).
             try {
                 val frame = data.createByteArray()
-                if (frame != null && frame.size >= 6) {
-                    val dlc = (frame[5].toInt() and 0xFF).coerceIn(0, 8)
-                    // canId big-endian 복원. low 바이트의 ext 플래그(잠정 EXT_FLAG)는 제거(★ TODO 실차).
-                    val low = (frame[4].toInt() and 0xFF) and EXT_FLAG.inv()
-                    val canId = ((frame[1].toInt() and 0xFF) shl 24) or
-                                ((frame[2].toInt() and 0xFF) shl 16) or
-                                ((frame[3].toInt() and 0xFF) shl 8) or low
-                    val end = minOf(6 + dlc, frame.size)
-                    val payload = if (end > 6) frame.copyOfRange(6, end) else ByteArray(0)
-                    rxQueue.offer(canId to payload); rxCount++
+                // ★ 실차 1단계 검증용: 들어온 14바이트를 그대로 hex 덤프(채널/canId 인코딩/콜백 code 확인).
+                if (frame != null) {
+                    val hex = frame.joinToString(" ") { "%02X".format(it) }
+                    if (frame.size >= 6) {
+                        val ch = frame[0].toInt() and 0xFF
+                        val dlc = (frame[5].toInt() and 0xFF).coerceIn(0, 8)
+                        // canId big-endian 복원. low 바이트의 ext 플래그(잠정 EXT_FLAG) 제거(★ TODO 실차).
+                        val low = (frame[4].toInt() and 0xFF) and EXT_FLAG.inv()
+                        val canId = ((frame[1].toInt() and 0xFF) shl 24) or
+                                    ((frame[2].toInt() and 0xFF) shl 16) or
+                                    ((frame[3].toInt() and 0xFF) shl 8) or low
+                        val end = minOf(6 + dlc, frame.size)
+                        val payload = if (end > 6) frame.copyOfRange(6, end) else ByteArray(0)
+                        val dhex = payload.joinToString("") { "%02X".format(it) }
+                        Log.i("CpdeviceCan-RX",
+                            "code=%d ch=%d id=0x%08X dlc=%d data=%s raw14=%s".format(code, ch, canId, dlc, dhex, hex))
+                        rxQueue.offer(canId to payload); rxCount++
+                    } else {
+                        Log.i("CpdeviceCan-RX", "code=%d len=%d raw=%s (14B 미만)".format(code, frame.size, hex))
+                    }
+                } else {
+                    Log.i("CpdeviceCan-RX", "code=$code byteArray 없음(다른 마샬링?) — 실차 onTransact 추가분석 필요")
                 }
-            } catch (e: Throwable) { Log.w(TAG, "RX onTransact 파싱 실패: ${e.message}") }
+            } catch (e: Throwable) { Log.w("CpdeviceCan-RX", "onTransact 파싱 실패: ${e.message}") }
             return true
         }
     }
