@@ -137,10 +137,9 @@ class JsBridge {
         com.farmmachine.autosteer.can.CpdeviceCanBridge.channel = ch
         return """{"channel":$ch}"""
     }
-    /** Ver2 ext 플래그(byte4) 설정 — 실차 검증. */
+    /** Ver2 ext 플래그 — 이제 ID워드 인코딩(((id<<3)|0x04))에 고정 반영되어 별도 설정 불필요(no-op, 호환 유지). */
     @JavascriptInterface fun cpdevSetExtFlag(flag: Int): String {
-        com.farmmachine.autosteer.can.CpdeviceCanBridge.extFlag = flag
-        return """{"extFlag":$flag}"""
+        return """{"extFlag":"fixed-in-id-word","ignored":$flag}"""
     }
     /** Ver2 버스트 TX: kind(plus/minus) 를 ms 동안 50ms 재전송(워치독 회피) 후 자동 정지. */
     @JavascriptInterface fun cpdevTxBurst(kind: String, ms: Int): String {
