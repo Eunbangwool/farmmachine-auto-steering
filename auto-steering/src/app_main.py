@@ -53,6 +53,7 @@ class Controller:
             self.sim = sitl_sim.Simulator(self.sys, KUBOTA_MR1157,
                                           target_speed=1.2, yaw_tau=0.25)
         else:
+            self._bus_host, self._bus_port = host, port   # 벤더 전환 시 bridge 복귀용
             self.bus = ApolloCanBus(backend="bridge", host=host, port=port,
                                     on_state=lambda s: log.info(f"CAN {s}"))
             # ★ 기본 = pure_pursuit (안정·SITL 수렴 검증). implement 는 후방참조점 발산
@@ -77,6 +78,12 @@ class Controller:
         self._ab_a = None             # ⑥ 현장에서 찍은 AB 라인 A점(east,north)
         self._ab_b = None             # ⑥ B점
         self._gnss_job = {"op": None, "running": False, "result": None}  # 비동기 GNSS 작업
+        # ── 벤더 하드웨어 경로 힌트(agmo_single/chcnav 등) + CAN 상태/스니핑 ──
+        self._vendor_gnss = (None, None, None)   # (port, baud, baud_alt)
+        self._vendor_can = (None, None, False)   # (backend, channel, listen_only)
+        self._bus_backend_kind = "bridge"        # 현재 CAN 전송 백엔드(벤더 전환 시 교체)
+        self._sniff = {"running": False, "result": None}
+        self._impl = None                        # 작업기(균평기) GNSS+레벨그리드 (벤더 독립, 지연생성)
 
         self._load_params()           # 저장된 차량변수 있으면 먼저 반영(휠베이스→알고리즘)
         if vendor:
@@ -94,6 +101,31 @@ class Controller:
             # (autosteer engage 는 RTK Fix 필요 + 하트비트 없으면 명령 금지 = 폭주 방지)
             self.sys.actuator.speed_control = bool(self.sys.motor_verified)
         self.sys.set_profile("normal")
+        # ── 벤더 GNSS/CAN 하드웨어 경로 힌트 기록(start_gnss/can_sniff 기본값) ──
+        self._vendor_gnss = (getattr(p, "gnss_port", None),
+                             getattr(p, "gnss_baud", None),
+                             getattr(p, "gnss_baud_alt", None))
+        self._vendor_can = (getattr(p, "can_backend", None),
+                            getattr(p, "can_channel", None),
+                            bool(getattr(p, "can_listen_only", False)))
+        # ── 벤더별 CAN 전송 백엔드 전환(같은 ApolloCanBus 객체 유지) ──
+        #   agmo_single(Ver2)=표준 SocketCAN(can1) / 그 외=bridge(libsysmcu).
+        #   ★ 모터 프로토콜은 동일(Keya CanSpec, can_verified=True) — 전송 경로만 다름.
+        if not self.demo and self.bus is not None:
+            want = self._vendor_can[0] or "bridge"
+            try:
+                if want == "socketcan":
+                    self.bus.switch_backend(
+                        "socketcan",
+                        channel=(self._vendor_can[1] or "can0"),
+                        bitrate=int(p.canspec.get("CAN_BITRATE", 250000)))
+                    log.warning(f"[{p.display_name}] 표준 SocketCAN({self._vendor_can[1]}) — "
+                                f"autokit2(정품) 실행 중이면 CAN/GNSS 충돌, 정품 종료 후 사용 권장.")
+                elif self._bus_backend_kind != "bridge":
+                    self.bus.switch_backend("bridge", host=self._bus_host, port=self._bus_port)
+                self._bus_backend_kind = want
+            except Exception as e:
+                log.warning(f"CAN 백엔드 전환 실패({want}): {e}")
         return p.key
 
     # ── 수명주기 ──────────────────────────────────────────────
@@ -662,7 +694,11 @@ class Controller:
         self.gnss_power_on()       # 내부 u-blox 전원 ON 시도(없으면 무시)
         import f9p_client as fc
         spec = getattr(self.sys.vendor, "gnss_primary", None) if self.sys.vendor else None
-        baud = int(baud) or (spec.serial_baud if spec else 115200)
+        # 벤더가 포트/보레이트를 지정하면(agmo_single=ttyS4 등) 기본값으로 사용.
+        v_port, v_baud, v_baud_alt = self._vendor_gnss
+        if (port == "/dev/ttyHSL0") and v_port:   # 호출자가 기본값만 줬으면 벤더값 우선
+            port = v_port
+        baud = int(baud) or v_baud or (spec.serial_baud if spec else 115200)
         src = self.sys.gnss.primary
         self._gnss_client = fc.F9pUsbClient(
             port=str(port), baudrate=baud, source=src,
@@ -677,6 +713,21 @@ class Controller:
             ok = self._gnss_client.start()
         except Exception as e:
             log.warning(f"GNSS 시작 실패: {e}")
+        # 벤더 대체 보레이트(예: ttyS4 115200 실패 → 460800) 1회 재시도.
+        if not ok and v_baud_alt and int(v_baud_alt) != int(baud):
+            log.info(f"GNSS {baud} 실패 → 대체 보레이트 {v_baud_alt} 재시도")
+            try:
+                self._gnss_client = fc.F9pUsbClient(
+                    port=str(port), baudrate=int(v_baud_alt), source=src,
+                    on_rtk=lambda la, lo, q: self.sys.on_rtk(la, lo, q, source=src),
+                    on_heading=self.sys.on_heading,
+                    on_heading_meas=self._on_heading_meas,
+                    on_velocity=self.sys.on_velocity,
+                    on_gyro=self.on_gyro,
+                    on_accel=lambda ay, az: self.on_accel(ay, az))
+                ok = self._gnss_client.start()
+            except Exception as e:
+                log.warning(f"GNSS 대체 보레이트 실패: {e}")
         if not ok:
             log.info("GNSS 미연결(안테나/포트 없음) — 연결되면 재시도/자동 동작")
         return "ok" if ok else "no-gnss"
@@ -748,9 +799,134 @@ class Controller:
             if rest > 0:
                 time.sleep(rest)
 
+    # ── 작업기(균평기) GNSS + 레벨 그리드 (벤더 독립, 차체 주행 GNSS 와 완전 분리) ──
+    def _ensure_impl(self):
+        if self._impl is None:
+            import implement_gnss
+            self._impl = implement_gnss.ImplementGnss()
+        return self._impl
+
+    def start_implement_gnss(self, port: str = "") -> str:
+        """작업기 안테나(별도 USB GNSS) 수신 시작. 차체 주행 루프와 독립 스레드."""
+        if self.demo:
+            return "demo"
+        try:
+            impl = self._ensure_impl()
+            ok = impl.start(port or None)
+            return "ok" if ok else "no-gnss"
+        except Exception as e:
+            log.warning(f"작업기 GNSS 시작 실패: {e}")
+            return "error"
+
+    def get_implement_gnss_status(self) -> str:
+        if self._impl is None:
+            return json.dumps({"impl_gnss_ok": False, "impl_gnss_fix": 0,
+                               "impl_gnss_port": None}, ensure_ascii=False)
+        return json.dumps(self._impl.status(), ensure_ascii=False)
+
+    def get_leveler_grid(self) -> str:
+        """레벨 히트맵 그리드(작업기 안테나 기준 편차). 미연결이면 connected=False."""
+        if self._impl is None:
+            return json.dumps({"connected": False,
+                               "msg": "작업기 안테나 미연결"}, ensure_ascii=False)
+        snap = self._impl.grid.snapshot()
+        snap["connected"] = bool(self._impl.status().get("impl_gnss_ok"))
+        snap["impl_fix"] = self._impl.last.get("fix", 0)
+        return json.dumps(snap, ensure_ascii=False)
+
+    def set_leveler_reference(self) -> str:
+        if self._impl is None:
+            return json.dumps({"ok": False}, ensure_ascii=False)
+        ref = self._impl.grid.set_reference_here()
+        return json.dumps({"ok": ref is not None,
+                           "reference_cm": (round(ref * 100, 1) if ref is not None else None)},
+                          ensure_ascii=False)
+
+    def clear_leveler_grid(self) -> str:
+        if self._impl is not None:
+            self._impl.grid.clear()
+        return "ok"
+
     def status(self) -> dict:
         with self._lock:
-            return dict(self._last)
+            st = dict(self._last)
+        # 벤더 하드웨어 상태 보강(UI 표시용). 기존 필드(vendor_name/active_gnss/can_state) 유지.
+        try:
+            v = getattr(self.sys, "vendor", None)
+            if v is not None:
+                st.setdefault("vendor", v.key)
+            gc = getattr(self, "_gnss_client", None)
+            st["gnss_port"] = self._vendor_gnss[0] or st.get("gnss_port")
+            st["gnss_ok"] = bool(gc is not None and getattr(gc, "_running", False))
+            # IMU: 별도 직접 신호 없음 → GNSS 수신/INS 동작 여부를 프록시로(active_gnss).
+            st["imu_ok"] = bool(st.get("active_gnss"))
+            # can_state 는 _loop 의 실제 버스 상태(bus.stats.state) 그대로 사용.
+            st["can_backend"] = self._bus_backend_kind
+            st["can_listen_only"] = bool(self._vendor_can[2])
+            # 작업기 GNSS 상태(차체와 독립) — 미시작이면 ok=False
+            if self._impl is not None:
+                ist = self._impl.status()
+                st["impl_gnss_ok"] = ist.get("impl_gnss_ok", False)
+                st["impl_gnss_fix"] = ist.get("impl_gnss_fix", 0)
+                st["impl_gnss_port"] = ist.get("impl_gnss_port")
+            else:
+                st["impl_gnss_ok"] = False
+        except Exception:
+            pass
+        return st
+
+    # ── CAN 스니핑 (Listen-Only) — 모터 CAN ID 캡처 (미확정 벤더용) ──────
+    def can_sniff(self, seconds: float = 5.0, channel: str = None) -> str:
+        """
+        Listen-Only 로 N초간 CAN 프레임을 캡처해 ID별 빈도를 돌려준다(송신 없음).
+        PCAN 없이 태블릿 자체로 모터 제어 ID 를 잡기 위함. 실패해도 크래시 금지.
+        autokit2(정품)로 조향 ON/OFF 하면서 캡처하면 모터 제어 ID 가 드러난다.
+        """
+        if self.demo:
+            return json.dumps({"error": "demo(실 CAN 없음)"}, ensure_ascii=False)
+        ch = channel or self._vendor_can[1] or "can0"
+        import time as _t, apollo_can
+        ids = {}
+        n = 0
+        be = None
+        try:
+            be = apollo_can.SocketCanBackend(channel=ch, listen_only=True)
+            if not be.open():
+                return json.dumps({"error": "unavailable", "channel": ch,
+                                   "hint": "인터페이스 down 이거나 권한 없음(autokit2가 올린 can 확인)"},
+                                  ensure_ascii=False)
+            t_end = _t.time() + max(0.5, min(60.0, float(seconds)))
+            while _t.time() < t_end:
+                for cid, data in be.poll():
+                    ids[cid] = ids.get(cid, 0) + 1
+                    n += 1
+                _t.sleep(0.005)
+        except Exception as e:
+            return json.dumps({"error": str(e), "channel": ch}, ensure_ascii=False)
+        finally:
+            if be is not None:
+                try: be.close()
+                except Exception: pass
+        rows = sorted(ids.items(), key=lambda kv: -kv[1])
+        result = {
+            "channel": ch, "total": n, "unique": len(ids),
+            "ids": [{"id": "0x%08X" % c, "count": k} for c, k in rows],
+        }
+        # 파일 저장(/sdcard/farmmachine/…). 실패해도 무시(결과는 반환).
+        try:
+            import os
+            d = "/sdcard/farmmachine"
+            if not os.path.isdir(d):
+                d = self._config_dir or "."
+            path = os.path.join(d, "can_sniff_%d.txt" % int(_t.time()))
+            with open(path, "w") as f:
+                f.write("channel=%s total=%d unique=%d\n" % (ch, n, len(ids)))
+                for c, k in rows:
+                    f.write("0x%08X  %d\n" % (c, k))
+            result["file"] = path
+        except Exception as e:
+            result["file_error"] = str(e)
+        return json.dumps(result, ensure_ascii=False)
 
     def status_json(self) -> str:
         return json.dumps(self.status(), ensure_ascii=False)
@@ -771,7 +947,7 @@ def boot(backend: str = "bridge", config_dir: str = None,
         #   (벤더 미선택 시 speed_control=False → placeholder _send_motor 로 모터 무반응)
         #   UI 시작화면에서 set_vendor 로 런타임 변경 가능.
         if vendor is None and backend == "bridge":
-            vendor = "agmo"
+            vendor = "agmo_dual"
         _ctrl = Controller(backend=backend, host=host, port=port, vendor=vendor,
                            config_dir=config_dir)
         _ctrl.start()
@@ -841,6 +1017,14 @@ def mark_ab(which):     return _ctrl.mark_ab(which) if _ctrl else "no-ctrl"
 def build_ab(width=3.0, passes=4, speed=1.2): return _ctrl.build_ab(width, passes, speed) if _ctrl else "no-ctrl"
 def ab_status():        return _ctrl.ab_status() if _ctrl else "{}"
 def status_json():      return _ctrl.status_json() if _ctrl else "{}"
+def can_sniff(seconds=5.0, channel=None):
+    return _ctrl.can_sniff(seconds, channel) if _ctrl else '{"error":"no-ctrl"}'
+# ── 작업기(균평기) GNSS + 레벨 히트맵 ──
+def start_implement_gnss(port=""):     return _ctrl.start_implement_gnss(port) if _ctrl else "no-ctrl"
+def get_implement_gnss_status():       return _ctrl.get_implement_gnss_status() if _ctrl else '{"impl_gnss_ok":false}'
+def get_leveler_grid():                return _ctrl.get_leveler_grid() if _ctrl else '{"connected":false}'
+def set_leveler_reference():           return _ctrl.set_leveler_reference() if _ctrl else '{"ok":false}'
+def clear_leveler_grid():              return _ctrl.clear_leveler_grid() if _ctrl else "no-ctrl"
 
 
 def shutdown():

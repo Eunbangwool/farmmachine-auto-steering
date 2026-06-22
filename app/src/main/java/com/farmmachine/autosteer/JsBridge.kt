@@ -80,6 +80,16 @@ class JsBridge {
     @JavascriptInterface fun ntripDisconnect(): String = SteerController.ntripDisconnect()
     @JavascriptInterface fun ntripStatus(): String = SteerController.ntripStatus()
 
+    /** CAN 스니핑(Listen-Only) — N초 캡처 → 수신 CAN ID 빈도 JSON. 미확정 벤더 모터 ID 추적용. */
+    @JavascriptInterface fun canSniff(seconds: Double): String = SteerController.canSniff(seconds)
+
+    /** 작업기(균평기) 안테나 GNSS + 레벨 히트맵 (차체 주행 GNSS 와 독립, 벤더 무관). */
+    @JavascriptInterface fun startImplementGnss(port: String): String = SteerController.startImplementGnss(port)
+    @JavascriptInterface fun getImplementGnssStatus(): String = SteerController.getImplementGnssStatus()
+    @JavascriptInterface fun getLevelerGrid(): String = SteerController.getLevelerGrid()
+    @JavascriptInterface fun setLevelerReference(): String = SteerController.setLevelerReference()
+    @JavascriptInterface fun clearLevelerGrid(): String = SteerController.clearLevelerGrid()
+
     /** 현장 진단: CAN 채널/비트레이트/확장ID 강제 전환. ch=0/1, br=250000/500000, eff=확장강제 */
     @JavascriptInterface fun setCanParams(ch: Int, br: Int, eff: Boolean): String {
         val ok = com.farmmachine.autosteer.can.ApolloCanBridge.instance?.reconfigure(ch, br, eff) ?: false

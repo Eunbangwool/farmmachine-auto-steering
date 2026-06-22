@@ -87,10 +87,14 @@ class SocketCanBackend(CanBackend):
     _FMT = struct.Struct("=IB3x8s")     # 리눅스 can_frame 16B
 
     def __init__(self, channel: str = "can0",
-                 bitrate: int = CanSpec.CAN_BITRATE, use_python_can: bool = True):
+                 bitrate: int = CanSpec.CAN_BITRATE, use_python_can: bool = True,
+                 listen_only: bool = False):
         self.channel = channel
         self.bitrate = bitrate
         self.use_python_can = use_python_can
+        # ★ Listen-Only: 송신 금지(스니핑 전용). AGMO Ver2/CHCNAV 모터 CAN ID 미확정 →
+        #   확정 전 추측 프레임 송신 방지. send() 가 무시한다(버스 오염 방지).
+        self.listen_only = listen_only
         self._sock = None
         self._bus = None
 
@@ -120,6 +124,8 @@ class SocketCanBackend(CanBackend):
         self._bus = self._sock = None
 
     def send(self, can_id: int, data: bytes):
+        if self.listen_only:
+            return     # 스니핑 전용 — 송신 금지(미확정 CAN ID 추측 송신 방지)
         data = bytes(data)[:8]
         if self._bus is not None:
             import can as pycan
@@ -401,6 +407,27 @@ class ApolloCanBus(CanInterface):
         self._backend.close()
         self._connected = False
         self._set_state("stopped")
+
+    def switch_backend(self, backend: str, **kw):
+        """런타임 백엔드 교체(예: 벤더 전환 bridge↔socketcan). 동일 ApolloCanBus 객체 유지
+        → AutoSteerSystem/액추에이터가 들고 있는 참조 그대로. 실패해도 예외 없이 재연결 루프가 처리."""
+        was = self._running
+        try:
+            if was:
+                self.stop()
+        except Exception:
+            pass
+        try:
+            self._backend.close()
+        except Exception:
+            pass
+        self._backend = make_backend(backend, **kw)
+        self._connected = False
+        self._first_open = True
+        if was:
+            self.start()
+        log.info(f"CAN 백엔드 교체 → {self._backend.name}")
+        return self._backend.name
 
     def send(self, can_id: int, data: bytes):
         if len(self._tx) == self._tx.maxlen:
