@@ -87,6 +87,20 @@ object SteerController {
     fun canSniff(seconds: Double): String =
         try { api().callAttr("can_sniff", seconds).toString() } catch (e: Throwable) { "{\"error\":\"error\"}" }
 
+    /** 작업기(균평기) 안테나 GNSS + 레벨 히트맵 — 차체 주행 GNSS 와 독립. */
+    fun startImplementGnss(port: String): String =
+        try { api().callAttr("start_implement_gnss", port).toString() } catch (e: Throwable) { "error" }
+    fun getImplementGnssStatus(): String =
+        try { api().callAttr("get_implement_gnss_status").toString() } catch (e: Throwable) { "{\"impl_gnss_ok\":false}" }
+    fun getLevelerGrid(): String =
+        try { api().callAttr("get_leveler_grid").toString() } catch (e: Throwable) { "{\"connected\":false}" }
+    fun setLevelerReference(): String =
+        try { api().callAttr("set_leveler_reference").toString() } catch (e: Throwable) { "{\"ok\":false}" }
+    fun clearLevelerGrid(): String =
+        try { api().callAttr("clear_leveler_grid").toString() } catch (e: Throwable) { "error" }
+    fun setImplAntennaHeight(h: Double): String =
+        try { api().callAttr("set_impl_antenna_height", h).toString() } catch (e: Throwable) { "error" }
+
     /** 제조사 선택화면용 목록 JSON. */
     fun listVendors(): String =
         try { api().callAttr("list_vendors").toString() } catch (e: Throwable) { "[]" }

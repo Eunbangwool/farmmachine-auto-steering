@@ -82,6 +82,7 @@ class Controller:
         self._vendor_can = (None, None, False)   # (backend, channel, listen_only)
         self._can_state = "n/a"                  # socketcan 프로브 결과(연결/불가)
         self._sniff = {"running": False, "result": None}
+        self._impl = None                        # 작업기(균평기) GNSS+레벨그리드 (벤더 독립, 지연생성)
 
         self._load_params()           # 저장된 차량변수 있으면 먼저 반영(휠베이스→알고리즘)
         if vendor:
@@ -799,6 +800,61 @@ class Controller:
             if rest > 0:
                 time.sleep(rest)
 
+    # ── 작업기(균평기) GNSS + 레벨 그리드 (벤더 독립, 차체 주행 GNSS 와 완전 분리) ──
+    def _ensure_impl(self):
+        if self._impl is None:
+            import implement_gnss
+            self._impl = implement_gnss.ImplementGnss()
+        return self._impl
+
+    def start_implement_gnss(self, port: str = "") -> str:
+        """작업기 안테나(별도 USB GNSS) 수신 시작. 차체 주행 루프와 독립 스레드."""
+        if self.demo:
+            return "demo"
+        try:
+            impl = self._ensure_impl()
+            ok = impl.start(port or None)
+            return "ok" if ok else "no-gnss"
+        except Exception as e:
+            log.warning(f"작업기 GNSS 시작 실패: {e}")
+            return "error"
+
+    def get_implement_gnss_status(self) -> str:
+        if self._impl is None:
+            return json.dumps({"impl_gnss_ok": False, "impl_gnss_fix": 0,
+                               "impl_gnss_port": None}, ensure_ascii=False)
+        return json.dumps(self._impl.status(), ensure_ascii=False)
+
+    def get_leveler_grid(self) -> str:
+        """레벨 히트맵 그리드(작업기 안테나 기준 편차). 미연결이면 connected=False."""
+        if self._impl is None:
+            return json.dumps({"connected": False,
+                               "msg": "작업기 안테나 미연결"}, ensure_ascii=False)
+        snap = self._impl.grid.snapshot()
+        snap["connected"] = bool(self._impl.status().get("impl_gnss_ok"))
+        snap["impl_fix"] = self._impl.last.get("fix", 0)
+        return json.dumps(snap, ensure_ascii=False)
+
+    def set_leveler_reference(self) -> str:
+        if self._impl is None:
+            return json.dumps({"ok": False}, ensure_ascii=False)
+        ref = self._impl.grid.set_reference_here()
+        return json.dumps({"ok": ref is not None,
+                           "reference_cm": (round(ref * 100, 1) if ref is not None else None)},
+                          ensure_ascii=False)
+
+    def clear_leveler_grid(self) -> str:
+        if self._impl is not None:
+            self._impl.grid.clear()
+        return "ok"
+
+    def set_impl_antenna_height(self, h) -> str:
+        try:
+            self._ensure_impl().grid.set_antenna_height(float(h))
+            return "ok"
+        except Exception:
+            return "error"
+
     def status(self) -> dict:
         with self._lock:
             st = dict(self._last)
@@ -816,6 +872,14 @@ class Controller:
             if self._vendor_can[0] == "socketcan":
                 st["can_state"] = self._can_state
             st["can_listen_only"] = bool(self._vendor_can[2])
+            # 작업기 GNSS 상태(차체와 독립) — 미시작이면 ok=False
+            if self._impl is not None:
+                ist = self._impl.status()
+                st["impl_gnss_ok"] = ist.get("impl_gnss_ok", False)
+                st["impl_gnss_fix"] = ist.get("impl_gnss_fix", 0)
+                st["impl_gnss_port"] = ist.get("impl_gnss_port")
+            else:
+                st["impl_gnss_ok"] = False
         except Exception:
             pass
         return st
@@ -964,6 +1028,13 @@ def ab_status():        return _ctrl.ab_status() if _ctrl else "{}"
 def status_json():      return _ctrl.status_json() if _ctrl else "{}"
 def can_sniff(seconds=5.0, channel=None):
     return _ctrl.can_sniff(seconds, channel) if _ctrl else '{"error":"no-ctrl"}'
+# ── 작업기(균평기) GNSS + 레벨 히트맵 ──
+def start_implement_gnss(port=""):     return _ctrl.start_implement_gnss(port) if _ctrl else "no-ctrl"
+def get_implement_gnss_status():       return _ctrl.get_implement_gnss_status() if _ctrl else '{"impl_gnss_ok":false}'
+def get_leveler_grid():                return _ctrl.get_leveler_grid() if _ctrl else '{"connected":false}'
+def set_leveler_reference():           return _ctrl.set_leveler_reference() if _ctrl else '{"ok":false}'
+def clear_leveler_grid():              return _ctrl.clear_leveler_grid() if _ctrl else "no-ctrl"
+def set_impl_antenna_height(h):        return _ctrl.set_impl_antenna_height(h) if _ctrl else "no-ctrl"
 
 
 def shutdown():
