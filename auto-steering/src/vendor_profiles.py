@@ -140,9 +140,10 @@ class VendorProfile:
     gnss_port:     Optional[str] = None     # NMEA 시리얼 포트 (예: /dev/ttyS4, /dev/ttyS6)
     gnss_baud:     Optional[int] = None      # 기본 보레이트
     gnss_baud_alt: Optional[int] = None      # 실패 시 재시도 보레이트 (TODO 현장확인용)
-    can_backend:   Optional[str] = None      # "socketcan"/"bridge"/"slcan" (None=app_main 기본)
+    can_backend:   Optional[str] = None      # "socketcan"/"bridge"/"slcan"/"unsupported_yet"(None=app_main 기본)
     can_channel:   Optional[str] = None      # 예: "can1" (SocketCAN)
     can_listen_only: bool = False            # 스니핑 가능(표준 SocketCAN)
+    can_available: bool = True               # ★ False = 이 기기에서 CAN 접근 불가(예: Ver2 SocketCAN 부재)
     gyro_zero_required: bool = False         # INS(single) 자이로 영점(gz_zero) 필요
 
 
@@ -173,30 +174,39 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
               "안테나: ver1=듀얼안테나+IMU / ver2=GNSS+INS 스마트안테나(둘 다 지원). "
               "GNSS 스펙은 추정값 — 현장 확인.",
     ),
-    # ★ 아그모 싱글안테나 (ver2, autokit2 역분석 + /proc/fd 실측) — 신규.
+    # ★ 아그모 싱글안테나 (ver2, autokit2 역분석 + /proc/fd + ADB 실측) — 신규.
     #   태블릿 Apollo2_10/Android11, GNSS=/dev/ttyS4(115200|460800), 싱글안테나+INS(자이로융합).
-    #   ★ 모터 = 아그모 듀얼안테나와 **완전히 같은 Keya 모델/프로토콜**(오너 확인) →
-    #   KEYA_CANSPEC 그대로 + can_verified=True. 전송만 표준 SocketCAN(can1, libsysmcu 아님).
+    #   ★ CAN(실측 확정): Ver2 는 **SocketCAN 인터페이스가 없음**(can0~2 부재 — autokit2 동작 중에도
+    #   ip link / /sys/class/net / /proc/net/dev 모두 can 없음). 실제 경로 = /dev/spidev2.0 →
+    #   cpdevice MCU(cpcomm_server) → CAN 모터(독점 MCU-SPI, CHCNAV 유사). libcpcomm.so 가
+    #   BnMcuCanService/BnSocketCanService(binder)로 중계. 표준 AF_CAN 소켓으론 접근 불가.
+    #   → 모터 = 듀얼과 동일 Keya 프로토콜이지만 **전송 경로 미해결**: (A) libcpcomm binder 연동
+    #   또는 (B) PCAN 물리 스니핑 후 구현 필요. 현재 미지원 → can_verified=False, backend 미지원 표시.
     "agmo_single": VendorProfile(
         key="agmo_single", display_name="AGMO Ver2 (싱글안테나+INS)",
-        tagline="Apollo2 · 싱글안테나+INS · SocketCAN · Keya",
-        can_verified=True,             # 모터=듀얼과 동일 Keya → 확정(조향 출력 허용)
-        canspec=KEYA_CANSPEC,          # ★ 듀얼안테나와 동일 Keya 프로토콜(250k, cmd_speed)
+        tagline="Apollo2 · 싱글+INS · 모터 미지원(개발중)",
+        can_verified=False,            # ★ binder TX/RX 구현됨. 채널/ext비트/RX코드 실차확인 후 True 로.
+        canspec=KEYA_CANSPEC,          # 모터 프레임=듀얼과 동일 Keya(0x06000001/0x07000001) 그대로 재사용
         gnss_primary=AGMO_V2_INS, gnss_backup=UBLOX_F9P,
         gnss_priority=("agmo", "f9p"),
         default_algo="pure_pursuit",
         uses_was=False,
-        gnss_port="/dev/ttyS4",        # fd 실측 확정
+        gnss_port="/dev/ttyS4",        # fd 실측 확정 (GNSS 는 정상 동작)
         gnss_baud=115_200,             # 기본
         gnss_baud_alt=460_800,         # ★ TODO(HW): 460800 일 수 있음 — 실패 시 재시도
-        can_backend="socketcan",       # 표준 SocketCAN(can1) — 전송 경로만 듀얼(bridge)과 다름
-        can_channel="can1",            # ★ TODO(HW): can1/can2 현장 확인
-        can_listen_only=True,          # Listen-Only 스니핑도 가능(진단용)
+        # ★ 전송: Python 은 동일 TCP 브리지(BridgeBackend, 13B 레코드). Kotlin 측만 ApolloCanBridge
+        #   대신 CpdeviceCanBridge(BnMcuCanService binder)로 교체(JsBridge.selectCanBridge).
+        #   binder TX(code7 sendCanFrame, 14B/canId BE)·RX(code1 registerCallback) 구현 완료.
+        #   ★ 실차확인 4개(TODO): byte[4] ext 비트, 모터 CAN 채널번호, RX 콜백 transact code,
+        #   Android11 hidden API 접근. 확인 후 can_verified=True 로 모터 활성.
+        can_backend="bridge",          # Python=TCP 브리지(듀얼과 동일 계약). Kotlin=cpdevice 브리지
+        can_channel=None,
+        can_listen_only=False,
         gyro_zero_required=True,       # gz_zero 영점 필요(INS)
-        notes="AGMO Ver2 — 싱글안테나+INS(헤딩=속도벡터+자이로 융합, 정지 시 부정확). "
-              "GNSS=/dev/ttyS4(115200|460800 현장확인). 모터=**아그모 듀얼과 동일 Keya KY170** "
-              "(250k cmd_speed) — 표준 SocketCAN(can1)으로 전송. autokit2(정품)와 CAN/GNSS "
-              "충돌 — 정품 종료 후 사용 권장.",
+        notes="AGMO Ver2 — 싱글안테나+INS. GNSS=/dev/ttyS4(정상). CAN: Ver2 는 SocketCAN 없음"
+              "(실측), spidev2.0→cpdevice MCU 경유. 전송=Kotlin CpdeviceCanBridge(BnMcuCanService "
+              "binder TX code7/RX code1 구현). 모터 프레임=듀얼과 동일 Keya. 채널/ext비트/RX코드 "
+              "실차확인 후 can_verified=True 로 모터 활성(현재 안전상 비활성). GNSS·레벨러 정상.",
     ),
     "chcnav": VendorProfile(
         key="chcnav", display_name="CHCNAV",

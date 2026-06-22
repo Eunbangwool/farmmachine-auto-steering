@@ -1,0 +1,393 @@
+package com.farmmachine.autosteer.can
+
+import android.os.Binder
+import android.os.IBinder
+import android.os.Parcel
+import android.util.Log
+import java.io.DataInputStream
+import java.net.ServerSocket
+import java.net.Socket
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
+
+/**
+ * AGMO Ver2(agmo_single) CAN 출력 브리지 — BnMcuCanService binder 직접 호출.
+ *
+ * 배경(ADB 실측): Ver2(Apollo2_10)엔 SocketCAN 인터페이스 없음. CAN = /dev/spidev2.0 →
+ *   cpdevice MCU(cpcomm_server) → CAN 모터. binder `com.cpdevice.BnMcuCanService`(service #34) 중계.
+ *
+ * 설계(C안): Python BridgeBackend(TCP 13바이트 레코드 계약) **불변**. 이 브리지가 ApolloCanBridge 와
+ *   동일한 TCP 서버 계약을 구현하되, 내부 전송을 VanMcu 대신 BnMcuCanService binder 로 한다.
+ *   모터 프레임 ID(0x06000001 cmd_speed / 0x07000001 HB)는 Python CanSpec 그대로(중복정의 없음).
+ *
+ * 프로토콜(VER2_BINDER_PROTOCOL.md, libcpcomm.so 역분석 확정):
+ *   - 디스크립터 = "com.cpdevice.BnMcuCanService"
+ *   - TX  code 7  sendCanFrame: writeInterfaceToken + writeInt(N) + writeByteArray(N×14B)
+ *   - RX  code 1  registerCallback: writeInterfaceToken + writeStrongBinder(우리 콜백)
+ *   - 14바이트 프레임: [0]channel [1..3]canId(**big-endian**) [4](canId&0xFF)|flags
+ *                      [5]dlc [6..13]data
+ *   binder 호출은 public API(Parcel/IBinder.transact). ServiceManager 만 hidden → reflection.
+ *
+ * ⚠ 미확정(실차/추가분석 — TODO): ① byte[4] ext 플래그 비트 위치 ② 모터 CAN 채널 번호
+ *   ③ RX 콜백 IBinder transact code/디스크립터 ④ Android11 hidden API 접근 제한(reflection 폴백).
+ *   구조는 확정 — 위 4개는 안전 기본값 + TODO 로 두고 실차에서 최종 확인.
+ */
+class CpdeviceCanBridge(private val port: Int = 47100) {
+
+    @Volatile private var running = false
+    private var serverThread: Thread? = null
+    private var binder: IBinder? = null               // 단일 서비스 핸들(register/TX 공용)
+    private val rxQueue = LinkedBlockingQueue<Pair<Int, ByteArray>>(512)
+
+    // binder 사망 감지 → 자동 재연결
+    private val deathRecipient = IBinder.DeathRecipient {
+        binderReady = false; binder = null
+        lastError = "binder died"
+        Log.w(TAG, "CpDev: binder DIED -> will reconnect on next use")
+    }
+
+    // TX drop 요약 로그(폭주 방지). channel/extFlag 는 companion(조정가능).
+    @Volatile private var txDropped = 0
+    @Volatile private var lastDropLogMs = 0L
+
+    private val REC = 13
+    private val HEARTBEAT = 0x7FFFFFFFL
+    private val TAG = "CpdeviceCan"
+
+    companion object {
+        const val SERVICE_NAME = "com.cpdevice.BnMcuCanService"
+        const val DESCRIPTOR = "com.cpdevice.BnMcuCanService"
+        const val TX_SEND_CAN_FRAME = 7        // 확정(onTransact 점프테이블)
+        // ★ 실측 수정: code 1 = getMcuVersion(string). writeStrongBinder 보내면 서비스가 죽음
+        //   (logcat: registerCallback code1 직후 binder DIED). §2 점프테이블 registerCallback=code 16(추정).
+        //   RX 등록은 code 16 으로 **수동 opt-in** 만(TX 와 분리). 잘못된 code 가 서비스 죽이는 것 방지.
+        const val TX_REGISTER_CALLBACK = 16
+        // 확정(libcpcomm doSendProcess): MCU→콜백 transact code 19(0x13), flags=ONEWAY.
+        const val RX_TRANSACT_CODE = 19
+        // ★ 미확정값 — UI 에서 바꿔가며 테스트(채널/ext 플래그). 기본 channel=0, extFlag=0x02.
+        @Volatile var channel = 0      // byte[0] CAN 채널 (실차 0/1/2 스윕)
+        @Volatile var extFlag = 0x02   // byte[4] 확장ID 플래그 비트(실차검증)
+
+        // observe-only(기본 ON): binder 연결만. RX 콜백 등록은 서비스를 죽일 수 있어 TX 와 분리.
+        @Volatile var observeOnly = true
+        // ★ RX 콜백 등록 기본 OFF: code1 이 서비스를 죽였으므로 자동등록 금지. code16 으로 수동 시도만.
+        @Volatile var registerRx = false
+
+        // ★ TX 기본 비활성(안전): RX 검증을 먼저 한다(모터 자동 송신 금지). 채널/ext/RX 확정 후 수동 활성.
+        @Volatile var txEnabled = false
+
+        @Volatile var binderReady = false        // BnMcuCanService binder 획득
+        @Volatile var clientConnected = false    // Python BridgeBackend 접속
+        @Volatile var txCount = 0                // sendCanFrame transact 호출 수
+        @Volatile var lastTxOk = false
+        @Volatile var rxCount = 0                // 콜백 수신 프레임 수
+        @Volatile var lastError = "init"
+        @Volatile var instance: CpdeviceCanBridge? = null
+    }
+
+    fun start() {
+        if (running) return
+        running = true
+        instance = this
+        Log.i(TAG, "CpDev: bridge start (observeOnly=$observeOnly registerRx=$registerRx)")
+        // binder 연결만 항상. ★ RX registerCallback 은 registerRx=true 일 때만(기본 OFF) — code1 이
+        //   서비스를 죽였으므로 자동등록 금지. TX(code7)는 registerCallback 없이 동작해야 함.
+        try {
+            connectBinder()
+            if (registerRx) registerRxCallback()
+        } catch (e: Throwable) {
+            Log.e(TAG, "CpDev ERR: init ${e.message}", e)
+        }
+        serverThread = thread(name = "cpdevice-can-bridge") { serve() }
+        Log.i(TAG, "CpDev: bridge started :$port (binderReady=$binderReady)")
+    }
+
+    fun stop() {
+        running = false
+        clientConnected = false
+        binder = null
+        serverThread = null
+    }
+
+    fun setChannel(ch: Int) { channel = ch }   // 현장 진단용(채널 스윕)
+
+    /** 수동 RX 콜백 등록(code 16) — TX 와 분리. 서비스 죽으면 다음 TX 가 재연결로 복구. */
+    fun registerRxNow(): String { registerRx = true; registerRxCallback(); return lastError }
+
+    @Volatile private var burstStop = false
+
+    /** 버스트 TX: enable 1회 → ms 동안 50ms 마다 cmdData 재전송(Keya 1s 워치독 회피) → 정지(disable).
+     *  잭업 검증용. 채널 바꿔가며 어느 채널에서 모터가 도는지 확인. estop/재호출 시 중단. */
+    fun txBurst(cmdId: Int, cmdData: ByteArray, enableData: ByteArray, disableData: ByteArray, ms: Int) {
+        burstStop = true                       // 기존 버스트 중단
+        thread(name = "cpdev-burst") {
+            burstStop = false
+            try {
+                Log.i("CpdeviceCan-TX", "CpDev-TX: BURST start ch=$channel ${ms}ms")
+                txTestFrame(cmdId, enableData)
+                val end = System.currentTimeMillis() + ms.toLong()
+                while (!burstStop && System.currentTimeMillis() < end) {
+                    txTestFrame(cmdId, cmdData)
+                    Thread.sleep(50)
+                }
+            } catch (e: Throwable) {
+                Log.w("CpdeviceCan-TX", "CpDev-TX: BURST err ${e.message}")
+            } finally {
+                try { txTestFrame(cmdId, disableData) } catch (_: Throwable) {}
+                Log.i("CpdeviceCan-TX", "CpDev-TX: BURST end (disable sent)")
+            }
+        }
+    }
+
+    fun stopBurst() { burstStop = true }
+
+    /** Acquire BnMcuCanService binder. ServiceManager is hidden API -> reflection. Never crash. */
+    private fun connectBinder() {
+        try {
+            val sm = Class.forName("android.os.ServiceManager")
+            val getService = sm.getMethod("getService", String::class.java)
+            binder = getService.invoke(null, SERVICE_NAME) as? IBinder
+            binderReady = (binder != null)
+            // null -> service not registered OR Android11 hidden-API blocked OR SELinux denial.
+            Log.i(TAG, "CpDev: getService($SERVICE_NAME) = %s %s".format(
+                binder?.toString() ?: "null",
+                if (binder == null) "(NULL -> not found / hidden-api blocked / selinux denial — grep 'avc: denied')" else ""))
+            lastError = if (binderReady) "ok" else "getService null"
+            try { binder?.linkToDeath(deathRecipient, 0) } catch (e: Throwable) { Log.w(TAG, "linkToDeath fail: ${e.message}") }
+        } catch (e: Throwable) {
+            binder = null; binderReady = false
+            lastError = "ERR getService: ${e.message}"
+            Log.e(TAG, "CpDev ERR: getService(reflection) ${e.message}", e)
+        }
+    }
+
+    /** transact 전 호출: binder 살아있으면 그대로, 죽었/없으면 getService 재획득.
+     *  ★ RX registerCallback 은 **여기서 부르지 않는다** — code1 등록이 서비스를 죽여 TX 가
+     *  매번 실패하던 무한 루프 원인이었음. RX 등록은 별도 수동(tryRegisterRx)으로만. */
+    private fun ensureBinder(): IBinder? {
+        val b = binder
+        if (b != null && (try { b.isBinderAlive } catch (_: Throwable) { false })) return b
+        Log.w(TAG, "CpDev: binder dead/null -> reconnect (getService again)")
+        connectBinder()
+        return binder
+    }
+
+    fun status(): String =
+        """{"bridge":"cpdevice","binderReady":$binderReady,"connected":$clientConnected,""" +
+        """"txCount":$txCount,"lastTxOk":$lastTxOk,"rxCount":$rxCount,"channel":$channel,""" +
+        """"lastError":"${lastError.replace("\"","'")}"}"""
+
+    // ── TX: 13바이트 TCP 레코드 → 14바이트 CAN 프레임 → sendCanFrame(code 7) ──────────
+    private fun makeFrame14(canId: Int, dlc: Int, data: ByteArray): ByteArray {
+        val ext = canId > 0x7FF                       // 29비트 확장 ID (Keya 0x06000001 등)
+        val f = ByteArray(14)
+        f[0] = channel.toByte()                       // ★ TODO(HW): 채널 실차확인
+        f[1] = (canId ushr 24).toByte()               // canId big-endian (MSB first)
+        f[2] = (canId ushr 16).toByte()
+        f[3] = (canId ushr 8).toByte()
+        f[4] = ((canId and 0xFF) or (if (ext) extFlag else 0)).toByte()  // ★ TODO: ext 비트 실차검증
+        f[5] = dlc.coerceIn(0, 8).toByte()
+        System.arraycopy(data, 0, f, 6, minOf(data.size, 8))
+        return f
+    }
+
+    /**
+     * 수동 단발 TX 테스트 — 버튼 1회 = 1프레임. observe-only/txEnabled 게이트 **우회**(명시적 사용자 동작).
+     * 프레임 바이트(canId/data)는 Python CanSpec 에서 만들어 넘어온다(중복 정의 없음). 채널/ext 는 companion.
+     * 보내기 직전 CpDev-TX hex 로그. binder 없으면 무송신.
+     */
+    fun txTestFrame(canId: Int, data: ByteArray): Boolean {
+        val dlc = minOf(data.size, 8)
+        Log.i("CpdeviceCan-TX", "CpDev-TX: ch=%d id=0x%08X dlc=%d data=%s".format(
+            channel, canId, dlc, data.copyOf(dlc).joinToString("") { "%02X".format(it) }))
+        // 1차 시도 → DeadObjectException 이면 재연결 후 1회 재시도.
+        if (doTransactCan(canId, dlc, data, attempt = 1)) return true
+        Log.w("CpdeviceCan-TX", "CpDev-TX: retry after reconnect")
+        return doTransactCan(canId, dlc, data, attempt = 2)
+    }
+
+    /** 단일 CAN 프레임 transact(code 7). alive 체크+재획득 포함. 성공 true. */
+    private fun doTransactCan(canId: Int, dlc: Int, data: ByteArray, attempt: Int): Boolean {
+        val b = ensureBinder()
+        if (b == null) { Log.w("CpdeviceCan-TX", "CpDev-TX: binder=null (no send, attempt=$attempt)"); return false }
+        val p = Parcel.obtain(); val r = Parcel.obtain()
+        return try {
+            p.writeInterfaceToken(DESCRIPTOR)
+            p.writeInt(1)
+            p.writeByteArray(makeFrame14(canId, dlc, data))
+            val ret = b.transact(TX_SEND_CAN_FRAME, p, r, 0)
+            r.readException()
+            lastTxOk = true; txCount++
+            Log.i("CpdeviceCan-TX", "CpDev-TX: transact code7 ret=%b (attempt=%d)".format(ret, attempt))
+            true
+        } catch (e: android.os.DeadObjectException) {
+            lastTxOk = false; lastError = "DeadObject"
+            binder = null   // 죽은 핸들 폐기 → 다음 ensureBinder 가 재획득
+            Log.w("CpdeviceCan-TX", "CpDev-TX: DeadObjectException (attempt=$attempt) -> drop handle, reconnect")
+            false
+        } catch (e: Throwable) {
+            lastTxOk = false; lastError = "ERR txTest: ${e.message}"
+            val alive = try { binder?.isBinderAlive ?: false } catch (_: Throwable) { false }
+            Log.e("CpdeviceCan-TX", "CpDev-TX ERR: transact ${e.message} (alive=$alive, attempt=$attempt)", e)
+            false
+        } finally { p.recycle(); r.recycle() }
+    }
+
+    private fun sendCanFrame(canId: Int, dlc: Int, data: ByteArray) {
+        // ★ 안전: observe-only(기본) 또는 TX 비활성이면 송신 금지(autokit2 버스 방해 방지).
+        //   Python 이 고주파로 send 하므로 **조용히 drop**(매 호출 로그 금지). 1초당 1회만 요약 카운트.
+        if (observeOnly || !txEnabled) {
+            txDropped++
+            val now = System.currentTimeMillis()
+            if (now - lastDropLogMs >= 30000L) {   // 30s 요약(RX 로그가 묻히지 않게)
+                Log.i(TAG, "CpDev: TX disabled - dropped %d (30s). cpdevTxEnable(true) after RX verify".format(txDropped))
+                txDropped = 0; lastDropLogMs = now
+            }
+            return
+        }
+        // 스트림 경로도 단일 핸들/alive 체크 공용 경로 사용(DeadObject 시 자가 복구).
+        doTransactCan(canId, dlc, data, attempt = 1)
+    }
+
+    // ── RX: registerCallback(code 1) — 우리 Binder 등록, 수신 14B 프레임을 rxQueue 로 ──────
+    private val rxCallback = object : Binder() {
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            // ★ 진입 즉시 무조건 1줄(code 무관). enforceInterface 호출 안 함(oneway라 토큰 없을 수 있음).
+            //   확정: code 19(0x13) = readInt32(count/ts) + createByteArray(14B×N). 예외에도 안 죽게 try/catch.
+            try {
+                val dataSize = try { data.dataSize() } catch (_: Throwable) { -1 }
+                Log.i("CpdeviceCan-RX", "CpDev-RX: code=%d size=%d flags=%d".format(code, dataSize, flags))
+                rxCount++
+                if (code == RX_TRANSACT_CODE) {
+                    try {
+                        val hdr = data.readInt()                   // count/timestamp — 무시 (Parcel.readInt)
+                        val buf = data.createByteArray()
+                        if (buf == null || buf.size < 14) {
+                            Log.w("CpdeviceCan-RX", "code19 createByteArray=${buf?.size ?: -1}B (<14) -> raw fallback")
+                            dumpRaw(data)
+                            return true
+                        }
+                        val nFrames = buf.size / 14
+                        Log.i("CpdeviceCan-RX", "code19 hdr=%d bytes=%d -> %d frames".format(hdr, buf.size, nFrames))
+                        for (i in 0 until nFrames) {
+                            val o = i * 14
+                            val ch = buf[o].toInt() and 0xFF
+                            val dlc = (buf[o + 5].toInt() and 0xFF).coerceIn(0, 8)
+                            val low = (buf[o + 4].toInt() and 0xFF) and extFlag.inv()  // ext 플래그 제거(★TODO 실차)
+                            val canId = ((buf[o + 1].toInt() and 0xFF) shl 24) or
+                                        ((buf[o + 2].toInt() and 0xFF) shl 16) or
+                                        ((buf[o + 3].toInt() and 0xFF) shl 8) or low
+                            val payload = buf.copyOfRange(o + 6, o + 6 + dlc)
+                            Log.i("CpdeviceCan-RX", "RX ch=%d id=0x%08X dlc=%d data=%s".format(
+                                ch, canId, dlc, payload.joinToString("") { "%02X".format(it) }))
+                            rxQueue.offer(canId to payload)     // push to existing TCP bridge RX record
+                        }
+                    } catch (e: Throwable) {
+                        Log.w("CpdeviceCan-RX", "code19 parse failed: ${e.message} -> raw fallback")
+                        dumpRaw(data)
+                    }
+                } else {
+                    // non-19 code -> ignore (raw dump one line for analysis)
+                    dumpRaw(data)
+                }
+            } catch (e: Throwable) {
+                Log.w("CpdeviceCan-RX", "onTransact exception: ${e.message}")
+            }
+            return true
+        }
+    }
+
+    /** Parcel raw hex 폴백(포맷 무관, 최대 64B). 마샬링이 다를 때 분석용. */
+    private fun dumpRaw(data: Parcel) {
+        try {
+            val raw = data.marshall()
+            val n = minOf(raw.size, 64)
+            Log.i("CpdeviceCan-RX", "raw parcel %dB: %s%s".format(
+                raw.size, (0 until n).joinToString(" ") { "%02X".format(raw[it]) }, if (raw.size > n) " …" else ""))
+        } catch (e: Throwable) {
+            Log.w("CpdeviceCan-RX", "marshall failed: ${e.message}")
+        }
+    }
+
+    private fun registerRxCallback() {
+        val b = binder
+        Log.i(TAG, "CpDev: callback Binder created; registerCallback code=$TX_REGISTER_CALLBACK desc=\"$DESCRIPTOR\" binder=${b != null}")
+        if (b == null) { Log.e(TAG, "CpDev ERR: registerCallback binder=null (getService failed)"); return }
+        val p = Parcel.obtain(); val r = Parcel.obtain()
+        try {
+            p.writeInterfaceToken(DESCRIPTOR)
+            p.writeStrongBinder(rxCallback)
+            Log.i(TAG, "CpDev: registerCallback transact(code=$TX_REGISTER_CALLBACK, writeStrongBinder) ...")
+            val ret = b.transact(TX_REGISTER_CALLBACK, p, r, 0)
+            r.readException()
+            Log.i(TAG, "CpDev: registerCallback ret=$ret (true=delivered) — waiting RX code=$RX_TRANSACT_CODE")
+            lastError = "registered(ret=$ret)"
+        } catch (e: Throwable) {
+            lastError = "ERR registerCallback: ${e.message}"
+            Log.e(TAG, "CpDev ERR: registerCallback transact ${e.message}", e)   // graceful
+        } finally {
+            p.recycle(); r.recycle()
+        }
+    }
+
+    // ── TCP 서버 (ApolloCanBridge 와 동일 13바이트 레코드 계약) ──────────
+    private fun serve() {
+        val server = ServerSocket(port).apply { reuseAddress = true; soTimeout = 200 }
+        while (running) {
+            val sock = try { server.accept() } catch (e: Exception) { continue }
+            try { handle(sock) } catch (e: Exception) { Log.w(TAG, "client closed: ${e.message}") }
+            try { sock.close() } catch (_: Exception) {}
+        }
+        try { server.close() } catch (_: Exception) {}
+    }
+
+    private fun handle(sock: Socket) {
+        sock.tcpNoDelay = true
+        clientConnected = true
+        val inp = DataInputStream(sock.getInputStream())
+        val out = sock.getOutputStream()
+
+        // CAN → Python: 콜백 rxQueue 를 13B 레코드로 relay
+        val rxThread = thread(name = "cpdevice-can-rx") {
+            while (running && !sock.isClosed) {
+                val f = try { rxQueue.poll(50, TimeUnit.MILLISECONDS) } catch (e: InterruptedException) { break } ?: continue
+                try { synchronized(out) { out.write(encode(f.first.toLong() and 0xFFFFFFFFL, f.second.size, f.second)); out.flush() } }
+                catch (e: Exception) { break }
+            }
+        }
+        // keepalive (~1s) — Python rx_timeout 단선 감지용
+        val hbThread = thread(name = "cpdevice-can-hb") {
+            while (running && !sock.isClosed) {
+                try { synchronized(out) { out.write(encode(HEARTBEAT, 0, ByteArray(8))); out.flush() }; Thread.sleep(1000) }
+                catch (e: Exception) { break }
+            }
+        }
+        // Python → CAN: 13B 레코드 파싱 → sendCanFrame
+        val rec = ByteArray(REC)
+        try {
+            while (running) {
+                inp.readFully(rec)
+                val id = (((rec[0].toInt() and 0xFF) shl 24) or
+                          ((rec[1].toInt() and 0xFF) shl 16) or
+                          ((rec[2].toInt() and 0xFF) shl 8) or
+                           (rec[3].toInt() and 0xFF))
+                val dlc = (rec[4].toInt() and 0xFF).coerceIn(0, 8)
+                val data = rec.copyOfRange(5, 5 + dlc)
+                if ((id.toLong() and 0xFFFFFFFFL) != HEARTBEAT) sendCanFrame(id, dlc, data)
+            }
+        } finally {
+            clientConnected = false
+            rxThread.interrupt(); hbThread.interrupt()
+        }
+    }
+
+    private fun encode(id: Long, dlc: Int, data: ByteArray): ByteArray {
+        val b = ByteArray(REC)
+        b[0] = (id ushr 24).toByte(); b[1] = (id ushr 16).toByte()
+        b[2] = (id ushr 8).toByte(); b[3] = id.toByte()
+        b[4] = dlc.toByte()
+        System.arraycopy(data, 0, b, 5, minOf(data.size, 8))
+        return b
+    }
+}

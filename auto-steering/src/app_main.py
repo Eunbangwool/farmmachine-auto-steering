@@ -81,7 +81,8 @@ class Controller:
         # ── 벤더 하드웨어 경로 힌트(agmo_single/chcnav 등) + CAN 상태/스니핑 ──
         self._vendor_gnss = (None, None, None)   # (port, baud, baud_alt)
         self._vendor_can = (None, None, False)   # (backend, channel, listen_only)
-        self._bus_backend_kind = "bridge"        # 현재 CAN 전송 백엔드(벤더 전환 시 교체)
+        self._bus_backend_kind = "bridge"        # Python CAN 전송 백엔드(항상 TCP 브리지)
+        self._can_bridge = "apollo"              # Kotlin 측 활성 브리지: apollo(VanMcu) / cpdevice(Ver2)
         self._sniff = {"running": False, "result": None}
         self._impl = None                        # 작업기(균평기) GNSS+레벨그리드 (벤더 독립, 지연생성)
 
@@ -108,24 +109,17 @@ class Controller:
         self._vendor_can = (getattr(p, "can_backend", None),
                             getattr(p, "can_channel", None),
                             bool(getattr(p, "can_listen_only", False)))
-        # ── 벤더별 CAN 전송 백엔드 전환(같은 ApolloCanBus 객체 유지) ──
-        #   agmo_single(Ver2)=표준 SocketCAN(can1) / 그 외=bridge(libsysmcu).
-        #   ★ 모터 프로토콜은 동일(Keya CanSpec, can_verified=True) — 전송 경로만 다름.
-        if not self.demo and self.bus is not None:
-            want = self._vendor_can[0] or "bridge"
+        # ── CAN 전송 ──
+        #   Python 은 모든 벤더에서 동일 TCP 브리지(BridgeBackend, 13B 레코드) 사용 — 전송코드 불변.
+        #   Kotlin 측 활성 브리지만 벤더로 갈림: agmo_single=cpdevice(BnMcuCanService 골격) / 그 외=apollo.
+        #   (Kotlin 브리지 선택은 UI JsBridge.selectCanBridge 가 같은 포트로 재바인딩.)
+        self._can_bridge = "cpdevice" if p.key == "agmo_single" else "apollo"
+        if not self.demo and self.bus is not None and self._bus_backend_kind != "bridge":
             try:
-                if want == "socketcan":
-                    self.bus.switch_backend(
-                        "socketcan",
-                        channel=(self._vendor_can[1] or "can0"),
-                        bitrate=int(p.canspec.get("CAN_BITRATE", 250000)))
-                    log.warning(f"[{p.display_name}] 표준 SocketCAN({self._vendor_can[1]}) — "
-                                f"autokit2(정품) 실행 중이면 CAN/GNSS 충돌, 정품 종료 후 사용 권장.")
-                elif self._bus_backend_kind != "bridge":
-                    self.bus.switch_backend("bridge", host=self._bus_host, port=self._bus_port)
-                self._bus_backend_kind = want
+                self.bus.switch_backend("bridge", host=self._bus_host, port=self._bus_port)
+                self._bus_backend_kind = "bridge"
             except Exception as e:
-                log.warning(f"CAN 백엔드 전환 실패({want}): {e}")
+                log.warning(f"CAN 백엔드 전환 실패: {e}")
         return p.key
 
     # ── 수명주기 ──────────────────────────────────────────────
@@ -862,7 +856,12 @@ class Controller:
             st["imu_ok"] = bool(st.get("active_gnss"))
             # can_state 는 _loop 의 실제 버스 상태(bus.stats.state) 그대로 사용.
             st["can_backend"] = self._bus_backend_kind
+            st["can_bridge"] = self._can_bridge          # Kotlin 활성 브리지(apollo/cpdevice)
             st["can_listen_only"] = bool(self._vendor_can[2])
+            st["motor_ready"] = bool(getattr(self.sys, "motor_verified", False))
+            # Ver2(cpdevice 골격): binder 마샬링 TODO 라 모터 비활성 — 사유 명시.
+            if self._can_bridge == "cpdevice" and not getattr(self.sys, "motor_verified", False):
+                st["note"] = "Ver2 CpdeviceCanBridge(binder TX/RX 구현) — 채널/ext/RX코드 실차확인 후 모터 활성"
             # 작업기 GNSS 상태(차체와 독립) — 미시작이면 ok=False
             if self._impl is not None:
                 ist = self._impl.status()
@@ -874,6 +873,27 @@ class Controller:
         except Exception:
             pass
         return st
+
+    # ── Ver2 수동 단발 TX 테스트 프레임 (agmo_dual CanSpec 재사용) ──────
+    #   조향각속도 명령은 cmd_speed(permille). "미세 ±5도"는 작은 permille 단발(잭업 관찰용).
+    TX_TEST_PERMILLE = 120     # 미세 테스트용 작은 속도명령(±) — 단발, 워치독 1s 후 정지
+
+    def cpdev_test_frame(self, kind: str) -> str:
+        """kind 별 (canId, data) 를 CanSpec 으로 생성해 JSON 반환(Kotlin 이 단발 송신).
+           kind: hb / neutral / plus / minus / enable / disable."""
+        from autosteer_core import CanSpec
+        k = str(kind)
+        try:
+            if k == "hb":            cid, d = CanSpec.MOTOR_HEARTBEAT_ID, bytes(8)
+            elif k == "neutral":     cid, d = CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(0)
+            elif k == "plus":        cid, d = CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(self.TX_TEST_PERMILLE)
+            elif k == "minus":       cid, d = CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(-self.TX_TEST_PERMILLE)
+            elif k == "enable":      cid, d = CanSpec.MOTOR_CMD_ID, CanSpec.CMD_ENABLE
+            elif k == "disable":     cid, d = CanSpec.MOTOR_CMD_ID, CanSpec.CMD_DISABLE
+            else:                    return json.dumps({"error": f"unknown kind {k}"})
+            return json.dumps({"id": int(cid), "data": bytes(d).hex(), "kind": k})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
     # ── CAN 스니핑 (Listen-Only) — 모터 CAN ID 캡처 (미확정 벤더용) ──────
     def can_sniff(self, seconds: float = 5.0, channel: str = None) -> str:
@@ -1017,6 +1037,7 @@ def mark_ab(which):     return _ctrl.mark_ab(which) if _ctrl else "no-ctrl"
 def build_ab(width=3.0, passes=4, speed=1.2): return _ctrl.build_ab(width, passes, speed) if _ctrl else "no-ctrl"
 def ab_status():        return _ctrl.ab_status() if _ctrl else "{}"
 def status_json():      return _ctrl.status_json() if _ctrl else "{}"
+def cpdev_test_frame(kind): return _ctrl.cpdev_test_frame(kind) if _ctrl else '{"error":"no-ctrl"}'
 def can_sniff(seconds=5.0, channel=None):
     return _ctrl.can_sniff(seconds, channel) if _ctrl else '{"error":"no-ctrl"}'
 # ── 작업기(균평기) GNSS + 레벨 히트맵 ──

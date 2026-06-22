@@ -19,13 +19,12 @@ import com.farmmachine.autosteer.py.PythonEngine
  */
 class AutoSteerService : Service() {
 
-    private val bridge = ApolloCanBridge(port = 47100)
-
     override fun onCreate() {
         super.onCreate()
         startForegroundCompat()
         HardwareInit.enable(this)   // GNSS(UM482)/CAN 전원 인에이블(com.van.service 브로드캐스트 + 네이티브 GPIO)
-        bridge.start()
+        // 기본 = apollo(ApolloCanBridge/VanMcu, agmo_dual). 벤더 선택 시 JsBridge.selectCanBridge 로 교체.
+        com.farmmachine.autosteer.can.CanBridgeHost.start("apollo")
         PythonEngine.boot(this, backend = "bridge")
     }
 
@@ -33,7 +32,7 @@ class AutoSteerService : Service() {
 
     override fun onDestroy() {
         PythonEngine.shutdown()
-        bridge.stop()
+        com.farmmachine.autosteer.can.CanBridgeHost.stop()
         super.onDestroy()
     }
 

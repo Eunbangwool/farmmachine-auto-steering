@@ -61,11 +61,87 @@ class JsBridge {
     @JavascriptInterface fun startGnssAsync(port: String, baud: Int): String = SteerController.startGnssAsync(port, baud)
     @JavascriptInterface fun gnssJobStatus(): String = SteerController.gnssJobStatus()
 
-    /** CAN 하드웨어 상태 (모터 점검 화면 표시용). logcat 없이 확인. */
+    /** CAN 하드웨어 상태 (모터 점검 화면 표시용). 활성 브리지(apollo/cpdevice)별로 반환. */
     @JavascriptInterface fun canStatus(): String {
+        if (com.farmmachine.autosteer.can.CanBridgeHost.kind == "cpdevice") {
+            // Ver2: BnMcuCanService binder 골격(전송 마샬링 TODO). bridge="cpdevice" 명시.
+            val c = com.farmmachine.autosteer.can.CpdeviceCanBridge
+            return """{"vanmcu":false,"bridge":"cpdevice","binderReady":${c.binderReady},"connected":${c.clientConnected},"txCount":${c.txCount},"lastTxOk":${c.lastTxOk},"rxCount":${c.rxCount},"lastError":"${c.lastError.replace("\"","'")}"}"""
+        }
         val vm = com.van.jni.VanMcu.available
         val b = com.farmmachine.autosteer.can.ApolloCanBridge
-        return """{"vanmcu":$vm,"canReady":${b.canReady},"connected":${b.clientConnected},"txCount":${b.txCount},"lastTxOk":${b.lastTxOk},"rxCount":${b.rxCount},"rxEnabled":${b.rxEnabled}}"""
+        return """{"vanmcu":$vm,"bridge":"apollo","canReady":${b.canReady},"connected":${b.clientConnected},"txCount":${b.txCount},"lastTxOk":${b.lastTxOk},"rxCount":${b.rxCount},"rxEnabled":${b.rxEnabled}}"""
+    }
+
+    /** 벤더별 CAN 브리지 선택: "cpdevice"(agmo_single) / "apollo"(그 외, 기본). 같은 TCP 포트 재바인딩. */
+    @JavascriptInterface fun selectCanBridge(kind: String): String {
+        com.farmmachine.autosteer.can.CanBridgeHost.select(kind)
+        return """{"bridge":"${com.farmmachine.autosteer.can.CanBridgeHost.kind}"}"""
+    }
+
+    /** Ver2 cpdevice TX 수동 활성/비활성(기본 OFF=RX 검증 우선, 모터 자동송신 금지). */
+    @JavascriptInterface fun cpdevTxEnable(on: Boolean): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.txEnabled = on
+        return """{"txEnabled":$on}"""
+    }
+
+    /** Ver2 cpdevice 관찰전용 모드(기본 ON): ON=binder+RX 콜백만, 제어성 호출(TX/baudrate) 금지. */
+    @JavascriptInterface fun cpdevObserveOnly(on: Boolean): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.observeOnly = on
+        return """{"observeOnly":$on}"""
+    }
+
+    /** RX 콜백 등록(code 16) 수동 시도 — 기본 OFF(code1 이 서비스를 죽였으므로 TX 와 분리). */
+    @JavascriptInterface fun cpdevRegisterRx(on: Boolean): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.registerRx = on
+        val r = if (on) (com.farmmachine.autosteer.can.CpdeviceCanBridge.instance?.registerRxNow() ?: "no-instance") else "off"
+        return """{"registerRx":$on,"result":"$r"}"""
+    }
+
+    /** Ver2 수동 단발 TX 테스트: kind=hb/neutral/plus/minus/enable/disable. 1버튼=1프레임. */
+    @JavascriptInterface fun cpdevTxTest(kind: String): String {
+        val fr = SteerController.cpdevTestFrame(kind)   // {"id":int,"data":"hex"}
+        return try {
+            val o = org.json.JSONObject(fr)
+            if (o.has("id")) {
+                val id = o.getInt("id")
+                val hex = o.getString("data")
+                val data = ByteArray(hex.length / 2) { ((Character.digit(hex[it*2],16) shl 4) or Character.digit(hex[it*2+1],16)).toByte() }
+                val ok = com.farmmachine.autosteer.can.CpdeviceCanBridge.instance?.txTestFrame(id, data) ?: false
+                """{"kind":"$kind","sent":$ok}"""
+            } else fr
+        } catch (e: Throwable) { """{"error":"${e.message}"}""" }
+    }
+
+    /** Ver2 채널(byte0) 설정 — 실차 0/1/2 스윕. */
+    @JavascriptInterface fun cpdevSetChannel(ch: Int): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.channel = ch
+        return """{"channel":$ch}"""
+    }
+    /** Ver2 ext 플래그(byte4) 설정 — 실차 검증. */
+    @JavascriptInterface fun cpdevSetExtFlag(flag: Int): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.extFlag = flag
+        return """{"extFlag":$flag}"""
+    }
+    /** Ver2 버스트 TX: kind(plus/minus) 를 ms 동안 50ms 재전송(워치독 회피) 후 자동 정지. */
+    @JavascriptInterface fun cpdevTxBurst(kind: String, ms: Int): String {
+        return try {
+            val sp = org.json.JSONObject(SteerController.cpdevTestFrame(kind))
+            val en = org.json.JSONObject(SteerController.cpdevTestFrame("enable"))
+            val di = org.json.JSONObject(SteerController.cpdevTestFrame("disable"))
+            if (!sp.has("id")) return SteerController.cpdevTestFrame(kind)
+            fun hx(s: String) = ByteArray(s.length / 2) { ((Character.digit(s[it*2],16) shl 4) or Character.digit(s[it*2+1],16)).toByte() }
+            com.farmmachine.autosteer.can.CpdeviceCanBridge.instance?.txBurst(
+                sp.getInt("id"), hx(sp.getString("data")), hx(en.getString("data")), hx(di.getString("data")), ms)
+            """{"kind":"$kind","burst_ms":$ms}"""
+        } catch (e: Throwable) { """{"error":"${e.message}"}""" }
+    }
+
+    /** Ver2 비상정지: 버스트 중단 + TX 차단 + 모터 disable 프레임 1회. */
+    @JavascriptInterface fun cpdevEstop(): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.instance?.stopBurst()
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.txEnabled = false
+        return cpdevTxTest("disable")
     }
 
     /** 현장 진단: CAN 수신(RX) on/off — 모터 회전이 RX 와 충돌하는지 1회 검증. 기본 OFF(TX전용). */

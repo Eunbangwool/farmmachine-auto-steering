@@ -521,6 +521,9 @@ var S = {
   motorVerified: true,
   vendorName: "",
   vendorKey: "",
+  gnssPort: "",
+  canBackend: "",
+  canState: "",
   line: 4,
   section: 4,
   nudge_cm: 0,
@@ -666,7 +669,12 @@ function openDetail(key) {
     var row = function row(act, l, r) {
       return "<div class=\"optrow\" data-act=\"" + act + "\"><span>" + l + "</span><span class=\"oa\" id=\"oa_" + act + "\">" + r + "</span></div>";
     };
-    h = row('imuzero', 'IMU 영점 설정', '실행') + row('gpscenter', 'GPS 중심 설정', '실행') + row('turnspeed', '배속 선회 설정', '설정') + row('hcalib', '헤딩 바이어스 캘리브 (ver1 · 직선 20m)', '시작') + row('steercal', '조향비 자동측정 (S자/사인 주행)', '시작');
+    var v2o = (S.vendorKey === 'agmo_single');
+    // 안테나 버전별: Ver2(싱글+INS)는 자이로 영점(gz_zero) / ver1(듀얼)은 IMU 영점.
+    var imuLbl = v2o ? 'INS 자이로 영점 (gz_zero · 평지 정차)' : 'IMU 영점 설정';
+    var hcalLbl = v2o ? '헤딩 바이어스 캘리브 (싱글+INS · 직선 20m)'
+                      : '헤딩 바이어스 캘리브 (ver1 듀얼 · 직선 20m)';
+    h = row('imuzero', imuLbl, '실행') + row('gpscenter', 'GPS 중심 설정', '실행') + row('turnspeed', '배속 선회 설정', '설정') + row('hcalib', hcalLbl, '시작') + row('steercal', '조향비 자동측정 (S자/사인 주행)', '시작');
   } else if (key === 'tuning') {
     h = "<div class=\"row\"><span class=\"k\">\uC81C\uC870\uC0AC</span><span class=\"val\" id=\"tnVendor\">-</span></div>\n       <div style=\"font-size:13px;color:var(--sub);margin:10px 0 6px\">\uC791\uC5C5 \uBAA8\uB4DC (CHCNAV 3-\uBAA8\uB4DC \uD29C\uB2DD)</div>\n       <div style=\"display:flex;gap:8px;flex-wrap:wrap\">\n         <button class=\"dbtn modebtn\" data-mode=\"normal\">\uC77C\uBC18(\uB85C\uD130\uB9AC/\uBC29\uC81C)</button>\n         <button class=\"dbtn modebtn\" data-mode=\"heavy\">\uACFC\uBD80\uD558(\uC7C1\uAE30/\uADE0\uD3C9)</button>\n         <button class=\"dbtn modebtn\" data-mode=\"sand\">\uC0AC\uC9C8\uD1A0</button>\n       </div>\n       <div style=\"font-size:13px;color:var(--sub);margin:14px 0 6px\">\uACBD\uB85C \uCD94\uC885 \uC54C\uACE0\uB9AC\uC998</div>\n       <div style=\"display:flex;gap:8px;flex-wrap:wrap\">\n         <button class=\"dbtn algobtn\" data-algo=\"pure_pursuit\">\uAE30\uBCF8(Pure Pursuit)</button>\n         <button class=\"dbtn algobtn\" data-algo=\"implement_ff\">\uC791\uC5C5\uAE30 \uACE1\uC120\uBCF4\uC815 (\uC7C1\uAE30/\uADE0\uD3C9)</button>\n       </div>\n       <div style=\"font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5\">\uACE1\uC120 \uC791\uC5C5 \uC2DC \uC791\uC5C5\uAE30\uAC00 \uC548\uCABD\uC73C\uB85C \uBC00\uB9AC\uB294 \uC624\uCC28\uB97C \uACE1\uB960 \uD53C\uB4DC\uD3EC\uC6CC\uB4DC\uB85C \uC120\uBCF4\uC815\uD569\uB2C8\uB2E4. \uC9C1\uC120\uC5D0\uB294 \uC601\uD5A5 \uC5C6\uC74C.</div>\n       <div id=\"tnInfo\" style=\"font-size:12px;color:var(--muted);margin-top:12px;line-height:1.6\">\uD604\uC7AC \uD29C\uB2DD \uB85C\uB529\u2026</div>";
   } else if (key === 'rtk') {
@@ -676,7 +684,22 @@ function openDetail(key) {
     };
     h = inp('host', '서버 IP', cfg.host) + inp('port', '서버 포트', cfg.port) + inp('mount', '마운트 포인트', cfg.mount) + inp('user', '계정 ID', cfg.user) + inp('pw', '계정 비밀번호', cfg.pw, 'password') + "<button class=\"pill\" id=\"ntConnect\">\uC5F0\uACB0</button>" + "<button class=\"pill\" id=\"ntDisc\" style=\"background:var(--off);margin-top:8px\">\uD574\uC81C</button>" + "<div id=\"ntStat\" style=\"text-align:center;font-size:12px;color:var(--sub);margin-top:12px\">\uC0C1\uD0DC \uD655\uC778 \uC911\u2026</div>";
   } else if (key === 'gnss') {
-    h = "<div style=\"font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:10px\">\n         \uC790\uC728\uC870\uD5A5 1\uB2E8\uACC4 = <b>AGMO ver1 \uC548\uD14C\uB098(\uB0B4\uBD80 UART)</b>. \uC21C\uC11C\uB300\uB85C \uC9C4\uD589\uD558\uC138\uC694.<br>\n         (USB\uB294 \uB808\uBCA8\uB7EC \uC804\uC6A9 \u2014 \uC5EC\uAE30 \uC544\uB2D8)</div>\n       <button class=\"pill\" id=\"gPwr\">\u2460 \uC804\uC6D0 ON (\uB0B4\uBD80 u-blox)</button>\n       <button class=\"pill\" id=\"gScan\" style=\"margin-top:8px\">\u2461 \uD3EC\uD2B8 \uC790\uB3D9 \uD0D0\uC9C0 (\uC218 \uCD08 \uC18C\uC694)</button>\n       <div id=\"gScanR\" style=\"font-size:12px;color:var(--sub);margin:8px 0;white-space:pre-line\">\u2014</div>\n       <div class=\"row\"><span class=\"k\">\uD3EC\uD2B8</span><input class=\"nti\" id=\"gPort\" value=\"/dev/ttyHSL0\"\n            autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"/></div>\n       <div class=\"row\"><span class=\"k\">\uBCF4\uB808\uC774\uD2B8(0=\uC790\uB3D9)</span><input class=\"nti\" id=\"gBaud\" value=\"0\"/></div>\n       <button class=\"pill\" id=\"gCfg\" style=\"margin-top:8px\">\u2462 \uBB34\uBE59\uBCA0\uC774\uC2A4 \uC124\uC815(\uB4C0\uC5BC\uD5E4\uB529 RELPOSNED)</button>\n       <button class=\"pill\" id=\"gStart\" style=\"margin-top:8px\">\u2463 GNSS \uC2DC\uC791</button>\n       <div id=\"gStat\" style=\"text-align:center;font-size:12px;color:var(--sub);margin-top:12px\">\uC0C1\uD0DC \uD655\uC778 \uC911\u2026</div>\n       <div style=\"border-top:1px solid var(--line,#ddd);margin:14px 0 8px\"></div>\n       <div style=\"font-size:13px;color:var(--sub)\">\uB4C0\uC5BC\uC548\uD14C\uB098 base/rover\xB7\uBD80\uD638 \uC9C4\uB2E8 (\uC9C1\uC120 ~15m \uC8FC\uD589, \uB05D\uC5D0 \uC6B0\uCE21\uC73C\uB85C \uC0B4\uC9DD \uAE30\uC6B8\uC784)</div>\n       <button class=\"pill\" id=\"gDiag\" style=\"background:var(--off);margin-top:8px\">\uB9C8\uC6B4\uD2B8 \uC9C4\uB2E8 \uC2DC\uC791</button>\n       <div id=\"gDiagR\" style=\"font-size:12px;color:var(--sub);margin-top:8px\">\uBBF8\uC2E4\uD589</div>";
+    var v2g = (S.vendorKey === 'agmo_single');
+    var gPortDef = S.gnssPort || (v2g ? '/dev/ttyS4' : '/dev/ttyHSL0');
+    if (v2g) {
+      // AGMO Ver2 \u2014 \uC2F1\uAE00\uC548\uD14C\uB098+INS, USB-\uC2DC\uB9AC\uC5BC \uC544\uB2CC \uB0B4\uBD80 /dev/ttyS4. \uBB34\uBE59\uBCA0\uC774\uC2A4/\uB4C0\uC5BC\uB9C8\uC6B4\uD2B8 \uC5C6\uC74C.
+      h = "<div style=\"font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:10px\">"
+        + "<b>AGMO Ver2 \u2014 \uC2F1\uAE00\uC548\uD14C\uB098+INS</b> (/dev/ttyS4). \uD5E4\uB529=\uC18D\uB3C4\uBCA1\uD130+\uC790\uC774\uB85C \uC735\uD569(\uC815\uC9C0 \uC2DC \uBD80\uC815\uD655).<br>"
+        + "\uC804\uC6D0 GPIO\u00B7\uBB34\uBE59\uBCA0\uC774\uC2A4 RELPOSNED\u00B7\uB4C0\uC5BC \uB9C8\uC6B4\uD2B8 \uC9C4\uB2E8\uC740 \uD574\uB2F9 \uC5C6\uC74C.</div>"
+        + "<button class=\"pill\" id=\"gScan\">\u2460 \uD3EC\uD2B8 \uC790\uB3D9 \uD0D0\uC9C0 (\uC218 \uCD08 \uC18C\uC694)</button>"
+        + "<div id=\"gScanR\" style=\"font-size:12px;color:var(--sub);margin:8px 0;white-space:pre-line\">\u2014</div>"
+        + "<div class=\"row\"><span class=\"k\">\uD3EC\uD2B8</span><input class=\"nti\" id=\"gPort\" value=\"" + gPortDef + "\" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"/></div>"
+        + "<div class=\"row\"><span class=\"k\">\uBCF4\uB808\uC774\uD2B8(0=\uC790\uB3D9, 115200/460800)</span><input class=\"nti\" id=\"gBaud\" value=\"0\"/></div>"
+        + "<button class=\"pill\" id=\"gStart\" style=\"margin-top:8px\">\u2461 GNSS \uC2DC\uC791 (115200\u2192\uC2E4\uD328 \uC2DC 460800)</button>"
+        + "<div id=\"gStat\" style=\"text-align:center;font-size:12px;color:var(--sub);margin-top:12px\">\uC0C1\uD0DC \uD655\uC778 \uC911\u2026</div>";
+    } else {
+      h = "<div style=\"font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:10px\">\n         \uC790\uC728\uC870\uD5A5 1\uB2E8\uACC4 = <b>AGMO ver1 \uC548\uD14C\uB098(\uB0B4\uBD80 UART)</b>. \uC21C\uC11C\uB300\uB85C \uC9C4\uD589\uD558\uC138\uC694.<br>\n         (USB\uB294 \uB808\uBCA8\uB7EC \uC804\uC6A9 \u2014 \uC5EC\uAE30 \uC544\uB2D8)</div>\n       <button class=\"pill\" id=\"gPwr\">\u2460 \uC804\uC6D0 ON (\uB0B4\uBD80 u-blox)</button>\n       <button class=\"pill\" id=\"gScan\" style=\"margin-top:8px\">\u2461 \uD3EC\uD2B8 \uC790\uB3D9 \uD0D0\uC9C0 (\uC218 \uCD08 \uC18C\uC694)</button>\n       <div id=\"gScanR\" style=\"font-size:12px;color:var(--sub);margin:8px 0;white-space:pre-line\">\u2014</div>\n       <div class=\"row\"><span class=\"k\">\uD3EC\uD2B8</span><input class=\"nti\" id=\"gPort\" value=\"" + gPortDef + "\"\n            autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"/></div>\n       <div class=\"row\"><span class=\"k\">\uBCF4\uB808\uC774\uD2B8(0=\uC790\uB3D9)</span><input class=\"nti\" id=\"gBaud\" value=\"0\"/></div>\n       <button class=\"pill\" id=\"gCfg\" style=\"margin-top:8px\">\u2462 \uBB34\uBE59\uBCA0\uC774\uC2A4 \uC124\uC815(\uB4C0\uC5BC\uD5E4\uB529 RELPOSNED)</button>\n       <button class=\"pill\" id=\"gStart\" style=\"margin-top:8px\">\u2463 GNSS \uC2DC\uC791</button>\n       <div id=\"gStat\" style=\"text-align:center;font-size:12px;color:var(--sub);margin-top:12px\">\uC0C1\uD0DC \uD655\uC778 \uC911\u2026</div>\n       <div style=\"border-top:1px solid var(--line,#ddd);margin:14px 0 8px\"></div>\n       <div style=\"font-size:13px;color:var(--sub)\">\uB4C0\uC5BC\uC548\uD14C\uB098 base/rover\xB7\uBD80\uD638 \uC9C4\uB2E8 (\uC9C1\uC120 ~15m \uC8FC\uD589, \uB05D\uC5D0 \uC6B0\uCE21\uC73C\uB85C \uC0B4\uC9DD \uAE30\uC6B8\uC784)</div>\n       <button class=\"pill\" id=\"gDiag\" style=\"background:var(--off);margin-top:8px\">\uB9C8\uC6B4\uD2B8 \uC9C4\uB2E8 \uC2DC\uC791</button>\n       <div id=\"gDiagR\" style=\"font-size:12px;color:var(--sub);margin-top:8px\">\uBBF8\uC2E4\uD589</div>";
+    }
   } else if (key === 'system') {
     var s = S.sys;
     var sr = function sr(k, on) {
@@ -688,7 +711,7 @@ function openDetail(key) {
   }
   $('detailBody').innerHTML = h;
   $('detail').classList.add('on');
-  if (key === 'motortest') wireJog();
+  if (key === 'motortest') { wireJog(); adaptMotorVendor(); }
   if (key === 'rtk') wireNtrip();
   wireDetail(key);
 }
@@ -992,6 +1015,84 @@ function jogStop() {
   var st = $('jogState');
   if (st) st.textContent = '정지';
 }
+// AGMO Ver2(agmo_single)=표준 SocketCAN(can1): 모터점검 화면의 브리지 전용 진단
+// (채널 0/1/2·250k/500k·확장ID·RX = libsysmcu/ApolloCanBridge 전용)을 숨기고 안내로 대체.
+// 모터 회전(jog)·중앙설정·하트비트·스니핑은 그대로(전송 백엔드만 다름).
+function adaptMotorVendor() {
+  if (S.vendorKey !== 'agmo_single') return;
+  // ★ Ver2: 기존 jog/브리지 진단 토글 숨기고, cpdevice binder 수동 단발 TX 테스트 패널로 대체.
+  var jb = document.querySelectorAll('#detailBody .jogbtn');
+  for (var k = 0; k < jb.length; k++) jb[k].disabled = true;
+  var diag = document.querySelector('#detailBody .diag');
+  if (diag) {
+    var rows = diag.querySelectorAll('.drow');
+    for (var i = 0; i < rows.length; i++) rows[i].style.display = 'none';
+  }
+  if (document.getElementById('cpdevTx')) return;   // 중복 삽입 방지
+  var box = document.createElement('div');
+  box.id = 'cpdevTx';
+  box.style.cssText = 'margin-top:10px;padding:10px;border:1px solid var(--line,#ddd);border-radius:8px';
+  box.innerHTML =
+    '<div style="font-size:12px;color:#b9760f;line-height:1.5;margin-bottom:8px">'
+    + 'Ver2 cpdevice(BnMcuCanService) 단발 TX 테스트. ⚠ <b>잭업(바퀴 들기)</b> 후 시험. '
+    + '버튼 1회=1프레임만. 채널/ext 바꿔가며 모터 반응 관찰.</div>'
+    + '<div class="drow"><span>채널</span>'
+    + '<button class="dbtn" data-cpch="0">0</button><button class="dbtn" data-cpch="1">1</button>'
+    + '<button class="dbtn" data-cpch="2">2</button>'
+    + '<span>ext</span><input id="cpExt" value="0x02" style="width:54px" autocapitalize="off" spellcheck="false"/>'
+    + '<button class="dbtn" id="cpExtSet">적용</button></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    + '<button class="pill" data-cptx="hb" style="flex:1;min-width:80px">HB만 전송</button>'
+    + '<button class="pill" data-cptx="enable" style="flex:1;min-width:80px">구동 Enable</button>'
+    + '<button class="pill" data-cptx="neutral" style="flex:1;min-width:80px">조향 0도</button>'
+    + '<button class="pill" data-cptx="plus" style="flex:1;min-width:80px">미세 +5도</button>'
+    + '<button class="pill" data-cptx="minus" style="flex:1;min-width:80px">미세 -5도</button></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    + '<button class="pill" data-cpburst="plus" style="flex:1;min-width:120px;background:#2e7d32;color:#fff">▶ 버스트 +5 (2초)</button>'
+    + '<button class="pill" data-cpburst="minus" style="flex:1;min-width:120px;background:#2e7d32;color:#fff">버스트 -5 (2초) ◀</button></div>'
+    + '<button class="pill" id="cpEstop" style="background:var(--danger,#c0392b);color:#fff;margin-top:8px">■ 전체 정지(비상)</button>'
+    + '<button class="pill" id="cpRxReg" style="background:#5c6bc0;color:#fff;margin-top:8px">RX 등록 (code16) — 버스 생존 확인</button>'
+    + '<div id="cpTxOut" style="font-size:11px;color:var(--sub);margin-top:8px;white-space:pre-wrap">대기</div>';
+  $('detailBody').appendChild(box);
+  var out = function (t) { var e = $('cpTxOut'); if (e) e.textContent = t; };
+  Array.prototype.forEach.call(box.querySelectorAll('[data-cptx]'), function (b) {
+    b.onclick = function () {
+      var kind = b.getAttribute('data-cptx'); var r = '-';
+      try { if (BR && BR.cpdevTxTest) r = BR.cpdevTxTest(kind); } catch (e) {}
+      out('TX ' + kind + ' → ' + r + '  (logcat CpdeviceCan-TX 확인)');
+    };
+  });
+  Array.prototype.forEach.call(box.querySelectorAll('[data-cpburst]'), function (b) {
+    b.onclick = function () {
+      var kind = b.getAttribute('data-cpburst'); var r = '-';
+      try { if (BR && BR.cpdevTxBurst) r = BR.cpdevTxBurst(kind, 2000); } catch (e) {}
+      out('버스트 ' + kind + ' 2초 (ch=현재) → ' + r + '  (logcat BURST 확인)');
+    };
+  });
+  Array.prototype.forEach.call(box.querySelectorAll('[data-cpch]'), function (b) {
+    b.onclick = function () {
+      var ch = parseInt(b.getAttribute('data-cpch'), 10);
+      try { if (BR && BR.cpdevSetChannel) BR.cpdevSetChannel(ch); } catch (e) {}
+      Array.prototype.forEach.call(box.querySelectorAll('[data-cpch]'), function (x) { x.classList.remove('sel'); });
+      b.classList.add('sel'); out('채널 = ' + ch);
+    };
+  });
+  if ($('cpExtSet')) $('cpExtSet').onclick = function () {
+    var v = ($('cpExt') && $('cpExt').value || '0x02').trim();
+    var n = (v.indexOf('0x') === 0 || v.indexOf('0X') === 0) ? parseInt(v, 16) : parseInt(v, 10);
+    if (isNaN(n)) { out('ext 값 오류'); return; }
+    try { if (BR && BR.cpdevSetExtFlag) BR.cpdevSetExtFlag(n); } catch (e) {}
+    out('ext flag = 0x' + n.toString(16));
+  };
+  if ($('cpEstop')) $('cpEstop').onclick = function () {
+    var r = '-'; try { if (BR && BR.cpdevEstop) r = BR.cpdevEstop(); } catch (e) {}
+    out('전체 정지(disable 전송) → ' + r);
+  };
+  if ($('cpRxReg')) $('cpRxReg').onclick = function () {
+    var r = '-'; try { if (BR && BR.cpdevRegisterRx) r = BR.cpdevRegisterRx(true); } catch (e) {}
+    out('RX 등록(code16) → ' + r + '  (logcat CpdeviceCan-RX 에 code=19 들어오는지 확인)');
+  };
+}
 function wireJog() {
   Array.prototype.forEach.call(document.querySelectorAll('.jogbtn'), function (btn) {
     var dir = parseInt(btn.dataset.dir, 10);
@@ -1109,8 +1210,8 @@ function vendorList() {
   }, {
     key: "agmo_single",
     name: "아그모 싱글안테나",
-    tagline: "Ver2 · Apollo2 · 싱글+INS · Keya(듀얼동일)",
-    can_verified: true,
+    tagline: "Ver2 · Apollo2 · 싱글+INS · 모터 미지원(개발중)",
+    can_verified: false,
     gnss: "싱글안테나+INS"
   }, {
     key: "chcnav",
@@ -1135,6 +1236,12 @@ function initVendors() {
       if (BR && BR.setVendor) {
         try {
           BR.setVendor(el.dataset.k);
+        } catch (e) {}
+      }
+      // CAN 브리지 선택: agmo_single(Ver2)=cpdevice(BnMcuCanService 골격), 그 외=apollo(VanMcu).
+      if (BR && BR.selectCanBridge) {
+        try {
+          BR.selectCanBridge(el.dataset.k === 'agmo_single' ? 'cpdevice' : 'apollo');
         } catch (e) {}
       }
       show('main');
@@ -1353,6 +1460,9 @@ function poll() {
       if (typeof st.motor_verified === 'boolean') S.motorVerified = st.motor_verified;
       if (st.vendor_name) S.vendorName = st.vendor_name;
       if (st.vendor) S.vendorKey = st.vendor;
+      if (st.gnss_port) S.gnssPort = st.gnss_port;
+      if (st.can_backend) S.canBackend = st.can_backend;
+      if (st.can_state) S.canState = st.can_state;
       // CAN 스니핑 버튼: 모터 CAN ID 미확정 벤더(agmo_single/chcnav)에서만 노출
       var sb = $('btnSniff');
       if (sb) sb.style.display = (S.vendorKey === 'agmo_single' || S.vendorKey === 'chcnav') ? '' : 'none';
@@ -1392,7 +1502,14 @@ function poll() {
   if (sb) sb.classList.toggle('go', S.engaged);
   // 모터 점검 화면 열려있으면 CAN 상태 갱신
   var cs = $('canStat');
-  if (cs && BR && BR.canStatus) {
+  if (cs && S.vendorKey === 'agmo_single') {
+    // ★ Ver2(실측): SocketCAN 인터페이스 없음 → CAN 미지원(개발중). spidev2.0→MCU 경유.
+    cs.textContent = '모터 미지원 (개발중) — Ver2 CAN은 MCU(spidev) 경유';
+    cs.style.background = '#fdeede';
+    cs.style.color = '#b9760f';
+    var tiS = $('txInfo');
+    if (tiS) tiS.textContent = 'PCAN 스니핑 또는 libcpcomm binder 연동 필요 (GNSS·레벨은 정상)';
+  } else if (cs && BR && BR.canStatus) {
     try {
       var c = JSON.parse(BR.canStatus());
       if (c.canReady) {
