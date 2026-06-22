@@ -861,7 +861,7 @@ class Controller:
             st["motor_ready"] = bool(getattr(self.sys, "motor_verified", False))
             # Ver2(cpdevice 골격): binder 마샬링 TODO 라 모터 비활성 — 사유 명시.
             if self._can_bridge == "cpdevice" and not getattr(self.sys, "motor_verified", False):
-                st["note"] = "Ver2 CpdeviceCanBridge 골격 — BnMcuCanService binder 마샬링 TODO (모터 비활성)"
+                st["note"] = "Ver2 CpdeviceCanBridge(binder TX/RX 구현) — 채널/ext/RX코드 실차확인 후 모터 활성"
             # 작업기 GNSS 상태(차체와 독립) — 미시작이면 ok=False
             if self._impl is not None:
                 ist = self._impl.status()

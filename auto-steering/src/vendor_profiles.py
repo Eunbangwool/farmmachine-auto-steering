@@ -185,7 +185,7 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
     "agmo_single": VendorProfile(
         key="agmo_single", display_name="AGMO Ver2 (싱글안테나+INS)",
         tagline="Apollo2 · 싱글+INS · 모터 미지원(개발중)",
-        can_verified=False,            # ★ binder 마샬링 TODO(골격) → 모터 아직 비활성
+        can_verified=False,            # ★ binder TX/RX 구현됨. 채널/ext비트/RX코드 실차확인 후 True 로.
         canspec=KEYA_CANSPEC,          # 모터 프레임=듀얼과 동일 Keya(0x06000001/0x07000001) 그대로 재사용
         gnss_primary=AGMO_V2_INS, gnss_backup=UBLOX_F9P,
         gnss_priority=("agmo", "f9p"),
@@ -196,16 +196,17 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
         gnss_baud_alt=460_800,         # ★ TODO(HW): 460800 일 수 있음 — 실패 시 재시도
         # ★ 전송: Python 은 동일 TCP 브리지(BridgeBackend, 13B 레코드). Kotlin 측만 ApolloCanBridge
         #   대신 CpdeviceCanBridge(BnMcuCanService binder)로 교체(JsBridge.selectCanBridge).
-        #   ★ TODO(HW): BnMcuCanService onTransact 트랜잭션 코드·Parcel 마샬링 미확정 → 실제 송신은
-        #   Kotlin 골격에서 TODO 로 막힘(추측 송신 금지). 확정(Ghidra/JNI) 후 can_verified=True 로.
+        #   binder TX(code7 sendCanFrame, 14B/canId BE)·RX(code1 registerCallback) 구현 완료.
+        #   ★ 실차확인 4개(TODO): byte[4] ext 비트, 모터 CAN 채널번호, RX 콜백 transact code,
+        #   Android11 hidden API 접근. 확인 후 can_verified=True 로 모터 활성.
         can_backend="bridge",          # Python=TCP 브리지(듀얼과 동일 계약). Kotlin=cpdevice 브리지
         can_channel=None,
         can_listen_only=False,
         gyro_zero_required=True,       # gz_zero 영점 필요(INS)
         notes="AGMO Ver2 — 싱글안테나+INS. GNSS=/dev/ttyS4(정상). CAN: Ver2 는 SocketCAN 없음"
               "(실측), spidev2.0→cpdevice MCU 경유. 전송=Kotlin CpdeviceCanBridge(BnMcuCanService "
-              "binder) 골격 — onTransact 마샬링 TODO 라 현재 모터 비활성(개발중). 모터 프레임은 "
-              "듀얼과 동일 Keya. GNSS·레벨러는 정상.",
+              "binder TX code7/RX code1 구현). 모터 프레임=듀얼과 동일 Keya. 채널/ext비트/RX코드 "
+              "실차확인 후 can_verified=True 로 모터 활성(현재 안전상 비활성). GNSS·레벨러 정상.",
     ),
     "chcnav": VendorProfile(
         key="chcnav", display_name="CHCNAV",

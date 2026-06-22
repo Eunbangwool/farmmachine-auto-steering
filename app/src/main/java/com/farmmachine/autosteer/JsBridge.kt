@@ -66,7 +66,7 @@ class JsBridge {
         if (com.farmmachine.autosteer.can.CanBridgeHost.kind == "cpdevice") {
             // Ver2: BnMcuCanService binder 골격(전송 마샬링 TODO). bridge="cpdevice" 명시.
             val c = com.farmmachine.autosteer.can.CpdeviceCanBridge
-            return """{"vanmcu":false,"bridge":"cpdevice","binderReady":${c.binderReady},"connected":${c.clientConnected},"txAttempts":${c.txAttempts},"rxCount":${c.rxCount},"lastError":"${c.lastError.replace("\"","'")}"}"""
+            return """{"vanmcu":false,"bridge":"cpdevice","binderReady":${c.binderReady},"connected":${c.clientConnected},"txCount":${c.txCount},"lastTxOk":${c.lastTxOk},"rxCount":${c.rxCount},"lastError":"${c.lastError.replace("\"","'")}"}"""
         }
         val vm = com.van.jni.VanMcu.available
         val b = com.farmmachine.autosteer.can.ApolloCanBridge
