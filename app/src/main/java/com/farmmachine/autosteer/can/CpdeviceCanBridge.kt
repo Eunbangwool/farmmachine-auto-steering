@@ -25,8 +25,9 @@ import kotlin.concurrent.thread
  *   - 디스크립터 = "com.cpdevice.BnMcuCanService"
  *   - TX  code 7  sendCanFrame: writeInterfaceToken + writeInt(N) + writeByteArray(N×14B)
  *   - RX  code 1  registerCallback: writeInterfaceToken + writeStrongBinder(우리 콜백)
- *   - 14바이트 프레임: [0]channel [1..3]canId(**big-endian**) [4](canId&0xFF)|flags
- *                      [5]dlc [6..13]data
+ *   - 14바이트 프레임(makeCanSendBuffer 역분석 확정): [0]channel
+ *       [1..4] ID워드 빅엔디안 — ext: word=((id<<3)|0x04) / std: word=(id<<21)
+ *       [5]dlc [6..13]data.  검산: 0x06000001→30 00 00 0C, 0x07000001→38 00 00 0C.
  *   binder 호출은 public API(Parcel/IBinder.transact). ServiceManager 만 hidden → reflection.
  *
  * ⚠ 미확정(실차/추가분석 — TODO): ① byte[4] ext 플래그 비트 위치 ② 모터 CAN 채널 번호
@@ -47,7 +48,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         Log.w(TAG, "CpDev: binder DIED -> will reconnect on next use")
     }
 
-    // TX drop 요약 로그(폭주 방지). channel/extFlag 는 companion(조정가능).
+    // TX drop 요약 로그(폭주 방지). channel 은 companion(조정가능).
     @Volatile private var txDropped = 0
     @Volatile private var lastDropLogMs = 0L
 
@@ -72,14 +73,14 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         @Volatile var channel = 0
         @Volatile var baud = 250000
         @Volatile var baud2 = 250000   // 2번째 baud 인자(CAN-FD data baud 추정) — 우선 baud 동일값
-        @Volatile var extFlag = 0x02   // byte[4] 확장ID 플래그 비트(실차검증)
 
         @Volatile var canOpened = false  // setCANBaudrate(code3) 성공 → 이후에야 sendCanFrame 유효
 
         // observe-only: 고주파 자동 스트리밍 TX 만 차단(개통/RX 등록/수동 버튼 TX 는 허용).
         @Volatile var observeOnly = true
-        // ★ 시작 시 registerCallback(code1) 자동 — 단, 반드시 setCANBaudrate(개통) **뒤**에.
-        @Volatile var registerRx = true
+        // ★ RX(code1) 자동 등록 끔: registerCallback(code1) transact 가 cpcomm_server 를 죽여(매번 DeadObject)
+        //   TX(code7)까지 막던 무한루프 원인(logcat3 22:23 실측). code1 역transact IF 확정 전엔 수동/진단만 등록.
+        @Volatile var registerRx = false
         // ★ Python 고주파 스트리밍 게이트(안전). 수동 점검 버튼(txTestFrame)은 우회.
         @Volatile var txEnabled = false
 
@@ -109,16 +110,13 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
     }
 
     /**
-     * 확정 init 순서: setCANBaudrate(code3) → **재시작 대기** → registerCallback(code1).
-     * ★ 실측: code3 처리 후 ~90ms 에 서비스가 DIED→재시작(=baudrate 적용). 재시작 전에 콜백 등록하면
-     *   죽은 binder 라 DeadObject. 그래서 개통 후 재시작이 끝나길 기다린 뒤 **안정된 새 인스턴스**에 등록.
+     * init 순서(logcat 실측 확정): setCANBaudrate(code3) 로 개통만. 단독 code3 는 서비스를 죽이지 않음
+     *   (logcat41 22:39: code3 후 DIED 없음). 서비스를 죽이던 건 registerCallback(code1) 였음(logcat3 22:23).
+     *   → RX(code1) 자동 등록 생략. 모터 제어는 sendCanFrame(code7) 만으로 충분(code7 ret=true 실측).
      */
     private fun initCan() {
-        openCan()                                   // code3 — 서비스 재시작 유발(canOpened=true)
-        try { Thread.sleep(350) } catch (_: Throwable) {}   // 비동기 크래시(~90ms)가 먼저 일어나도록 양보
-        val b = waitForService(3000)                // 재시작 대기 + 새 핸들(linkToDeath) 재획득
-        if (b == null) { Log.w(TAG, "CpDev: initCan — 서비스 재시작 대기 실패(binder null)"); return }
-        if (registerRx) registerRxCallback()        // 안정된 새 인스턴스에 RX 콜백(code1) 등록
+        openCan()                                   // code3 — CAN 개통(canOpened=true). 단독으론 서비스 안 죽음.
+        Log.i(TAG, "CpDev: RX 콜백 등록 생략(서비스 크래시 방지). 모터 제어=TX(code7)만. RX 는 code1 IF 확정 후.")
         Log.i(TAG, "CpDev: initCan done binderReady=$binderReady canOpened=$canOpened")
     }
 
@@ -293,8 +291,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         if (b != null && (try { b.isBinderAlive } catch (_: Throwable) { false })) return b
         Log.w(TAG, "CpDev: binder dead/null -> reconnect (getService again)")
         connectBinder()
-        // 재시작된 새 인스턴스엔 이전 RX 콜백 등록이 없음 → 재등록. 개통(code3)은 재실행 안 함(또 재시작 유발).
-        if (binderReady && registerRx) registerRxCallback()
+        // ★ RX 콜백 재등록 안 함: registerCallback(code1) 이 cpcomm_server 를 죽여 TX 가 매번 실패하던 원인(logcat3).
         return binder
     }
 
@@ -304,14 +301,22 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         """"lastError":"${lastError.replace("\"","'")}"}"""
 
     // ── TX: 13바이트 TCP 레코드 → 14바이트 CAN 프레임 → sendCanFrame(code 7) ──────────
+    /**
+     * 14바이트 CAN 프레임 빌드. ID 인코딩 = libcpcomm.so makeCanSendBuffer 역분석 **확정**.
+     *   ext(29bit): word = ((canId shl 3) or 0x04)     std(11bit): word = (canId shl 21)
+     *   byte[1..4] = word 빅엔디안(MSB first). rtr=0(데이터프레임)만 사용.
+     * 검산: 0x06000001 ext → 30 00 00 0C / 0x07000001 ext → 38 00 00 0C.
+     */
     private fun makeFrame14(canId: Int, dlc: Int, data: ByteArray): ByteArray {
-        val ext = canId > 0x7FF                       // 29비트 확장 ID (Keya 0x06000001 등)
+        val ext = canId > 0x7FF                       // 29비트 확장 ID (Keya 0x06000001/0x07000001 등)
+        val id = canId.toLong() and 0xFFFFFFFFL
+        val word = (if (ext) ((id shl 3) or 0x04L) else (id shl 21)) and 0xFFFFFFFFL
         val f = ByteArray(14)
         f[0] = channel.toByte()                       // ★ TODO(HW): 채널 실차확인
-        f[1] = (canId ushr 24).toByte()               // canId big-endian (MSB first)
-        f[2] = (canId ushr 16).toByte()
-        f[3] = (canId ushr 8).toByte()
-        f[4] = ((canId and 0xFF) or (if (ext) extFlag else 0)).toByte()  // ★ TODO: ext 비트 실차검증
+        f[1] = (word ushr 24).toByte()                // ID워드 big-endian (MSB first)
+        f[2] = (word ushr 16).toByte()
+        f[3] = (word ushr 8).toByte()
+        f[4] = (word and 0xFF).toByte()
         f[5] = dlc.coerceIn(0, 8).toByte()
         System.arraycopy(data, 0, f, 6, minOf(data.size, 8))
         return f
@@ -327,7 +332,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         // ★ 개통 선행: CAN 안 열렸으면 setCANBaudrate(code3) 먼저(미개통 TX = DeadObject 원인이었음).
         if (!canOpened) {
             Log.i("CpdeviceCan-TX", "CpDev-TX: canOpened=false → setCANBaudrate 먼저")
-            if (openCan() && registerRx) registerRxCallback()
+            openCan()                              // RX 콜백(code1) 자동 등록 안 함(크래시 회피)
         }
         Log.i("CpdeviceCan-TX", "CpDev-TX: ch=%d id=0x%08X dlc=%d data=%s".format(
             channel, canId, dlc, data.copyOf(dlc).joinToString("") { "%02X".format(it) }))
@@ -345,9 +350,11 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         if (b == null) { Log.w("CpdeviceCan-TX", "CpDev-TX: binder=null (no send, attempt=$attempt)"); return false }
         val p = Parcel.obtain(); val r = Parcel.obtain()
         return try {
+            val frame = makeFrame14(canId, dlc, data)
+            Log.i("CpdeviceCan-TX", "CpDev-TX: 14B=%s".format(frame.joinToString("") { "%02X".format(it) }))
             p.writeInterfaceToken(DESCRIPTOR)
             p.writeInt(1)
-            p.writeByteArray(makeFrame14(canId, dlc, data))
+            p.writeByteArray(frame)
             val ret = b.transact(CODE_SEND_CAN_FRAME, p, r, 0)
             r.readException()
             lastTxOk = true; txCount++
@@ -379,7 +386,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
             return
         }
         // ★ 개통 선행: 스트리밍도 CAN 안 열렸으면 setCANBaudrate 먼저.
-        if (!canOpened) { openCan(); if (registerRx) registerRxCallback() }
+        if (!canOpened) openCan()   // RX 콜백(code1) 자동 등록 안 함(크래시 회피)
         // 스트림 경로도 단일 핸들/alive 체크 공용 경로 사용(DeadObject 시 자가 복구).
         doTransactCan(canId, dlc, data, attempt = 1)
     }
@@ -404,10 +411,13 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
                             val o = i * 14
                             val ch = buf[o].toInt() and 0xFF
                             val dlc = (buf[o + 5].toInt() and 0xFF).coerceIn(0, 8)
-                            val low = (buf[o + 4].toInt() and 0xFF) and extFlag.inv()  // ext 플래그 제거(★TODO 실차)
-                            val canId = ((buf[o + 1].toInt() and 0xFF) shl 24) or
-                                        ((buf[o + 2].toInt() and 0xFF) shl 16) or
-                                        ((buf[o + 3].toInt() and 0xFF) shl 8) or low
+                            // ID워드 빅엔디안 → canId 복원(makeFrame14/makeCanSendBuffer 역). ext = word&0x04.
+                            val word = ((buf[o + 1].toLong() and 0xFF) shl 24) or
+                                       ((buf[o + 2].toLong() and 0xFF) shl 16) or
+                                       ((buf[o + 3].toLong() and 0xFF) shl 8) or
+                                        (buf[o + 4].toLong() and 0xFF)
+                            val canId = (if (word and 0x04L != 0L) (word ushr 3) and 0x1FFFFFFFL
+                                         else (word ushr 21) and 0x7FFL).toInt()
                             val payload = buf.copyOfRange(o + 6, o + 6 + dlc)
                             Log.i("CpdeviceCan-RX", "RX ch=%d id=0x%08X dlc=%d data=%s".format(
                                 ch, canId, dlc, payload.joinToString("") { "%02X".format(it) }))
