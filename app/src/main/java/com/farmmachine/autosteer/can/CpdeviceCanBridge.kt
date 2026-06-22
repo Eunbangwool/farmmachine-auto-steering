@@ -82,21 +82,18 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         if (running) return
         running = true
         instance = this
+        Log.i(TAG, "start: observeOnly=$observeOnly registerRx=$registerRx (no setCANBaudrate, no TX -> bus untouched)")
         connectBinder()
-        // ★ observe-only: 제어성 호출(setCANBaudrate/TX) 절대 안 함. registerCallback(RX)만 시도.
-        //   autokit2 와 공존 진단: 등록 전후로 정품 모터/IMU 가 꺼지는지 logcat 으로 비교.
-        Log.i(TAG, "observeOnly=$observeOnly registerRx=$registerRx — setCANBaudrate/TX 미호출(버스 설정 불변)")
+        // observe-only still MUST registerCallback to receive RX (only TX/baudrate are skipped).
         if (registerRx) {
-            Log.w(TAG, "⚠ registerCallback 시도 직전 — 지금 autokit2 모터/IMU 가 켜져 있는지 확인. "
-                + "등록 직후 꺼지면 registerCallback 이 배타적(단일 클라이언트)이라 공존 불가일 수 있음.")
+            Log.w(TAG, "before registerCallback: check autokit2 motor/IMU is ON now. If it turns OFF right after, registerCallback is exclusive (single client) -> coexistence impossible.")
             registerRxCallback()
-            Log.w(TAG, "registerCallback 직후 — autokit2 모터/IMU 상태 재확인(여기서 off 되면 배타적 확정).")
+            Log.w(TAG, "after registerCallback: re-check autokit2 motor/IMU (OFF here => exclusive confirmed).")
         } else {
-            Log.i(TAG, "registerRx=false — binder 연결만(콜백 미등록). 이 상태에서도 정품이 꺼지면 "
-                + "원인은 콜백 등록이 아니라 binder attach 자체.")
+            Log.i(TAG, "registerRx=false -> binder attach only (no callback). If product still turns off, cause is binder attach itself, not callback.")
         }
         serverThread = thread(name = "cpdevice-can-bridge") { serve() }
-        Log.i(TAG, "CpdeviceCanBridge 시작 :$port (binderReady=$binderReady)")
+        Log.i(TAG, "CpdeviceCanBridge started :$port (binderReady=$binderReady)")
     }
 
     fun stop() {
@@ -108,20 +105,23 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
 
     fun setChannel(ch: Int) { channel = ch }   // 현장 진단용(채널 스윕)
 
-    /** BnMcuCanService binder 획득 — ServiceManager 는 hidden API → reflection. 실패해도 크래시 금지. */
+    /** Acquire BnMcuCanService binder. ServiceManager is hidden API -> reflection. Never crash. */
     private fun connectBinder() {
+        Log.i(TAG, "step1 getService $SERVICE_NAME (via reflection)")
         try {
             val sm = Class.forName("android.os.ServiceManager")
             val getService = sm.getMethod("getService", String::class.java)
             binder = getService.invoke(null, SERVICE_NAME) as? IBinder
             binderReady = (binder != null)
-            lastError = if (binderReady) "ok" else "service 없음($SERVICE_NAME)"
-            Log.i(TAG, "binder 연결: ${if (binderReady) "OK" else lastError}")
+            // null -> service not registered OR Android11 hidden-API blocked OR SELinux denied.
+            Log.i(TAG, "step2 reflection ServiceManager.getService ok: binder=%s %s".format(
+                binder != null,
+                if (binder == null) "(NULL -> not found / hidden-api blocked / selinux denial — check 'avc: denied' in logcat)" else ""))
+            lastError = if (binderReady) "ok" else "getService returned null"
         } catch (e: Throwable) {
-            // ★ TODO: Android 11 hidden API 제한 시 다른 reflection 경로 필요할 수 있음.
             binder = null; binderReady = false
-            lastError = "binder 예외: ${e.message}"
-            Log.w(TAG, lastError)
+            lastError = "ERR at step2(reflection): ${e.message}"
+            Log.e(TAG, "ERR at step2 reflection ServiceManager.getService fail: ${e.message}", e)
         }
     }
 
@@ -151,13 +151,13 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
             txDropped++
             val now = System.currentTimeMillis()
             if (now - lastDropLogMs >= 1000L) {
-                Log.i(TAG, "TX 비활성 — drop %d (1s). RX 검증 후 cpdevTxEnable(true)".format(txDropped))
+                Log.i(TAG, "TX disabled - dropped %d (1s). enable via cpdevTxEnable(true) after RX verify".format(txDropped))
                 txDropped = 0; lastDropLogMs = now
             }
             return
         }
         val b = binder
-        if (b == null) { lastTxOk = false; return }   // binder 없음 → 조용히 무시(추측 송신 안 함)
+        if (b == null) { lastTxOk = false; return }   // no binder -> silently skip (no guessed TX)
         val p = Parcel.obtain(); val r = Parcel.obtain()
         try {
             p.writeInterfaceToken(DESCRIPTOR)
@@ -170,7 +170,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
                 Log.i(TAG, "TX sendCanFrame id=0x%08X dlc=%d ch=%d (#%d)".format(canId, dlc, channel, txCount))
         } catch (e: Throwable) {
             lastTxOk = false
-            lastError = "transact 실패: ${e.message}"
+            lastError = "TX transact failed: ${e.message}"
             Log.w(TAG, lastError)
         } finally {
             p.recycle(); r.recycle()
@@ -191,12 +191,12 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
                         val hdr = data.readInt()                   // count/timestamp — 무시 (Parcel.readInt)
                         val buf = data.createByteArray()
                         if (buf == null || buf.size < 14) {
-                            Log.w("CpdeviceCan-RX", "code19 createByteArray=${buf?.size ?: -1}B (<14) — raw 폴백")
+                            Log.w("CpdeviceCan-RX", "code19 createByteArray=${buf?.size ?: -1}B (<14) -> raw fallback")
                             dumpRaw(data)
                             return true
                         }
                         val nFrames = buf.size / 14
-                        Log.i("CpdeviceCan-RX", "code19 hdr=%d bytes=%d → %d프레임".format(hdr, buf.size, nFrames))
+                        Log.i("CpdeviceCan-RX", "code19 hdr=%d bytes=%d -> %d frames".format(hdr, buf.size, nFrames))
                         for (i in 0 until nFrames) {
                             val o = i * 14
                             val ch = buf[o].toInt() and 0xFF
@@ -208,18 +208,18 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
                             val payload = buf.copyOfRange(o + 6, o + 6 + dlc)
                             Log.i("CpdeviceCan-RX", "RX ch=%d id=0x%08X dlc=%d data=%s".format(
                                 ch, canId, dlc, payload.joinToString("") { "%02X".format(it) }))
-                            rxQueue.offer(canId to payload)     // 기존 TCP 브리지 RX 레코드로 push
+                            rxQueue.offer(canId to payload)     // push to existing TCP bridge RX record
                         }
                     } catch (e: Throwable) {
-                        Log.w("CpdeviceCan-RX", "code19 파싱 실패: ${e.message} — raw 폴백")
+                        Log.w("CpdeviceCan-RX", "code19 parse failed: ${e.message} -> raw fallback")
                         dumpRaw(data)
                     }
                 } else {
-                    // code 19 외 — 무시(분석용 raw 1줄만)
+                    // non-19 code -> ignore (raw dump one line for analysis)
                     dumpRaw(data)
                 }
             } catch (e: Throwable) {
-                Log.w("CpdeviceCan-RX", "onTransact 예외: ${e.message}")
+                Log.w("CpdeviceCan-RX", "onTransact exception: ${e.message}")
             }
             return true
         }
@@ -233,24 +233,26 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
             Log.i("CpdeviceCan-RX", "raw parcel %dB: %s%s".format(
                 raw.size, (0 until n).joinToString(" ") { "%02X".format(raw[it]) }, if (raw.size > n) " …" else ""))
         } catch (e: Throwable) {
-            Log.w("CpdeviceCan-RX", "marshall 실패: ${e.message}")
+            Log.w("CpdeviceCan-RX", "marshall failed: ${e.message}")
         }
     }
 
     private fun registerRxCallback() {
         val b = binder
-        Log.i(TAG, "registerCallback 시도: code=$TX_REGISTER_CALLBACK desc=\"$DESCRIPTOR\" binder=${b != null}")
-        if (b == null) { Log.w(TAG, "registerCallback 건너뜀 — binder 없음"); return }
+        Log.i(TAG, "step3 build callback Binder ok; registerCallback code=$TX_REGISTER_CALLBACK desc=\"$DESCRIPTOR\" binder=${b != null}")
+        if (b == null) { Log.e(TAG, "ERR at step3: binder is null -> cannot registerCallback (step2 failed)"); return }
         val p = Parcel.obtain(); val r = Parcel.obtain()
         try {
             p.writeInterfaceToken(DESCRIPTOR)
             p.writeStrongBinder(rxCallback)
-            val ok = b.transact(TX_REGISTER_CALLBACK, p, r, 0)
+            Log.i(TAG, "step4 registerCallback transact(code=$TX_REGISTER_CALLBACK) sending...")
+            val ret = b.transact(TX_REGISTER_CALLBACK, p, r, 0)
             r.readException()
-            Log.i(TAG, "registerCallback(code $TX_REGISTER_CALLBACK) OK (transact=$ok) — RX onTransact 대기")
+            Log.i(TAG, "step5 registerCallback returned=$ret (true=delivered) — waiting RX onTransact code=$RX_TRANSACT_CODE")
+            lastError = "registered(ret=$ret)"
         } catch (e: Throwable) {
-            lastError = "registerCallback 실패: ${e.message}"
-            Log.w(TAG, lastError)   // RX 실패해도 graceful
+            lastError = "ERR at step4/5(registerCallback): ${e.message}"
+            Log.e(TAG, "ERR at step4/5 registerCallback transact fail: ${e.message}", e)   // graceful
         } finally {
             p.recycle(); r.recycle()
         }
@@ -261,7 +263,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         val server = ServerSocket(port).apply { reuseAddress = true; soTimeout = 200 }
         while (running) {
             val sock = try { server.accept() } catch (e: Exception) { continue }
-            try { handle(sock) } catch (e: Exception) { Log.w(TAG, "client 종료: ${e.message}") }
+            try { handle(sock) } catch (e: Exception) { Log.w(TAG, "client closed: ${e.message}") }
             try { sock.close() } catch (_: Exception) {}
         }
         try { server.close() } catch (_: Exception) {}
