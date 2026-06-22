@@ -82,18 +82,16 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         if (running) return
         running = true
         instance = this
-        Log.i(TAG, "start: observeOnly=$observeOnly registerRx=$registerRx (no setCANBaudrate, no TX -> bus untouched)")
-        connectBinder()
-        // observe-only still MUST registerCallback to receive RX (only TX/baudrate are skipped).
-        if (registerRx) {
-            Log.w(TAG, "before registerCallback: check autokit2 motor/IMU is ON now. If it turns OFF right after, registerCallback is exclusive (single client) -> coexistence impossible.")
+        Log.i(TAG, "CpDev: bridge start (observeOnly=$observeOnly — no setCANBaudrate/TX, bus untouched)")
+        // ★ binder 연결 + registerCallback 은 observe-only 와 무관하게 **항상** 실행(RX 수신 필수).
+        try {
+            connectBinder()
             registerRxCallback()
-            Log.w(TAG, "after registerCallback: re-check autokit2 motor/IMU (OFF here => exclusive confirmed).")
-        } else {
-            Log.i(TAG, "registerRx=false -> binder attach only (no callback). If product still turns off, cause is binder attach itself, not callback.")
+        } catch (e: Throwable) {
+            Log.e(TAG, "CpDev ERR: init ${e.message}", e)
         }
         serverThread = thread(name = "cpdevice-can-bridge") { serve() }
-        Log.i(TAG, "CpdeviceCanBridge started :$port (binderReady=$binderReady)")
+        Log.i(TAG, "CpDev: bridge started :$port (binderReady=$binderReady)")
     }
 
     fun stop() {
@@ -107,21 +105,20 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
 
     /** Acquire BnMcuCanService binder. ServiceManager is hidden API -> reflection. Never crash. */
     private fun connectBinder() {
-        Log.i(TAG, "step1 getService $SERVICE_NAME (via reflection)")
         try {
             val sm = Class.forName("android.os.ServiceManager")
             val getService = sm.getMethod("getService", String::class.java)
             binder = getService.invoke(null, SERVICE_NAME) as? IBinder
             binderReady = (binder != null)
-            // null -> service not registered OR Android11 hidden-API blocked OR SELinux denied.
-            Log.i(TAG, "step2 reflection ServiceManager.getService ok: binder=%s %s".format(
-                binder != null,
-                if (binder == null) "(NULL -> not found / hidden-api blocked / selinux denial — check 'avc: denied' in logcat)" else ""))
-            lastError = if (binderReady) "ok" else "getService returned null"
+            // null -> service not registered OR Android11 hidden-API blocked OR SELinux denial.
+            Log.i(TAG, "CpDev: getService($SERVICE_NAME) = %s %s".format(
+                binder?.toString() ?: "null",
+                if (binder == null) "(NULL -> not found / hidden-api blocked / selinux denial — grep 'avc: denied')" else ""))
+            lastError = if (binderReady) "ok" else "getService null"
         } catch (e: Throwable) {
             binder = null; binderReady = false
-            lastError = "ERR at step2(reflection): ${e.message}"
-            Log.e(TAG, "ERR at step2 reflection ServiceManager.getService fail: ${e.message}", e)
+            lastError = "ERR getService: ${e.message}"
+            Log.e(TAG, "CpDev ERR: getService(reflection) ${e.message}", e)
         }
     }
 
@@ -150,8 +147,8 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         if (observeOnly || !txEnabled) {
             txDropped++
             val now = System.currentTimeMillis()
-            if (now - lastDropLogMs >= 1000L) {
-                Log.i(TAG, "TX disabled - dropped %d (1s). enable via cpdevTxEnable(true) after RX verify".format(txDropped))
+            if (now - lastDropLogMs >= 30000L) {   // 30s 요약(RX 로그가 묻히지 않게)
+                Log.i(TAG, "CpDev: TX disabled - dropped %d (30s). cpdevTxEnable(true) after RX verify".format(txDropped))
                 txDropped = 0; lastDropLogMs = now
             }
             return
@@ -184,7 +181,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
             //   확정: code 19(0x13) = readInt32(count/ts) + createByteArray(14B×N). 예외에도 안 죽게 try/catch.
             try {
                 val dataSize = try { data.dataSize() } catch (_: Throwable) { -1 }
-                Log.i("CpdeviceCan-RX", "RX onTransact code=%d dataSize=%d flags=%d".format(code, dataSize, flags))
+                Log.i("CpdeviceCan-RX", "CpDev-RX: code=%d size=%d flags=%d".format(code, dataSize, flags))
                 rxCount++
                 if (code == RX_TRANSACT_CODE) {
                     try {
@@ -239,20 +236,20 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
 
     private fun registerRxCallback() {
         val b = binder
-        Log.i(TAG, "step3 build callback Binder ok; registerCallback code=$TX_REGISTER_CALLBACK desc=\"$DESCRIPTOR\" binder=${b != null}")
-        if (b == null) { Log.e(TAG, "ERR at step3: binder is null -> cannot registerCallback (step2 failed)"); return }
+        Log.i(TAG, "CpDev: callback Binder created; registerCallback code=$TX_REGISTER_CALLBACK desc=\"$DESCRIPTOR\" binder=${b != null}")
+        if (b == null) { Log.e(TAG, "CpDev ERR: registerCallback binder=null (getService failed)"); return }
         val p = Parcel.obtain(); val r = Parcel.obtain()
         try {
             p.writeInterfaceToken(DESCRIPTOR)
             p.writeStrongBinder(rxCallback)
-            Log.i(TAG, "step4 registerCallback transact(code=$TX_REGISTER_CALLBACK) sending...")
+            Log.i(TAG, "CpDev: registerCallback transact(code=$TX_REGISTER_CALLBACK, writeStrongBinder) ...")
             val ret = b.transact(TX_REGISTER_CALLBACK, p, r, 0)
             r.readException()
-            Log.i(TAG, "step5 registerCallback returned=$ret (true=delivered) — waiting RX onTransact code=$RX_TRANSACT_CODE")
+            Log.i(TAG, "CpDev: registerCallback ret=$ret (true=delivered) — waiting RX code=$RX_TRANSACT_CODE")
             lastError = "registered(ret=$ret)"
         } catch (e: Throwable) {
-            lastError = "ERR at step4/5(registerCallback): ${e.message}"
-            Log.e(TAG, "ERR at step4/5 registerCallback transact fail: ${e.message}", e)   // graceful
+            lastError = "ERR registerCallback: ${e.message}"
+            Log.e(TAG, "CpDev ERR: registerCallback transact ${e.message}", e)   // graceful
         } finally {
             p.recycle(); r.recycle()
         }
