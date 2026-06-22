@@ -4,7 +4,10 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 
@@ -33,10 +36,20 @@ class MainActivity : ComponentActivity() {
             else startService(svc)
         }
 
+        // JS 오류/콘솔을 logcat 으로 노출(튕김·화면전환 진단). chrome://inspect 원격 디버깅도 허용.
+        WebView.setWebContentsDebuggingEnabled(true)
+
         val web = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
+            // JS console.* / 미처리 오류 → logcat "AutoSteerWeb" (adb logcat -s AutoSteerWeb)
+            webChromeClient = object : WebChromeClient() {
+                override fun onConsoleMessage(m: ConsoleMessage): Boolean {
+                    Log.i("AutoSteerWeb", "${m.messageLevel()} ${m.message()} @${m.sourceId()}:${m.lineNumber()}")
+                    return true
+                }
+            }
             addJavascriptInterface(JsBridge(), "AndroidSteer")
             loadUrl("file:///android_asset/autosteer_ui.html")
         }

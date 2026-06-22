@@ -551,12 +551,28 @@ function show(id) {
   Array.prototype.forEach.call(document.querySelectorAll('.screen'), function (s) {
     return s.classList.remove('on');
   });
-  $(id).classList.add('on');
+  var el = $(id);
+  el.classList.add('on');
+  forceRepaint(el);   // 일부 기기: 전환은 됐는데 화면 갱신 안 되는 현상 → 컴포지터 강제 무효화
   var es = $('estop');
   if (es) es.classList.toggle('on', id === 'main' || id === 'work');
 }
+// WebView(특히 구형 Apollo) 가 display 전환 후 리페인트를 미루는 문제 대응:
+// 동기 레이아웃 읽기 + 다음 프레임에 transform/opacity 토글로 컴포지트를 강제한다.
+function forceRepaint(el) {
+  if (!el) return;
+  try {
+    void el.offsetHeight;                 // 강제 동기 레이아웃
+    el.style.transform = 'translateZ(0)';
+    var clear = function () { el.style.transform = ''; el.style.opacity = ''; };
+    el.style.opacity = '0.999';
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(clear);
+    else setTimeout(clear, 16);
+  } catch (e) {}
+}
 function setOverlay(id, on) {
   $(id).classList.toggle('on', on);
+  if (on) forceRepaint($(id));
 }
 function setModal(id, on) {
   $(id).classList.toggle('on', on);
@@ -711,6 +727,7 @@ function openDetail(key) {
   }
   $('detailBody').innerHTML = h;
   $('detail').classList.add('on');
+  forceRepaint($('detail'));
   if (key === 'motortest') { wireJog(); adaptMotorVendor(); }
   if (key === 'rtk') wireNtrip();
   wireDetail(key);
