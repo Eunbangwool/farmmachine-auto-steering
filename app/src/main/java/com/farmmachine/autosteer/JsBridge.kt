@@ -85,6 +85,18 @@ class JsBridge {
         return """{"txEnabled":$on}"""
     }
 
+    /** Ver2 cpdevice 관찰전용 모드(기본 ON): ON=binder+RX 콜백만, 제어성 호출(TX/baudrate) 금지. */
+    @JavascriptInterface fun cpdevObserveOnly(on: Boolean): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.observeOnly = on
+        return """{"observeOnly":$on}"""
+    }
+
+    /** 공존 진단: RX 콜백 등록 on/off. registerCallback 이 autokit2 를 밀어내는지 비교용. 적용=재선택. */
+    @JavascriptInterface fun cpdevRegisterRx(on: Boolean): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.registerRx = on
+        return """{"registerRx":$on,"note":"적용하려면 제조사 재선택(selectCanBridge)으로 브리지 재기동"}"""
+    }
+
     /** 현장 진단: CAN 수신(RX) on/off — 모터 회전이 RX 와 충돌하는지 1회 검증. 기본 OFF(TX전용). */
     @JavascriptInterface fun setCanRx(on: Boolean): String {
         val ok = com.farmmachine.autosteer.can.ApolloCanBridge.instance?.setRx(on) ?: false

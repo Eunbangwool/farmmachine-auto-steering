@@ -60,6 +60,12 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         // ★ TODO(HW): byte[4] 확장ID(ext) 플래그 비트 — 실차 ext 프레임 송신으로 최종확인. 잠정 0x02.
         const val EXT_FLAG = 0x02
 
+        // ★ 관찰 전용(observe-only) 기본 ON: binder 연결 + registerCallback(RX) 만. autokit2 세션을
+        //   건드릴 수 있는 제어성 호출(setCANBaudrate / sendCanFrame TX) 일절 금지. RX 검증 단계 안전값.
+        @Volatile var observeOnly = true
+        // RX 콜백 등록 여부(공존 진단용): registerCallback 이 배타적이면 끄고 binder만 붙여 비교.
+        @Volatile var registerRx = true
+
         // ★ TX 기본 비활성(안전): RX 검증을 먼저 한다(모터 자동 송신 금지). 채널/ext/RX 확정 후 수동 활성.
         @Volatile var txEnabled = false
 
@@ -77,7 +83,18 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         running = true
         instance = this
         connectBinder()
-        registerRxCallback()
+        // ★ observe-only: 제어성 호출(setCANBaudrate/TX) 절대 안 함. registerCallback(RX)만 시도.
+        //   autokit2 와 공존 진단: 등록 전후로 정품 모터/IMU 가 꺼지는지 logcat 으로 비교.
+        Log.i(TAG, "observeOnly=$observeOnly registerRx=$registerRx — setCANBaudrate/TX 미호출(버스 설정 불변)")
+        if (registerRx) {
+            Log.w(TAG, "⚠ registerCallback 시도 직전 — 지금 autokit2 모터/IMU 가 켜져 있는지 확인. "
+                + "등록 직후 꺼지면 registerCallback 이 배타적(단일 클라이언트)이라 공존 불가일 수 있음.")
+            registerRxCallback()
+            Log.w(TAG, "registerCallback 직후 — autokit2 모터/IMU 상태 재확인(여기서 off 되면 배타적 확정).")
+        } else {
+            Log.i(TAG, "registerRx=false — binder 연결만(콜백 미등록). 이 상태에서도 정품이 꺼지면 "
+                + "원인은 콜백 등록이 아니라 binder attach 자체.")
+        }
         serverThread = thread(name = "cpdevice-can-bridge") { serve() }
         Log.i(TAG, "CpdeviceCanBridge 시작 :$port (binderReady=$binderReady)")
     }
@@ -128,9 +145,9 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
     }
 
     private fun sendCanFrame(canId: Int, dlc: Int, data: ByteArray) {
-        // ★ 안전: TX 기본 비활성(RX 검증 먼저). 모터 자동 송신 금지 — txEnabled 수동 활성 후에만.
+        // ★ 안전: observe-only(기본) 또는 TX 비활성이면 송신 금지(autokit2 버스 방해 방지).
         //   Python 이 고주파로 send 하므로 **조용히 drop**(매 호출 로그 금지). 1초당 1회만 요약 카운트.
-        if (!txEnabled) {
+        if (observeOnly || !txEnabled) {
             txDropped++
             val now = System.currentTimeMillis()
             if (now - lastDropLogMs >= 1000L) {
