@@ -54,6 +54,9 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         const val DESCRIPTOR = "com.cpdevice.BnMcuCanService"
         const val TX_SEND_CAN_FRAME = 7        // 확정(onTransact 점프테이블)
         const val TX_REGISTER_CALLBACK = 1     // 확정(registerCallback)
+        // 확정(libcpcomm doSendProcess): MCU→콜백 transact code 19(0x13), flags=ONEWAY.
+        //   Parcel = readInt32(count/ts, 무시) + createByteArray(14B × N).
+        const val RX_TRANSACT_CODE = 19
         // ★ TODO(HW): byte[4] 확장ID(ext) 플래그 비트 — 실차 ext 프레임 송신으로 최종확인. 잠정 0x02.
         const val EXT_FLAG = 0x02
 
@@ -160,47 +163,60 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
     // ── RX: registerCallback(code 1) — 우리 Binder 등록, 수신 14B 프레임을 rxQueue 로 ──────
     private val rxCallback = object : Binder() {
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-            // ★ 콜백 transact code/디스크립터 미확정 → 진입 즉시 무조건 1줄(code 무관). enforceInterface 안 함.
-            //   예외로 죽지 않게 전체 try/catch. raw Parcel·14B 둘 다 보이게 덤프.
+            // ★ 진입 즉시 무조건 1줄(code 무관). enforceInterface 호출 안 함(oneway라 토큰 없을 수 있음).
+            //   확정: code 19(0x13) = readInt32(count/ts) + createByteArray(14B×N). 예외에도 안 죽게 try/catch.
             try {
                 val dataSize = try { data.dataSize() } catch (_: Throwable) { -1 }
-                Log.i("CpdeviceCan-RX", "RX onTransact code=%d dataSize=%d".format(code, dataSize))
+                Log.i("CpdeviceCan-RX", "RX onTransact code=%d dataSize=%d flags=%d".format(code, dataSize, flags))
                 rxCount++
-                // (d) raw Parcel 통째 hex (포맷 무관 — 마샬링이 byteArray 가 아닐 수도 있으므로 일단 보이게)
-                try {
-                    val raw = data.marshall()
-                    val n = minOf(raw.size, 64)
-                    val rhex = (0 until n).joinToString(" ") { "%02X".format(raw[it]) }
-                    Log.i("CpdeviceCan-RX", "raw parcel %dB: %s%s".format(raw.size, rhex, if (raw.size > n) " …" else ""))
-                } catch (e: Throwable) {
-                    Log.w("CpdeviceCan-RX", "marshall 실패(바인더/fd 포함 가능): ${e.message}")
-                }
-                // 14B CAN 프레임 가정 파싱 시도(확정 포맷). 실패해도 위 raw 로 분석 가능.
-                try {
-                    val frame = data.createByteArray()
-                    if (frame != null && frame.size >= 6) {
-                        val hex = frame.joinToString(" ") { "%02X".format(it) }
-                        val ch = frame[0].toInt() and 0xFF
-                        val dlc = (frame[5].toInt() and 0xFF).coerceIn(0, 8)
-                        val low = (frame[4].toInt() and 0xFF) and EXT_FLAG.inv()  // ext 플래그 제거(★TODO 실차)
-                        val canId = ((frame[1].toInt() and 0xFF) shl 24) or
-                                    ((frame[2].toInt() and 0xFF) shl 16) or
-                                    ((frame[3].toInt() and 0xFF) shl 8) or low
-                        val end = minOf(6 + dlc, frame.size)
-                        val payload = if (end > 6) frame.copyOfRange(6, end) else ByteArray(0)
-                        Log.i("CpdeviceCan-RX", "  parsed ch=%d id=0x%08X dlc=%d data=%s raw14=%s"
-                            .format(ch, canId, dlc, payload.joinToString("") { "%02X".format(it) }, hex))
-                        rxQueue.offer(canId to payload)
-                    } else {
-                        Log.i("CpdeviceCan-RX", "  createByteArray=${if (frame == null) "null" else frame.size.toString() + "B"} (14B 아님 — raw 참조)")
+                if (code == RX_TRANSACT_CODE) {
+                    try {
+                        val hdr = data.readInt()                   // count/timestamp — 무시 (Parcel.readInt)
+                        val buf = data.createByteArray()
+                        if (buf == null || buf.size < 14) {
+                            Log.w("CpdeviceCan-RX", "code19 createByteArray=${buf?.size ?: -1}B (<14) — raw 폴백")
+                            dumpRaw(data)
+                            return true
+                        }
+                        val nFrames = buf.size / 14
+                        Log.i("CpdeviceCan-RX", "code19 hdr=%d bytes=%d → %d프레임".format(hdr, buf.size, nFrames))
+                        for (i in 0 until nFrames) {
+                            val o = i * 14
+                            val ch = buf[o].toInt() and 0xFF
+                            val dlc = (buf[o + 5].toInt() and 0xFF).coerceIn(0, 8)
+                            val low = (buf[o + 4].toInt() and 0xFF) and EXT_FLAG.inv()  // ext 플래그 제거(★TODO 실차)
+                            val canId = ((buf[o + 1].toInt() and 0xFF) shl 24) or
+                                        ((buf[o + 2].toInt() and 0xFF) shl 16) or
+                                        ((buf[o + 3].toInt() and 0xFF) shl 8) or low
+                            val payload = buf.copyOfRange(o + 6, o + 6 + dlc)
+                            Log.i("CpdeviceCan-RX", "RX ch=%d id=0x%08X dlc=%d data=%s".format(
+                                ch, canId, dlc, payload.joinToString("") { "%02X".format(it) }))
+                            rxQueue.offer(canId to payload)     // 기존 TCP 브리지 RX 레코드로 push
+                        }
+                    } catch (e: Throwable) {
+                        Log.w("CpdeviceCan-RX", "code19 파싱 실패: ${e.message} — raw 폴백")
+                        dumpRaw(data)
                     }
-                } catch (e: Throwable) {
-                    Log.w("CpdeviceCan-RX", "createByteArray 실패: ${e.message}")
+                } else {
+                    // code 19 외 — 무시(분석용 raw 1줄만)
+                    dumpRaw(data)
                 }
             } catch (e: Throwable) {
                 Log.w("CpdeviceCan-RX", "onTransact 예외: ${e.message}")
             }
             return true
+        }
+    }
+
+    /** Parcel raw hex 폴백(포맷 무관, 최대 64B). 마샬링이 다를 때 분석용. */
+    private fun dumpRaw(data: Parcel) {
+        try {
+            val raw = data.marshall()
+            val n = minOf(raw.size, 64)
+            Log.i("CpdeviceCan-RX", "raw parcel %dB: %s%s".format(
+                raw.size, (0 until n).joinToString(" ") { "%02X".format(raw[it]) }, if (raw.size > n) " …" else ""))
+        } catch (e: Throwable) {
+            Log.w("CpdeviceCan-RX", "marshall 실패: ${e.message}")
         }
     }
 
