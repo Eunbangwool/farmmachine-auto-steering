@@ -91,10 +91,11 @@ class JsBridge {
         return """{"observeOnly":$on}"""
     }
 
-    /** 공존 진단: RX 콜백 등록 on/off. registerCallback 이 autokit2 를 밀어내는지 비교용. 적용=재선택. */
+    /** RX 콜백 등록(code 16) 수동 시도 — 기본 OFF(code1 이 서비스를 죽였으므로 TX 와 분리). */
     @JavascriptInterface fun cpdevRegisterRx(on: Boolean): String {
         com.farmmachine.autosteer.can.CpdeviceCanBridge.registerRx = on
-        return """{"registerRx":$on,"note":"적용하려면 제조사 재선택(selectCanBridge)으로 브리지 재기동"}"""
+        val r = if (on) (com.farmmachine.autosteer.can.CpdeviceCanBridge.instance?.registerRxNow() ?: "no-instance") else "off"
+        return """{"registerRx":$on,"result":"$r"}"""
     }
 
     /** Ver2 수동 단발 TX 테스트: kind=hb/neutral/plus/minus/enable/disable. 1버튼=1프레임. */

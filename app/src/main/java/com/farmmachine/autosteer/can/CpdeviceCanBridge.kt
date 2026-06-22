@@ -59,19 +59,20 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         const val SERVICE_NAME = "com.cpdevice.BnMcuCanService"
         const val DESCRIPTOR = "com.cpdevice.BnMcuCanService"
         const val TX_SEND_CAN_FRAME = 7        // 확정(onTransact 점프테이블)
-        const val TX_REGISTER_CALLBACK = 1     // 확정(registerCallback)
+        // ★ 실측 수정: code 1 = getMcuVersion(string). writeStrongBinder 보내면 서비스가 죽음
+        //   (logcat: registerCallback code1 직후 binder DIED). §2 점프테이블 registerCallback=code 16(추정).
+        //   RX 등록은 code 16 으로 **수동 opt-in** 만(TX 와 분리). 잘못된 code 가 서비스 죽이는 것 방지.
+        const val TX_REGISTER_CALLBACK = 16
         // 확정(libcpcomm doSendProcess): MCU→콜백 transact code 19(0x13), flags=ONEWAY.
-        //   Parcel = readInt32(count/ts, 무시) + createByteArray(14B × N).
         const val RX_TRANSACT_CODE = 19
         // ★ 미확정값 — UI 에서 바꿔가며 테스트(채널/ext 플래그). 기본 channel=0, extFlag=0x02.
         @Volatile var channel = 0      // byte[0] CAN 채널 (실차 0/1/2 스윕)
         @Volatile var extFlag = 0x02   // byte[4] 확장ID 플래그 비트(실차검증)
 
-        // ★ 관찰 전용(observe-only) 기본 ON: binder 연결 + registerCallback(RX) 만. autokit2 세션을
-        //   건드릴 수 있는 제어성 호출(setCANBaudrate / sendCanFrame TX) 일절 금지. RX 검증 단계 안전값.
+        // observe-only(기본 ON): binder 연결만. RX 콜백 등록은 서비스를 죽일 수 있어 TX 와 분리.
         @Volatile var observeOnly = true
-        // RX 콜백 등록 여부(공존 진단용): registerCallback 이 배타적이면 끄고 binder만 붙여 비교.
-        @Volatile var registerRx = true
+        // ★ RX 콜백 등록 기본 OFF: code1 이 서비스를 죽였으므로 자동등록 금지. code16 으로 수동 시도만.
+        @Volatile var registerRx = false
 
         // ★ TX 기본 비활성(안전): RX 검증을 먼저 한다(모터 자동 송신 금지). 채널/ext/RX 확정 후 수동 활성.
         @Volatile var txEnabled = false
@@ -89,11 +90,12 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         if (running) return
         running = true
         instance = this
-        Log.i(TAG, "CpDev: bridge start (observeOnly=$observeOnly — no setCANBaudrate/TX, bus untouched)")
-        // ★ binder 연결 + registerCallback 은 observe-only 와 무관하게 **항상** 실행(RX 수신 필수).
+        Log.i(TAG, "CpDev: bridge start (observeOnly=$observeOnly registerRx=$registerRx)")
+        // binder 연결만 항상. ★ RX registerCallback 은 registerRx=true 일 때만(기본 OFF) — code1 이
+        //   서비스를 죽였으므로 자동등록 금지. TX(code7)는 registerCallback 없이 동작해야 함.
         try {
             connectBinder()
-            registerRxCallback()
+            if (registerRx) registerRxCallback()
         } catch (e: Throwable) {
             Log.e(TAG, "CpDev ERR: init ${e.message}", e)
         }
@@ -109,6 +111,9 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
     }
 
     fun setChannel(ch: Int) { channel = ch }   // 현장 진단용(채널 스윕)
+
+    /** 수동 RX 콜백 등록(code 16) — TX 와 분리. 서비스 죽으면 다음 TX 가 재연결로 복구. */
+    fun registerRxNow(): String { registerRx = true; registerRxCallback(); return lastError }
 
     /** Acquire BnMcuCanService binder. ServiceManager is hidden API -> reflection. Never crash. */
     private fun connectBinder() {
@@ -130,13 +135,14 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         }
     }
 
-    /** transact 전 호출: binder 살아있으면 그대로, 죽었/없으면 getService 재획득(+RX 재등록). */
+    /** transact 전 호출: binder 살아있으면 그대로, 죽었/없으면 getService 재획득.
+     *  ★ RX registerCallback 은 **여기서 부르지 않는다** — code1 등록이 서비스를 죽여 TX 가
+     *  매번 실패하던 무한 루프 원인이었음. RX 등록은 별도 수동(tryRegisterRx)으로만. */
     private fun ensureBinder(): IBinder? {
         val b = binder
         if (b != null && (try { b.isBinderAlive } catch (_: Throwable) { false })) return b
         Log.w(TAG, "CpDev: binder dead/null -> reconnect (getService again)")
         connectBinder()
-        if (binder != null && registerRx) registerRxCallback()   // 새 핸들에 콜백 재등록
         return binder
     }
 
