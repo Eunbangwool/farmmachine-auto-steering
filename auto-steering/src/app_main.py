@@ -83,6 +83,7 @@ class Controller:
         self._can_state = "n/a"                  # socketcan 프로브 결과(연결/불가)
         self._sniff = {"running": False, "result": None}
         self._impl = None                        # 작업기(균평기) GNSS+레벨그리드 (벤더 독립, 지연생성)
+        self._impl_antenna_h = 1.5               # 작업기 안테나 높이(m) — 실측값, UI 입력+영속화
 
         self._load_params()           # 저장된 차량변수 있으면 먼저 반영(휠베이스→알고리즘)
         if vendor:
@@ -329,6 +330,7 @@ class Controller:
             sr = getattr(self.sys.actuator, "steer_ratio", None)  # 측정된 조향비
             if sr is not None:
                 d["steer_ratio"] = sr
+            d["impl_antenna_height_m"] = self._impl_antenna_h     # 작업기 안테나 높이(실측)
             with open(path, "w") as f:
                 json.dump(d, f)
         except Exception as e:
@@ -353,6 +355,8 @@ class Controller:
                     yaw=float(io.get("yaw", 0.0)))
             if d.get("steer_ratio") and hasattr(self.sys, "actuator"):
                 self.sys.actuator.steer_ratio = float(d["steer_ratio"])
+            if d.get("impl_antenna_height_m") is not None:
+                self._impl_antenna_h = float(d["impl_antenna_height_m"])
             log.info(f"저장된 차량변수 로드: {d}")
         except Exception as e:
             log.warning(f"차량변수 로드 실패: {e}")
@@ -804,7 +808,8 @@ class Controller:
     def _ensure_impl(self):
         if self._impl is None:
             import implement_gnss
-            self._impl = implement_gnss.ImplementGnss()
+            grid = implement_gnss.LevelerGrid(antenna_height_m=self._impl_antenna_h)
+            self._impl = implement_gnss.ImplementGnss(grid)
         return self._impl
 
     def start_implement_gnss(self, port: str = "") -> str:
@@ -850,7 +855,10 @@ class Controller:
 
     def set_impl_antenna_height(self, h) -> str:
         try:
-            self._ensure_impl().grid.set_antenna_height(float(h))
+            self._impl_antenna_h = float(h)
+            if self._impl is not None:
+                self._impl.grid.set_antenna_height(self._impl_antenna_h)
+            self._save_params()      # 실측값 영속화(재시작 후에도 유지)
             return "ok"
         except Exception:
             return "error"
@@ -880,6 +888,7 @@ class Controller:
                 st["impl_gnss_port"] = ist.get("impl_gnss_port")
             else:
                 st["impl_gnss_ok"] = False
+            st["impl_antenna_height_m"] = self._impl_antenna_h
         except Exception:
             pass
         return st

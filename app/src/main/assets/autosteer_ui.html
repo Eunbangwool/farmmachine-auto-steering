@@ -1663,7 +1663,13 @@ setTimeout(fitScreen, 150); // WebView 초기 치수 보정
     lvRender(grid);
   }
   function lvOpen() {
-    lvLegend(); setOverlay('leveler', true); lvPoll();
+    lvLegend();
+    // 저장된 작업기 안테나 높이(실측)를 입력칸에 반영
+    try {
+      var st = JSON.parse((BR && BR.statusJson && BR.statusJson()) || '{}');
+      if (st.impl_antenna_height_m != null && $('lvAntH')) $('lvAntH').value = st.impl_antenna_height_m;
+    } catch (e) {}
+    setOverlay('leveler', true); lvPoll();
     if (lvTimer) clearInterval(lvTimer);
     lvTimer = setInterval(lvPoll, 750);   // 100ms 는 과함 → 750ms
   }
