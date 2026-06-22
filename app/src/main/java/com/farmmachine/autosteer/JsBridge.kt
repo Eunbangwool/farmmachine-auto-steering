@@ -66,7 +66,7 @@ class JsBridge {
         if (com.farmmachine.autosteer.can.CanBridgeHost.kind == "cpdevice") {
             // Ver2: BnMcuCanService binder 골격(전송 마샬링 TODO). bridge="cpdevice" 명시.
             val c = com.farmmachine.autosteer.can.CpdeviceCanBridge
-            return """{"vanmcu":false,"bridge":"cpdevice","binderReady":${c.binderReady},"connected":${c.clientConnected},"txCount":${c.txCount},"lastTxOk":${c.lastTxOk},"rxCount":${c.rxCount},"lastError":"${c.lastError.replace("\"","'")}"}"""
+            return """{"vanmcu":false,"bridge":"cpdevice","binderReady":${c.binderReady},"canOpened":${c.canOpened},"channel":${c.channel},"baud":${c.baud},"connected":${c.clientConnected},"txCount":${c.txCount},"lastTxOk":${c.lastTxOk},"rxCount":${c.rxCount},"lastError":"${c.lastError.replace("\"","'")}"}"""
         }
         val vm = com.van.jni.VanMcu.available
         val b = com.farmmachine.autosteer.can.ApolloCanBridge
@@ -98,7 +98,20 @@ class JsBridge {
         return """{"registerRx":$on,"result":"$r"}"""
     }
 
-    /** Ver2 CAN 개통(setCANBaudrate) code 탐색 — RX(code19)가 살아나는 code 자동 진단. logcat 관찰. */
+    /** Ver2 CAN 개통: setCANBaudrate(code3, 현재 ch/baud) 재실행 + registerCallback(code1). ch/baud 바꾼 뒤 호출. */
+    @JavascriptInterface fun cpdevOpenCan(): String {
+        val c = com.farmmachine.autosteer.can.CpdeviceCanBridge
+        val ok = c.instance?.openCan() ?: false
+        if (ok && c.registerRx) c.instance?.registerRxNow()
+        return """{"opened":$ok,"channel":${c.channel},"baud":${c.baud}}"""
+    }
+    /** Ver2 baud 설정(무반응 시 250000→500000 등). baud2 동일값. 적용은 cpdevOpenCan() 호출 시. */
+    @JavascriptInterface fun cpdevSetBaud(b: Int): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.baud = b
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.baud2 = b
+        return """{"baud":$b}"""
+    }
+    /** (구) 개통 code 탐색 스윕 — 프로토콜 확정으로 불필요. 유지(진단 백업). */
     @JavascriptInterface fun cpdevOpenSweep(): String {
         val r = com.farmmachine.autosteer.can.CpdeviceCanBridge.instance?.openCanSweep() ?: "no-instance"
         return """{"sweep":"$r"}"""

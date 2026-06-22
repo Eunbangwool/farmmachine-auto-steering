@@ -1051,8 +1051,11 @@ function adaptMotorVendor() {
     + '<button class="pill" data-cpburst="plus" style="flex:1;min-width:120px;background:#2e7d32;color:#fff">▶ 버스트 +5 (2초)</button>'
     + '<button class="pill" data-cpburst="minus" style="flex:1;min-width:120px;background:#2e7d32;color:#fff">버스트 -5 (2초) ◀</button></div>'
     + '<button class="pill" id="cpEstop" style="background:var(--danger,#c0392b);color:#fff;margin-top:8px">■ 전체 정지(비상)</button>'
-    + '<button class="pill" id="cpRxReg" style="background:#5c6bc0;color:#fff;margin-top:8px">RX 등록 (code16) — 버스 생존 확인</button>'
-    + '<button class="pill" id="cpOpenSweep" style="background:#ad1457;color:#fff;margin-top:8px">CAN 개통 코드 스윕 — RX 살아나는 code 탐색</button>'
+    + '<button class="pill" id="cpOpenCan" style="background:#ad1457;color:#fff;margin-top:8px">CAN 개통 (code3, 현재 ch/baud)</button>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    + '<button class="pill" data-cpbaud="250000" style="flex:1;min-width:90px">baud 250k</button>'
+    + '<button class="pill" data-cpbaud="500000" style="flex:1;min-width:90px">baud 500k</button></div>'
+    + '<button class="pill" id="cpRxReg" style="background:#5c6bc0;color:#fff;margin-top:8px">RX 등록 (code1) — 재등록</button>'
     + '<div id="cpTxOut" style="font-size:11px;color:var(--sub);margin-top:8px;white-space:pre-wrap">대기</div>';
   $('detailBody').appendChild(box);
   var out = function (t) { var e = $('cpTxOut'); if (e) e.textContent = t; };
@@ -1091,12 +1094,20 @@ function adaptMotorVendor() {
   };
   if ($('cpRxReg')) $('cpRxReg').onclick = function () {
     var r = '-'; try { if (BR && BR.cpdevRegisterRx) r = BR.cpdevRegisterRx(true); } catch (e) {}
-    out('RX 등록(code16) → ' + r + '  (logcat CpdeviceCan-RX 에 code=19 들어오는지 확인)');
+    out('RX 등록(code1) → ' + r + '  (logcat CpdeviceCan-RX 에 RX 프레임 들어오는지 확인)');
   };
-  if ($('cpOpenSweep')) $('cpOpenSweep').onclick = function () {
-    var r = '-'; try { if (BR && BR.cpdevOpenSweep) r = BR.cpdevOpenSweep(); } catch (e) {}
-    out('CAN 개통 스윕 시작 → ' + r + '\n약 20초. logcat CpdeviceCan 에서 "CpDev-SWEEP: *** code=N -> RX ALIVE" 줄 확인.\n그 code 가 CAN 개통 code 입니다.');
+  if ($('cpOpenCan')) $('cpOpenCan').onclick = function () {
+    var r = '-'; try { if (BR && BR.cpdevOpenCan) r = BR.cpdevOpenCan(); } catch (e) {}
+    out('CAN 개통(setCANBaudrate code3) → ' + r + '\nlogcat: "setCANBaudrate(code3) ... canOpened=true" 확인 후 HB/조향 전송.');
   };
+  Array.prototype.forEach.call(box.querySelectorAll('[data-cpbaud]'), function (b) {
+    b.onclick = function () {
+      var v = parseInt(b.getAttribute('data-cpbaud'), 10);
+      try { if (BR && BR.cpdevSetBaud) BR.cpdevSetBaud(v); } catch (e) {}
+      Array.prototype.forEach.call(box.querySelectorAll('[data-cpbaud]'), function (x) { x.classList.remove('sel'); });
+      b.classList.add('sel'); out('baud = ' + v + ' (CAN 개통 버튼 눌러 적용)');
+    };
+  });
 }
 function wireJog() {
   Array.prototype.forEach.call(document.querySelectorAll('.jogbtn'), function (btn) {
