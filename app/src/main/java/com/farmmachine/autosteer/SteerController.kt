@@ -87,6 +87,10 @@ object SteerController {
     fun canSniff(seconds: Double): String =
         try { api().callAttr("can_sniff", seconds).toString() } catch (e: Throwable) { "{\"error\":\"error\"}" }
 
+    /** Ver2 수동 TX 테스트 프레임(CanSpec) → {"id":..,"data":"hex"}. 송신은 Kotlin 단발. */
+    fun cpdevTestFrame(kind: String): String =
+        try { api().callAttr("cpdev_test_frame", kind).toString() } catch (e: Throwable) { "{\"error\":\"error\"}" }
+
     /** 작업기(균평기) 안테나 GNSS + 레벨 히트맵 — 차체 주행 GNSS 와 독립. */
     fun startImplementGnss(port: String): String =
         try { api().callAttr("start_implement_gnss", port).toString() } catch (e: Throwable) { "error" }

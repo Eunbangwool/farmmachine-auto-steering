@@ -874,6 +874,27 @@ class Controller:
             pass
         return st
 
+    # ── Ver2 수동 단발 TX 테스트 프레임 (agmo_dual CanSpec 재사용) ──────
+    #   조향각속도 명령은 cmd_speed(permille). "미세 ±5도"는 작은 permille 단발(잭업 관찰용).
+    TX_TEST_PERMILLE = 120     # 미세 테스트용 작은 속도명령(±) — 단발, 워치독 1s 후 정지
+
+    def cpdev_test_frame(self, kind: str) -> str:
+        """kind 별 (canId, data) 를 CanSpec 으로 생성해 JSON 반환(Kotlin 이 단발 송신).
+           kind: hb / neutral / plus / minus / enable / disable."""
+        from autosteer_core import CanSpec
+        k = str(kind)
+        try:
+            if k == "hb":            cid, d = CanSpec.MOTOR_HEARTBEAT_ID, bytes(8)
+            elif k == "neutral":     cid, d = CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(0)
+            elif k == "plus":        cid, d = CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(self.TX_TEST_PERMILLE)
+            elif k == "minus":       cid, d = CanSpec.MOTOR_CMD_ID, CanSpec.cmd_speed(-self.TX_TEST_PERMILLE)
+            elif k == "enable":      cid, d = CanSpec.MOTOR_CMD_ID, CanSpec.CMD_ENABLE
+            elif k == "disable":     cid, d = CanSpec.MOTOR_CMD_ID, CanSpec.CMD_DISABLE
+            else:                    return json.dumps({"error": f"unknown kind {k}"})
+            return json.dumps({"id": int(cid), "data": bytes(d).hex(), "kind": k})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
     # ── CAN 스니핑 (Listen-Only) — 모터 CAN ID 캡처 (미확정 벤더용) ──────
     def can_sniff(self, seconds: float = 5.0, channel: str = None) -> str:
         """
@@ -1016,6 +1037,7 @@ def mark_ab(which):     return _ctrl.mark_ab(which) if _ctrl else "no-ctrl"
 def build_ab(width=3.0, passes=4, speed=1.2): return _ctrl.build_ab(width, passes, speed) if _ctrl else "no-ctrl"
 def ab_status():        return _ctrl.ab_status() if _ctrl else "{}"
 def status_json():      return _ctrl.status_json() if _ctrl else "{}"
+def cpdev_test_frame(kind): return _ctrl.cpdev_test_frame(kind) if _ctrl else '{"error":"no-ctrl"}'
 def can_sniff(seconds=5.0, channel=None):
     return _ctrl.can_sniff(seconds, channel) if _ctrl else '{"error":"no-ctrl"}'
 # ── 작업기(균평기) GNSS + 레벨 히트맵 ──

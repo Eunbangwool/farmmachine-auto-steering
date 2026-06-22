@@ -40,8 +40,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
     private var binder: IBinder? = null
     private val rxQueue = LinkedBlockingQueue<Pair<Int, ByteArray>>(512)
 
-    // ★ 채널 진단용 + TX drop 요약 로그(폭주 방지)
-    private var channel: Int = 0
+    // TX drop 요약 로그(폭주 방지). channel/extFlag 는 companion(조정가능).
     @Volatile private var txDropped = 0
     @Volatile private var lastDropLogMs = 0L
 
@@ -57,8 +56,9 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         // 확정(libcpcomm doSendProcess): MCU→콜백 transact code 19(0x13), flags=ONEWAY.
         //   Parcel = readInt32(count/ts, 무시) + createByteArray(14B × N).
         const val RX_TRANSACT_CODE = 19
-        // ★ TODO(HW): byte[4] 확장ID(ext) 플래그 비트 — 실차 ext 프레임 송신으로 최종확인. 잠정 0x02.
-        const val EXT_FLAG = 0x02
+        // ★ 미확정값 — UI 에서 바꿔가며 테스트(채널/ext 플래그). 기본 channel=0, extFlag=0x02.
+        @Volatile var channel = 0      // byte[0] CAN 채널 (실차 0/1/2 스윕)
+        @Volatile var extFlag = 0x02   // byte[4] 확장ID 플래그 비트(실차검증)
 
         // ★ 관찰 전용(observe-only) 기본 ON: binder 연결 + registerCallback(RX) 만. autokit2 세션을
         //   건드릴 수 있는 제어성 호출(setCANBaudrate / sendCanFrame TX) 일절 금지. RX 검증 단계 안전값.
@@ -135,10 +135,38 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         f[1] = (canId ushr 24).toByte()               // canId big-endian (MSB first)
         f[2] = (canId ushr 16).toByte()
         f[3] = (canId ushr 8).toByte()
-        f[4] = ((canId and 0xFF) or (if (ext) EXT_FLAG else 0)).toByte()  // ★ TODO: ext 비트 실차검증
+        f[4] = ((canId and 0xFF) or (if (ext) extFlag else 0)).toByte()  // ★ TODO: ext 비트 실차검증
         f[5] = dlc.coerceIn(0, 8).toByte()
         System.arraycopy(data, 0, f, 6, minOf(data.size, 8))
         return f
+    }
+
+    /**
+     * 수동 단발 TX 테스트 — 버튼 1회 = 1프레임. observe-only/txEnabled 게이트 **우회**(명시적 사용자 동작).
+     * 프레임 바이트(canId/data)는 Python CanSpec 에서 만들어 넘어온다(중복 정의 없음). 채널/ext 는 companion.
+     * 보내기 직전 CpDev-TX hex 로그. binder 없으면 무송신.
+     */
+    fun txTestFrame(canId: Int, data: ByteArray): Boolean {
+        val dlc = minOf(data.size, 8)
+        Log.i("CpdeviceCan-TX", "CpDev-TX: ch=%d id=0x%08X dlc=%d data=%s".format(
+            channel, canId, dlc, data.copyOf(dlc).joinToString("") { "%02X".format(it) }))
+        val b = binder
+        if (b == null) { Log.w("CpdeviceCan-TX", "CpDev-TX: binder=null (no send)"); return false }
+        val p = Parcel.obtain(); val r = Parcel.obtain()
+        return try {
+            p.writeInterfaceToken(DESCRIPTOR)
+            p.writeInt(1)
+            p.writeByteArray(makeFrame14(canId, dlc, data))
+            val ret = b.transact(TX_SEND_CAN_FRAME, p, r, 0)
+            r.readException()
+            lastTxOk = true; txCount++
+            Log.i("CpdeviceCan-TX", "CpDev-TX: transact(code=$TX_SEND_CAN_FRAME) ret=$ret")
+            true
+        } catch (e: Throwable) {
+            lastTxOk = false; lastError = "ERR txTest: ${e.message}"
+            Log.e("CpdeviceCan-TX", "CpDev-TX ERR: transact ${e.message}", e)
+            false
+        } finally { p.recycle(); r.recycle() }
     }
 
     private fun sendCanFrame(canId: Int, dlc: Int, data: ByteArray) {
@@ -198,7 +226,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
                             val o = i * 14
                             val ch = buf[o].toInt() and 0xFF
                             val dlc = (buf[o + 5].toInt() and 0xFF).coerceIn(0, 8)
-                            val low = (buf[o + 4].toInt() and 0xFF) and EXT_FLAG.inv()  // ext 플래그 제거(★TODO 실차)
+                            val low = (buf[o + 4].toInt() and 0xFF) and extFlag.inv()  // ext 플래그 제거(★TODO 실차)
                             val canId = ((buf[o + 1].toInt() and 0xFF) shl 24) or
                                         ((buf[o + 2].toInt() and 0xFF) shl 16) or
                                         ((buf[o + 3].toInt() and 0xFF) shl 8) or low

@@ -1020,21 +1020,63 @@ function jogStop() {
 // 모터 회전(jog)·중앙설정·하트비트·스니핑은 그대로(전송 백엔드만 다름).
 function adaptMotorVendor() {
   if (S.vendorKey !== 'agmo_single') return;
-  // ★ Ver2(실측): SocketCAN 인터페이스 없음 → spidev2.0→MCU 경유라 표준 CAN 접근 불가.
-  //   모터 제어 미해결(개발중). 점검 화면의 jog/진단 토글을 숨기고 안내로 대체.
+  // ★ Ver2: 기존 jog/브리지 진단 토글 숨기고, cpdevice binder 수동 단발 TX 테스트 패널로 대체.
   var jb = document.querySelectorAll('#detailBody .jogbtn');
   for (var k = 0; k < jb.length; k++) jb[k].disabled = true;
   var diag = document.querySelector('#detailBody .diag');
   if (diag) {
     var rows = diag.querySelectorAll('.drow');
     for (var i = 0; i < rows.length; i++) rows[i].style.display = 'none';
-    var note = document.createElement('div');
-    note.style.cssText = 'font-size:12px;color:#b9760f;margin:4px 0;line-height:1.5';
-    note.textContent = '모터 미지원 (개발중) — Ver2 는 SocketCAN 인터페이스 없음(실측). '
-                     + 'CAN 은 spidev2.0→MCU 경유라 표준 접근 불가. PCAN 스니핑 또는 libcpcomm '
-                     + 'binder 연동 필요. GNSS·레벨 기능은 정상.';
-    diag.insertBefore(note, diag.firstChild);
   }
+  if (document.getElementById('cpdevTx')) return;   // 중복 삽입 방지
+  var box = document.createElement('div');
+  box.id = 'cpdevTx';
+  box.style.cssText = 'margin-top:10px;padding:10px;border:1px solid var(--line,#ddd);border-radius:8px';
+  box.innerHTML =
+    '<div style="font-size:12px;color:#b9760f;line-height:1.5;margin-bottom:8px">'
+    + 'Ver2 cpdevice(BnMcuCanService) 단발 TX 테스트. ⚠ <b>잭업(바퀴 들기)</b> 후 시험. '
+    + '버튼 1회=1프레임만. 채널/ext 바꿔가며 모터 반응 관찰.</div>'
+    + '<div class="drow"><span>채널</span>'
+    + '<button class="dbtn" data-cpch="0">0</button><button class="dbtn" data-cpch="1">1</button>'
+    + '<button class="dbtn" data-cpch="2">2</button>'
+    + '<span>ext</span><input id="cpExt" value="0x02" style="width:54px" autocapitalize="off" spellcheck="false"/>'
+    + '<button class="dbtn" id="cpExtSet">적용</button></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    + '<button class="pill" data-cptx="hb" style="flex:1;min-width:80px">HB만 전송</button>'
+    + '<button class="pill" data-cptx="enable" style="flex:1;min-width:80px">구동 Enable</button>'
+    + '<button class="pill" data-cptx="neutral" style="flex:1;min-width:80px">조향 0도</button>'
+    + '<button class="pill" data-cptx="plus" style="flex:1;min-width:80px">미세 +5도</button>'
+    + '<button class="pill" data-cptx="minus" style="flex:1;min-width:80px">미세 -5도</button></div>'
+    + '<button class="pill" id="cpEstop" style="background:var(--danger,#c0392b);color:#fff;margin-top:8px">■ 전체 정지(비상)</button>'
+    + '<div id="cpTxOut" style="font-size:11px;color:var(--sub);margin-top:8px;white-space:pre-wrap">대기</div>';
+  $('detailBody').appendChild(box);
+  var out = function (t) { var e = $('cpTxOut'); if (e) e.textContent = t; };
+  Array.prototype.forEach.call(box.querySelectorAll('[data-cptx]'), function (b) {
+    b.onclick = function () {
+      var kind = b.getAttribute('data-cptx'); var r = '-';
+      try { if (BR && BR.cpdevTxTest) r = BR.cpdevTxTest(kind); } catch (e) {}
+      out('TX ' + kind + ' → ' + r + '  (logcat CpdeviceCan-TX 확인)');
+    };
+  });
+  Array.prototype.forEach.call(box.querySelectorAll('[data-cpch]'), function (b) {
+    b.onclick = function () {
+      var ch = parseInt(b.getAttribute('data-cpch'), 10);
+      try { if (BR && BR.cpdevSetChannel) BR.cpdevSetChannel(ch); } catch (e) {}
+      Array.prototype.forEach.call(box.querySelectorAll('[data-cpch]'), function (x) { x.classList.remove('sel'); });
+      b.classList.add('sel'); out('채널 = ' + ch);
+    };
+  });
+  if ($('cpExtSet')) $('cpExtSet').onclick = function () {
+    var v = ($('cpExt') && $('cpExt').value || '0x02').trim();
+    var n = (v.indexOf('0x') === 0 || v.indexOf('0X') === 0) ? parseInt(v, 16) : parseInt(v, 10);
+    if (isNaN(n)) { out('ext 값 오류'); return; }
+    try { if (BR && BR.cpdevSetExtFlag) BR.cpdevSetExtFlag(n); } catch (e) {}
+    out('ext flag = 0x' + n.toString(16));
+  };
+  if ($('cpEstop')) $('cpEstop').onclick = function () {
+    var r = '-'; try { if (BR && BR.cpdevEstop) r = BR.cpdevEstop(); } catch (e) {}
+    out('전체 정지(disable 전송) → ' + r);
+  };
 }
 function wireJog() {
   Array.prototype.forEach.call(document.querySelectorAll('.jogbtn'), function (btn) {

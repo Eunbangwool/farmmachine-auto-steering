@@ -97,6 +97,37 @@ class JsBridge {
         return """{"registerRx":$on,"note":"적용하려면 제조사 재선택(selectCanBridge)으로 브리지 재기동"}"""
     }
 
+    /** Ver2 수동 단발 TX 테스트: kind=hb/neutral/plus/minus/enable/disable. 1버튼=1프레임. */
+    @JavascriptInterface fun cpdevTxTest(kind: String): String {
+        val fr = SteerController.cpdevTestFrame(kind)   // {"id":int,"data":"hex"}
+        return try {
+            val o = org.json.JSONObject(fr)
+            if (o.has("id")) {
+                val id = o.getInt("id")
+                val hex = o.getString("data")
+                val data = ByteArray(hex.length / 2) { ((Character.digit(hex[it*2],16) shl 4) or Character.digit(hex[it*2+1],16)).toByte() }
+                val ok = com.farmmachine.autosteer.can.CpdeviceCanBridge.instance?.txTestFrame(id, data) ?: false
+                """{"kind":"$kind","sent":$ok}"""
+            } else fr
+        } catch (e: Throwable) { """{"error":"${e.message}"}""" }
+    }
+
+    /** Ver2 채널(byte0) 설정 — 실차 0/1/2 스윕. */
+    @JavascriptInterface fun cpdevSetChannel(ch: Int): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.channel = ch
+        return """{"channel":$ch}"""
+    }
+    /** Ver2 ext 플래그(byte4) 설정 — 실차 검증. */
+    @JavascriptInterface fun cpdevSetExtFlag(flag: Int): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.extFlag = flag
+        return """{"extFlag":$flag}"""
+    }
+    /** Ver2 비상정지: TX 차단 + 모터 disable 프레임 1회. */
+    @JavascriptInterface fun cpdevEstop(): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.txEnabled = false
+        return cpdevTxTest("disable")
+    }
+
     /** 현장 진단: CAN 수신(RX) on/off — 모터 회전이 RX 와 충돌하는지 1회 검증. 기본 OFF(TX전용). */
     @JavascriptInterface fun setCanRx(on: Boolean): String {
         val ok = com.farmmachine.autosteer.can.ApolloCanBridge.instance?.setRx(on) ?: false
