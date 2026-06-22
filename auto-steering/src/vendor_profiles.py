@@ -135,6 +135,15 @@ class VendorProfile:
     # 추종 튜닝 오버라이드(TrackingParams 필드 dict). None = 기본값(AgNav 문서값).
     #   CHCNAV 수준 성능 목표 — AgNav 사진 확인값. 실하드웨어 튜닝(tuning.py)으로 미세조정.
     tracking:      Optional[Dict] = None
+    # ── GNSS/CAN 하드웨어 경로 (벤더별 상이). None = app_main 기본값 사용 ──
+    #   AGMO ver2(single)·CHCNAV 처럼 포트/백엔드가 다른 기기를 위해 추가(기존 벤더는 None=무영향).
+    gnss_port:     Optional[str] = None     # NMEA 시리얼 포트 (예: /dev/ttyS4, /dev/ttyS6)
+    gnss_baud:     Optional[int] = None      # 기본 보레이트
+    gnss_baud_alt: Optional[int] = None      # 실패 시 재시도 보레이트 (TODO 현장확인용)
+    can_backend:   Optional[str] = None      # "socketcan"/"bridge"/"slcan" (None=app_main 기본)
+    can_channel:   Optional[str] = None      # 예: "can1" (SocketCAN)
+    can_listen_only: bool = False            # 스니핑 가능(표준 SocketCAN)
+    gyro_zero_required: bool = False         # INS(single) 자이로 영점(gz_zero) 필요
 
 
 # CHCNAV(AgNav) 문서 확인 추종 튜닝값 — 기본 TrackingParams 와 동일하나 명시 고정.
@@ -147,9 +156,11 @@ CHCNAV_TUNING: Dict = {
 }
 
 VENDOR_PROFILES: Dict[str, VendorProfile] = {
-    "agmo": VendorProfile(
-        key="agmo", display_name="기본",
-        tagline="Apollo 10 Pro · Keya 조향모터",
+    # ★ 아그모 듀얼안테나 (ver1) — 기존 "agmo" 프로파일을 key 만 변경(동작 동일).
+    #   제어/CanSpec/GNSS/알고리즘 전부 그대로 유지. (구 key "agmo" 는 _ALIAS 로 매핑)
+    "agmo_dual": VendorProfile(
+        key="agmo_dual", display_name="아그모 듀얼안테나",
+        tagline="Apollo 10 Pro · Keya · 듀얼안테나+IMU",
         can_verified=True,
         canspec=KEYA_CANSPEC,
         gnss_primary=AGMO_V2_INS, gnss_backup=UBLOX_F9P,
@@ -161,6 +172,31 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
               "앵글센서 미사용 — 조향각은 Keya 하트비트 누적각으로 추정. "
               "안테나: ver1=듀얼안테나+IMU / ver2=GNSS+INS 스마트안테나(둘 다 지원). "
               "GNSS 스펙은 추정값 — 현장 확인.",
+    ),
+    # ★ 아그모 싱글안테나 (ver2, autokit2 역분석 + /proc/fd 실측) — 신규.
+    #   태블릿 Apollo2_10/Android11, GNSS=/dev/ttyS4(115200|460800), 싱글안테나+INS(자이로융합).
+    #   모터 CAN = 표준 SocketCAN(can1/can2, libsysmcu.so 아님). ★ 모터 CAN ID 미확정 →
+    #   can_verified=False(조향 비활성, GNSS·스니핑만). 추측 프레임 송신 금지(TODO).
+    "agmo_single": VendorProfile(
+        key="agmo_single", display_name="AGMO Ver2 (싱글안테나+INS)",
+        tagline="Apollo2 · 싱글안테나+INS · SocketCAN",
+        can_verified=False,
+        canspec=_placeholder_canspec(250_000),   # ★ TODO(HW): autokit2 setCANBaudrate 값 확인
+        gnss_primary=AGMO_V2_INS, gnss_backup=UBLOX_F9P,
+        gnss_priority=("agmo", "f9p"),
+        default_algo="pure_pursuit",
+        uses_was=False,
+        gnss_port="/dev/ttyS4",        # fd 실측 확정
+        gnss_baud=115_200,             # 기본
+        gnss_baud_alt=460_800,         # ★ TODO(HW): 460800 일 수 있음 — 실패 시 재시도
+        can_backend="socketcan",       # 표준 SocketCAN 확정
+        can_channel="can1",            # ★ TODO(HW): can1/can2 현장 확인
+        can_listen_only=True,          # Listen-Only 스니핑 가능
+        gyro_zero_required=True,       # gz_zero 영점 필요(INS)
+        notes="AGMO Ver2 — 싱글안테나+INS(헤딩=속도벡터+자이로 융합, 정지 시 부정확). "
+              "GNSS=/dev/ttyS4(115200|460800 현장확인). 모터=표준 SocketCAN(can1/can2, "
+              "CAN-FD·Listen-Only 지원). ★ 모터 CAN ID·baudrate 미확정 → 조향 비활성, "
+              "스니핑+GNSS 만. autokit2(정품)와 CAN/GNSS 충돌 — 정품 종료 후 사용 권장.",
     ),
     "chcnav": VendorProfile(
         key="chcnav", display_name="CHCNAV",
@@ -194,7 +230,10 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
     ),
 }
 
-DEFAULT_VENDOR = "agmo"
+DEFAULT_VENDOR = "agmo_dual"
+
+# 구 key 호환 별칭 — 기존 "agmo" 호출(boot/저장값 등)을 agmo_dual 로 매핑(동작 동일).
+_ALIAS: Dict[str, str] = {"agmo": "agmo_dual"}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -219,6 +258,7 @@ def list_vendors() -> List[dict]:
 
 def get_profile(key: str) -> VendorProfile:
     key = (key or "").lower().strip()
+    key = _ALIAS.get(key, key)         # 구 key("agmo") → agmo_dual
     if key not in VENDOR_PROFILES:
         raise KeyError(f"알 수 없는 벤더: {key!r} (가능: {list(VENDOR_PROFILES)})")
     return VENDOR_PROFILES[key]

@@ -41,3 +41,13 @@ CI(`.github/workflows/build-autosteer-apk.yml`)에서 검증. 새 파일은 andr
 | 날짜 | 결정 | 출처 |
 |------|------|------|
 | 2026-06-12 | CHCNAV 역분석 파라미터 프로파일 적용(작업 1~4), 단일/듀얼 헤딩만 분기 | CHCNAV_PARAM_PROFILE.md / CLAUDE_CODE_TASK.md |
+| 2026-06-16 | AGMO Ver2 추가 + 제조사 4지선다(agmo_dual/agmo_single/chcnav/fjd). agmo_single=싱글+INS·ttyS4·SocketCAN(can1)·can_verified=False(모터 CAN ID 미확정). SocketCAN listen_only+CAN 스니핑(can_sniff) 추가. 기존 agmo→agmo_dual(별칭 유지, 동작 동일). | CLAUDE_CODE_TASK_VER2.md (autokit2 역분석+/proc/fd) |
+
+## AGMO Ver2 (agmo_single) 추가 — 2026-06-16
+
+autokit2.apk 역분석 + /proc/fd 실측(Apollo2_10, Android 11) 기반 신규 벤더.
+- **제조사 4지선다**: `agmo_dual`(=기존 agmo, key만 변경·동작 동일) / `agmo_single`(Ver2 신규) / `chcnav` / `fjd`. UI 동적 렌더 + 백엔드 list_vendors 4개.
+- **agmo_single**: 싱글안테나+INS(헤딩=속도벡터+자이로 융합), GNSS `/dev/ttyS4` 115200(실패 시 460800 재시도), 모터=표준 SocketCAN(can1/can2). **모터 CAN ID·baudrate 미확정 → can_verified=False(조향 비활성), 스니핑+GNSS만. 추측 송신 금지(TODO).**
+- **SocketCAN**: `SocketCanBackend(listen_only=)` 송신 차단 추가. `app_main.can_sniff(sec,ch)` = Listen-Only N초 캡처 → CAN ID 빈도 JSON + `/sdcard/farmmachine/can_sniff_*.txt` 저장. UI "📡 CAN 스니핑" 버튼(agmo_single/chcnav만 노출).
+- **제약 준수**: 기존 agmo(dual) 제어 미수정(별칭 `agmo→agmo_dual`), CAN ID/baud 추측 하드코딩 없음(TODO), CAN 실패 graceful(can_state), Chrome44 호환(ES5), autokit2 충돌 경고 로그.
+- 검증: vendor_profiles 4벤더 self-test, app_main mock 벤더전환·sniff graceful, test_closed_loop/sitl(6/6)/speed_control, HTML 구문 OK. ⚠ Kotlin 빌드는 CI 검증.

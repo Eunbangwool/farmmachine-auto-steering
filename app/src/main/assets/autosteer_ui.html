@@ -485,6 +485,7 @@ var S = {
   sensorOk: false,
   motorVerified: true,
   vendorName: "",
+  vendorKey: "",
   line: 4,
   section: 4,
   nudge_cm: 0,
@@ -648,7 +649,7 @@ function openDetail(key) {
     };
     h = sr('네트워크', s.net) + sr('GPS', s.gps) + sr('RTK', s.rtk) + sr('IMU', s.imu) + sr('조향 모터', s.motor);
   } else if (key === 'motortest') {
-    h = "<div id=\"canStat\" style=\"text-align:center;font-weight:700;font-size:14px;padding:8px;\n         border-radius:8px;background:#f1f3f5;margin-bottom:12px\">CAN \uC0C1\uD0DC \uD655\uC778 \uC911\u2026</div>\n       <div style=\"font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:14px\">\n         \uC548\uD14C\uB098 \uC5C6\uC774 <b>\uBAA8\uD130 \uD68C\uC804</b>\uC744 \uC810\uAC80\uD569\uB2C8\uB2E4. \uBC84\uD2BC\uC744 <b>\uB204\uB974\uACE0 \uC788\uB294 \uB3D9\uC548</b>\uB9CC\n         \uC800\uC18D(\xB112RPM)\uC73C\uB85C \uB3CC\uACE0, \uB5BC\uBA74 \uC989\uC2DC \uC815\uC9C0\uD569\uB2C8\uB2E4.<br>\n         \u26A0 \uBC14\uD034\xB7\uC870\uD5A5 \uC8FC\uBCC0\uC5D0 \uC0AC\uB78C/\uC7A5\uC560\uBB3C\uC774 \uC5C6\uB294\uC9C0 \uD655\uC778 \uD6C4 \uC2DC\uD5D8\uD558\uC138\uC694.</div>\n       <div style=\"display:flex;gap:14px;justify-content:center;margin:10px 0\">\n         <button class=\"jogbtn\" data-dir=\"1\" data-name=\"\uC88C\uD68C\uC804\">\u25C0 \uC88C\uD68C\uC804<br><span>\uB204\uB974\uB294 \uB3D9\uC548</span></button>\n         <button class=\"jogbtn\" data-dir=\"-1\" data-name=\"\uC6B0\uD68C\uC804\">\uC6B0\uD68C\uC804 \u25B6<br><span>\uB204\uB974\uB294 \uB3D9\uC548</span></button>\n       </div>\n       <button class=\"pill jogstop\" id=\"jogStop\">\u25A0 \uC815\uC9C0</button>\n       <div id=\"jogState\" style=\"text-align:center;color:var(--sub);font-size:12px;margin-top:12px\">\uB300\uAE30</div>\n       <div class=\"diag\">\n         <div class=\"drow\">\n           <span>\uCC44\uB110</span>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"0\">0</button>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"1\">1</button>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"2\">2</button>\n           <span>\uC18D\uB3C4</span>\n           <button class=\"dbtn\" data-k=\"br\" data-v=\"250000\">250k</button>\n           <button class=\"dbtn\" data-k=\"br\" data-v=\"500000\">500k</button>\n           <span>\uD655\uC7A5ID</span>\n           <button class=\"dbtn\" data-k=\"eff\" data-v=\"0\">\uC790\uB3D9</button>\n           <button class=\"dbtn\" data-k=\"eff\" data-v=\"1\">\uAC15\uC81C</button>\n         </div>\n         <div class=\"drow\">\n           <span>\uC218\uC2E0(RX)</span>\n           <button class=\"dbtn\" data-k=\"rx\" data-v=\"0\">\uB054(\uBAA8\uD130\uC6B0\uC120)</button>\n           <button class=\"dbtn\" data-k=\"rx\" data-v=\"1\">\uCF2C(\uD53C\uB4DC\uBC31)</button>\n           <span style=\"font-size:10px;color:var(--sub)\">\uBAA8\uD130 \uC548 \uB3CC\uBA74 '\uB054'</span>\n         </div>\n         <div id=\"txInfo\">\uC1A1\uC2E0: -</div>\n       </div>\n       <button class=\"pill\" id=\"btnCenter\" style=\"background:var(--off);margin-top:10px\">\u2299 \uC911\uC559(\uC9C1\uC9C4) \uC124\uC815</button>\n       <div id=\"hbInfo\" style=\"text-align:center;font-size:11px;color:var(--muted);margin-top:8px\">\uD558\uD2B8\uBE44\uD2B8(\uBAA8\uD130 \uD53C\uB4DC\uBC31): \uC218\uC2E0 \uC5C6\uC74C</div>";
+    h = "<div id=\"canStat\" style=\"text-align:center;font-weight:700;font-size:14px;padding:8px;\n         border-radius:8px;background:#f1f3f5;margin-bottom:12px\">CAN \uC0C1\uD0DC \uD655\uC778 \uC911\u2026</div>\n       <div style=\"font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:14px\">\n         \uC548\uD14C\uB098 \uC5C6\uC774 <b>\uBAA8\uD130 \uD68C\uC804</b>\uC744 \uC810\uAC80\uD569\uB2C8\uB2E4. \uBC84\uD2BC\uC744 <b>\uB204\uB974\uACE0 \uC788\uB294 \uB3D9\uC548</b>\uB9CC\n         \uC800\uC18D(\xB112RPM)\uC73C\uB85C \uB3CC\uACE0, \uB5BC\uBA74 \uC989\uC2DC \uC815\uC9C0\uD569\uB2C8\uB2E4.<br>\n         \u26A0 \uBC14\uD034\xB7\uC870\uD5A5 \uC8FC\uBCC0\uC5D0 \uC0AC\uB78C/\uC7A5\uC560\uBB3C\uC774 \uC5C6\uB294\uC9C0 \uD655\uC778 \uD6C4 \uC2DC\uD5D8\uD558\uC138\uC694.</div>\n       <div style=\"display:flex;gap:14px;justify-content:center;margin:10px 0\">\n         <button class=\"jogbtn\" data-dir=\"1\" data-name=\"\uC88C\uD68C\uC804\">\u25C0 \uC88C\uD68C\uC804<br><span>\uB204\uB974\uB294 \uB3D9\uC548</span></button>\n         <button class=\"jogbtn\" data-dir=\"-1\" data-name=\"\uC6B0\uD68C\uC804\">\uC6B0\uD68C\uC804 \u25B6<br><span>\uB204\uB974\uB294 \uB3D9\uC548</span></button>\n       </div>\n       <button class=\"pill jogstop\" id=\"jogStop\">\u25A0 \uC815\uC9C0</button>\n       <div id=\"jogState\" style=\"text-align:center;color:var(--sub);font-size:12px;margin-top:12px\">\uB300\uAE30</div>\n       <div class=\"diag\">\n         <div class=\"drow\">\n           <span>\uCC44\uB110</span>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"0\">0</button>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"1\">1</button>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"2\">2</button>\n           <span>\uC18D\uB3C4</span>\n           <button class=\"dbtn\" data-k=\"br\" data-v=\"250000\">250k</button>\n           <button class=\"dbtn\" data-k=\"br\" data-v=\"500000\">500k</button>\n           <span>\uD655\uC7A5ID</span>\n           <button class=\"dbtn\" data-k=\"eff\" data-v=\"0\">\uC790\uB3D9</button>\n           <button class=\"dbtn\" data-k=\"eff\" data-v=\"1\">\uAC15\uC81C</button>\n         </div>\n         <div class=\"drow\">\n           <span>\uC218\uC2E0(RX)</span>\n           <button class=\"dbtn\" data-k=\"rx\" data-v=\"0\">\uB054(\uBAA8\uD130\uC6B0\uC120)</button>\n           <button class=\"dbtn\" data-k=\"rx\" data-v=\"1\">\uCF2C(\uD53C\uB4DC\uBC31)</button>\n           <span style=\"font-size:10px;color:var(--sub)\">\uBAA8\uD130 \uC548 \uB3CC\uBA74 '\uB054'</span>\n         </div>\n         <div id=\"txInfo\">\uC1A1\uC2E0: -</div>\n       </div>\n       <button class=\"pill\" id=\"btnCenter\" style=\"background:var(--off);margin-top:10px\">\u2299 \uC911\uC559(\uC9C1\uC9C4) \uC124\uC815</button>\n       <div id=\"hbInfo\" style=\"text-align:center;font-size:11px;color:var(--muted);margin-top:8px\">\uD558\uD2B8\uBE44\uD2B8(\uBAA8\uD130 \uD53C\uB4DC\uBC31): \uC218\uC2E0 \uC5C6\uC74C</div>\n       <button class=\"pill\" id=\"btnSniff\" style=\"display:none;background:#37474f;color:#fff;margin-top:10px\">\uD83D\uDCE1 CAN \uC2A4\uB2C8\uD551 (5\uCD08 \uCEA1\uCC98)</button>\n       <div id=\"sniffOut\" style=\"font-size:11px;color:var(--sub);margin-top:8px;white-space:pre-wrap\"></div>";
   }
   $('detailBody').innerHTML = h;
   $('detail').classList.add('on');
@@ -993,6 +994,37 @@ function wireJog() {
       } catch (e) {}
     }
   };
+  // CAN 스니핑 (Listen-Only, 5초) — 모터 CAN ID 미확정 벤더용. 블로킹이라 setTimeout 으로 먼저 표시.
+  var snf = $('btnSniff');
+  if (snf) snf.onclick = function () {
+    var out = $('sniffOut');
+    if (!(BR && BR.canSniff)) {
+      if (out) out.textContent = '브리지 없음(브라우저 시뮬)';
+      return;
+    }
+    snf.disabled = true;
+    if (out) out.textContent = '캡처 중… (5초) — 정품 앱으로 조향 ON/OFF 해보세요';
+    setTimeout(function () {
+      var txt = '';
+      try {
+        var r = JSON.parse(BR.canSniff(5.0) || '{}');
+        if (r.error) {
+          txt = '실패: ' + r.error + (r.hint ? ' (' + r.hint + ')' : '');
+        } else {
+          txt = 'ch=' + r.channel + ' · 총 ' + r.total + '프레임 · 고유 ' + r.unique + '개\n';
+          var ids = r.ids || [];
+          for (var i = 0; i < Math.min(ids.length, 12); i++) {
+            txt += ids[i].id + '  ×' + ids[i].count + '\n';
+          }
+          if (r.file) txt += '저장: ' + r.file;
+        }
+      } catch (e) {
+        txt = '결과 파싱 오류';
+      }
+      if (out) out.textContent = txt;
+      snf.disabled = false;
+    }, 50);
+  };
   // 진단 토글 (채널/비트레이트/확장ID)
   Array.prototype.forEach.call(document.querySelectorAll('.dbtn'), function (b) {
     var k = b.dataset.k,
@@ -1285,6 +1317,10 @@ function poll() {
       if (typeof st.speed_mps === 'number') S.speed = st.speed_mps;
       if (typeof st.motor_verified === 'boolean') S.motorVerified = st.motor_verified;
       if (st.vendor_name) S.vendorName = st.vendor_name;
+      if (st.vendor) S.vendorKey = st.vendor;
+      // CAN 스니핑 버튼: 모터 CAN ID 미확정 벤더(agmo_single/chcnav)에서만 노출
+      var sb = $('btnSniff');
+      if (sb) sb.style.display = (S.vendorKey === 'agmo_single' || S.vendorKey === 'chcnav') ? '' : 'none';
       if (st.profile) S.profile = st.profile;
       if (st.algo) S.algo = st.algo;
       S.hb = st.heartbeat || null;

@@ -83,6 +83,10 @@ object SteerController {
     fun setAlgorithm(name: String): String =
         try { api().callAttr("set_algorithm", name).toString() } catch (e: Throwable) { "error" }
 
+    /** CAN 스니핑(Listen-Only, N초) → CAN ID 빈도 JSON. */
+    fun canSniff(seconds: Double): String =
+        try { api().callAttr("can_sniff", seconds).toString() } catch (e: Throwable) { "{\"error\":\"error\"}" }
+
     /** 제조사 선택화면용 목록 JSON. */
     fun listVendors(): String =
         try { api().callAttr("list_vendors").toString() } catch (e: Throwable) { "[]" }

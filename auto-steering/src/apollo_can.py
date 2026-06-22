@@ -87,10 +87,14 @@ class SocketCanBackend(CanBackend):
     _FMT = struct.Struct("=IB3x8s")     # 리눅스 can_frame 16B
 
     def __init__(self, channel: str = "can0",
-                 bitrate: int = CanSpec.CAN_BITRATE, use_python_can: bool = True):
+                 bitrate: int = CanSpec.CAN_BITRATE, use_python_can: bool = True,
+                 listen_only: bool = False):
         self.channel = channel
         self.bitrate = bitrate
         self.use_python_can = use_python_can
+        # ★ Listen-Only: 송신 금지(스니핑 전용). AGMO Ver2/CHCNAV 모터 CAN ID 미확정 →
+        #   확정 전 추측 프레임 송신 방지. send() 가 무시한다(버스 오염 방지).
+        self.listen_only = listen_only
         self._sock = None
         self._bus = None
 
@@ -120,6 +124,8 @@ class SocketCanBackend(CanBackend):
         self._bus = self._sock = None
 
     def send(self, can_id: int, data: bytes):
+        if self.listen_only:
+            return     # 스니핑 전용 — 송신 금지(미확정 CAN ID 추측 송신 방지)
         data = bytes(data)[:8]
         if self._bus is not None:
             import can as pycan
