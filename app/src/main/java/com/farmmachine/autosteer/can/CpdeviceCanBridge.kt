@@ -37,8 +37,15 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
 
     @Volatile private var running = false
     private var serverThread: Thread? = null
-    private var binder: IBinder? = null
+    private var binder: IBinder? = null               // 단일 서비스 핸들(register/TX 공용)
     private val rxQueue = LinkedBlockingQueue<Pair<Int, ByteArray>>(512)
+
+    // binder 사망 감지 → 자동 재연결
+    private val deathRecipient = IBinder.DeathRecipient {
+        binderReady = false; binder = null
+        lastError = "binder died"
+        Log.w(TAG, "CpDev: binder DIED -> will reconnect on next use")
+    }
 
     // TX drop 요약 로그(폭주 방지). channel/extFlag 는 companion(조정가능).
     @Volatile private var txDropped = 0
@@ -115,11 +122,22 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
                 binder?.toString() ?: "null",
                 if (binder == null) "(NULL -> not found / hidden-api blocked / selinux denial — grep 'avc: denied')" else ""))
             lastError = if (binderReady) "ok" else "getService null"
+            try { binder?.linkToDeath(deathRecipient, 0) } catch (e: Throwable) { Log.w(TAG, "linkToDeath fail: ${e.message}") }
         } catch (e: Throwable) {
             binder = null; binderReady = false
             lastError = "ERR getService: ${e.message}"
             Log.e(TAG, "CpDev ERR: getService(reflection) ${e.message}", e)
         }
+    }
+
+    /** transact 전 호출: binder 살아있으면 그대로, 죽었/없으면 getService 재획득(+RX 재등록). */
+    private fun ensureBinder(): IBinder? {
+        val b = binder
+        if (b != null && (try { b.isBinderAlive } catch (_: Throwable) { false })) return b
+        Log.w(TAG, "CpDev: binder dead/null -> reconnect (getService again)")
+        connectBinder()
+        if (binder != null && registerRx) registerRxCallback()   // 새 핸들에 콜백 재등록
+        return binder
     }
 
     fun status(): String =
@@ -150,8 +168,16 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         val dlc = minOf(data.size, 8)
         Log.i("CpdeviceCan-TX", "CpDev-TX: ch=%d id=0x%08X dlc=%d data=%s".format(
             channel, canId, dlc, data.copyOf(dlc).joinToString("") { "%02X".format(it) }))
-        val b = binder
-        if (b == null) { Log.w("CpdeviceCan-TX", "CpDev-TX: binder=null (no send)"); return false }
+        // 1차 시도 → DeadObjectException 이면 재연결 후 1회 재시도.
+        if (doTransactCan(canId, dlc, data, attempt = 1)) return true
+        Log.w("CpdeviceCan-TX", "CpDev-TX: retry after reconnect")
+        return doTransactCan(canId, dlc, data, attempt = 2)
+    }
+
+    /** 단일 CAN 프레임 transact(code 7). alive 체크+재획득 포함. 성공 true. */
+    private fun doTransactCan(canId: Int, dlc: Int, data: ByteArray, attempt: Int): Boolean {
+        val b = ensureBinder()
+        if (b == null) { Log.w("CpdeviceCan-TX", "CpDev-TX: binder=null (no send, attempt=$attempt)"); return false }
         val p = Parcel.obtain(); val r = Parcel.obtain()
         return try {
             p.writeInterfaceToken(DESCRIPTOR)
@@ -160,11 +186,17 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
             val ret = b.transact(TX_SEND_CAN_FRAME, p, r, 0)
             r.readException()
             lastTxOk = true; txCount++
-            Log.i("CpdeviceCan-TX", "CpDev-TX: transact(code=$TX_SEND_CAN_FRAME) ret=$ret")
+            Log.i("CpdeviceCan-TX", "CpDev-TX: transact code7 ret=%b (attempt=%d)".format(ret, attempt))
             true
+        } catch (e: android.os.DeadObjectException) {
+            lastTxOk = false; lastError = "DeadObject"
+            binder = null   // 죽은 핸들 폐기 → 다음 ensureBinder 가 재획득
+            Log.w("CpdeviceCan-TX", "CpDev-TX: DeadObjectException (attempt=$attempt) -> drop handle, reconnect")
+            false
         } catch (e: Throwable) {
             lastTxOk = false; lastError = "ERR txTest: ${e.message}"
-            Log.e("CpdeviceCan-TX", "CpDev-TX ERR: transact ${e.message}", e)
+            val alive = try { binder?.isBinderAlive ?: false } catch (_: Throwable) { false }
+            Log.e("CpdeviceCan-TX", "CpDev-TX ERR: transact ${e.message} (alive=$alive, attempt=$attempt)", e)
             false
         } finally { p.recycle(); r.recycle() }
     }
@@ -181,25 +213,8 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
             }
             return
         }
-        val b = binder
-        if (b == null) { lastTxOk = false; return }   // no binder -> silently skip (no guessed TX)
-        val p = Parcel.obtain(); val r = Parcel.obtain()
-        try {
-            p.writeInterfaceToken(DESCRIPTOR)
-            p.writeInt(1)                              // 프레임 개수 N=1
-            p.writeByteArray(makeFrame14(canId, dlc, data))
-            b.transact(TX_SEND_CAN_FRAME, p, r, 0)
-            r.readException()
-            lastTxOk = true; txCount++
-            if (txCount % 50 == 1)
-                Log.i(TAG, "TX sendCanFrame id=0x%08X dlc=%d ch=%d (#%d)".format(canId, dlc, channel, txCount))
-        } catch (e: Throwable) {
-            lastTxOk = false
-            lastError = "TX transact failed: ${e.message}"
-            Log.w(TAG, lastError)
-        } finally {
-            p.recycle(); r.recycle()
-        }
+        // 스트림 경로도 단일 핸들/alive 체크 공용 경로 사용(DeadObject 시 자가 복구).
+        doTransactCan(canId, dlc, data, attempt = 1)
     }
 
     // ── RX: registerCallback(code 1) — 우리 Binder 등록, 수신 14B 프레임을 rxQueue 로 ──────
