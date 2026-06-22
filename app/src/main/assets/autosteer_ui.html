@@ -1031,13 +1031,20 @@ function vendorList() {
   }
   if (Array.isArray(v) && v.length) return v; // Python 정상 → 사용
   return [
-  // 비었거나 실패 → 항상 보이는 기본 목록
+  // 비었거나 실패 → 항상 보이는 기본 목록 (제조사 4지선다)
+  // ★ 실제 목록/케이스는 백엔드 list_vendors() 가 권위. 여기는 브리지 없을 때 폴백.
   {
-    key: "agmo",
-    name: "기본",
-    tagline: "Apollo 10 Pro · Keya 조향모터",
+    key: "agmo_dual",
+    name: "아그모 듀얼안테나",
+    tagline: "Apollo 10 Pro · Keya · 듀얼안테나+IMU",
     can_verified: true,
-    gnss: "내장 GNSS"
+    gnss: "듀얼안테나+IMU"
+  }, {
+    key: "agmo_single",
+    name: "아그모 싱글안테나",
+    tagline: "Ver2 · Apollo2 · 싱글안테나+INS",
+    can_verified: false,
+    gnss: "싱글안테나+INS"
   }, {
     key: "chcnav",
     name: "CHCNAV",
@@ -1046,7 +1053,7 @@ function vendorList() {
     gnss: "CHCNAV PA-3"
   }, {
     key: "fjd",
-    name: "FJDynamics",
+    name: "FJ Dynamics",
     tagline: "AT2 dome · FJD 전동조향",
     can_verified: false,
     gnss: "FJDynamics AT2"
