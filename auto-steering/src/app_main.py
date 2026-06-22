@@ -53,6 +53,7 @@ class Controller:
             self.sim = sitl_sim.Simulator(self.sys, KUBOTA_MR1157,
                                           target_speed=1.2, yaw_tau=0.25)
         else:
+            self._bus_host, self._bus_port = host, port   # 벤더 전환 시 bridge 복귀용
             self.bus = ApolloCanBus(backend="bridge", host=host, port=port,
                                     on_state=lambda s: log.info(f"CAN {s}"))
             # ★ 기본 = pure_pursuit (안정·SITL 수렴 검증). implement 는 후방참조점 발산
@@ -80,7 +81,7 @@ class Controller:
         # ── 벤더 하드웨어 경로 힌트(agmo_single/chcnav 등) + CAN 상태/스니핑 ──
         self._vendor_gnss = (None, None, None)   # (port, baud, baud_alt)
         self._vendor_can = (None, None, False)   # (backend, channel, listen_only)
-        self._can_state = "n/a"                  # socketcan 프로브 결과(연결/불가)
+        self._bus_backend_kind = "bridge"        # 현재 CAN 전송 백엔드(벤더 전환 시 교체)
         self._sniff = {"running": False, "result": None}
         self._impl = None                        # 작업기(균평기) GNSS+레벨그리드 (벤더 독립, 지연생성)
 
@@ -107,27 +108,25 @@ class Controller:
         self._vendor_can = (getattr(p, "can_backend", None),
                             getattr(p, "can_channel", None),
                             bool(getattr(p, "can_listen_only", False)))
-        # SocketCAN 벤더(Ver2/CHCNAV)면 채널 연결만 프로브(graceful, 송신/모터 없음).
-        if not self.demo and self._vendor_can[0] == "socketcan":
-            self._probe_socketcan(self._vendor_can[1])
-            log.warning(f"[{p.display_name}] 정품 앱(autokit2 등) 실행 중이면 "
-                        f"CAN/GNSS 충돌 — 정품 종료 후 사용 권장.")
+        # ── 벤더별 CAN 전송 백엔드 전환(같은 ApolloCanBus 객체 유지) ──
+        #   agmo_single(Ver2)=표준 SocketCAN(can1) / 그 외=bridge(libsysmcu).
+        #   ★ 모터 프로토콜은 동일(Keya CanSpec, can_verified=True) — 전송 경로만 다름.
+        if not self.demo and self.bus is not None:
+            want = self._vendor_can[0] or "bridge"
+            try:
+                if want == "socketcan":
+                    self.bus.switch_backend(
+                        "socketcan",
+                        channel=(self._vendor_can[1] or "can0"),
+                        bitrate=int(p.canspec.get("CAN_BITRATE", 250000)))
+                    log.warning(f"[{p.display_name}] 표준 SocketCAN({self._vendor_can[1]}) — "
+                                f"autokit2(정품) 실행 중이면 CAN/GNSS 충돌, 정품 종료 후 사용 권장.")
+                elif self._bus_backend_kind != "bridge":
+                    self.bus.switch_backend("bridge", host=self._bus_host, port=self._bus_port)
+                self._bus_backend_kind = want
+            except Exception as e:
+                log.warning(f"CAN 백엔드 전환 실패({want}): {e}")
         return p.key
-
-    def _probe_socketcan(self, channel):
-        """SocketCAN 채널 연결만 확인(open→close). 실패해도 크래시 금지 → can_state 기록."""
-        ch = channel or "can0"
-        try:
-            import apollo_can
-            be = apollo_can.SocketCanBackend(channel=ch, listen_only=True)
-            ok = be.open()
-            try: be.close()
-            except Exception: pass
-            self._can_state = "connected" if ok else "unavailable"
-        except Exception as e:
-            self._can_state = "unavailable"
-            log.info(f"SocketCAN({ch}) 프로브 실패: {e}")
-        return self._can_state
 
     # ── 수명주기 ──────────────────────────────────────────────
     def start(self):
@@ -861,9 +860,8 @@ class Controller:
             st["gnss_ok"] = bool(gc is not None and getattr(gc, "_running", False))
             # IMU: 별도 직접 신호 없음 → GNSS 수신/INS 동작 여부를 프록시로(active_gnss).
             st["imu_ok"] = bool(st.get("active_gnss"))
-            # SocketCAN 벤더면 프로브 상태, 아니면 기존 can_state 유지.
-            if self._vendor_can[0] == "socketcan":
-                st["can_state"] = self._can_state
+            # can_state 는 _loop 의 실제 버스 상태(bus.stats.state) 그대로 사용.
+            st["can_backend"] = self._bus_backend_kind
             st["can_listen_only"] = bool(self._vendor_can[2])
             # 작업기 GNSS 상태(차체와 독립) — 미시작이면 ok=False
             if self._impl is not None:

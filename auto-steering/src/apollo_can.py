@@ -408,6 +408,27 @@ class ApolloCanBus(CanInterface):
         self._connected = False
         self._set_state("stopped")
 
+    def switch_backend(self, backend: str, **kw):
+        """런타임 백엔드 교체(예: 벤더 전환 bridge↔socketcan). 동일 ApolloCanBus 객체 유지
+        → AutoSteerSystem/액추에이터가 들고 있는 참조 그대로. 실패해도 예외 없이 재연결 루프가 처리."""
+        was = self._running
+        try:
+            if was:
+                self.stop()
+        except Exception:
+            pass
+        try:
+            self._backend.close()
+        except Exception:
+            pass
+        self._backend = make_backend(backend, **kw)
+        self._connected = False
+        self._first_open = True
+        if was:
+            self.start()
+        log.info(f"CAN 백엔드 교체 → {self._backend.name}")
+        return self._backend.name
+
     def send(self, can_id: int, data: bytes):
         if len(self._tx) == self._tx.maxlen:
             self._stats.tx_dropped += 1        # 가득 차면 가장 오래된 것 밀려남

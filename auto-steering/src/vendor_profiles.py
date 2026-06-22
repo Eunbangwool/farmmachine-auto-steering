@@ -175,13 +175,13 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
     ),
     # ★ 아그모 싱글안테나 (ver2, autokit2 역분석 + /proc/fd 실측) — 신규.
     #   태블릿 Apollo2_10/Android11, GNSS=/dev/ttyS4(115200|460800), 싱글안테나+INS(자이로융합).
-    #   모터 CAN = 표준 SocketCAN(can1/can2, libsysmcu.so 아님). ★ 모터 CAN ID 미확정 →
-    #   can_verified=False(조향 비활성, GNSS·스니핑만). 추측 프레임 송신 금지(TODO).
+    #   ★ 모터 = 아그모 듀얼안테나와 **완전히 같은 Keya 모델/프로토콜**(오너 확인) →
+    #   KEYA_CANSPEC 그대로 + can_verified=True. 전송만 표준 SocketCAN(can1, libsysmcu 아님).
     "agmo_single": VendorProfile(
         key="agmo_single", display_name="AGMO Ver2 (싱글안테나+INS)",
-        tagline="Apollo2 · 싱글안테나+INS · SocketCAN",
-        can_verified=False,
-        canspec=_placeholder_canspec(250_000),   # ★ TODO(HW): autokit2 setCANBaudrate 값 확인
+        tagline="Apollo2 · 싱글안테나+INS · SocketCAN · Keya",
+        can_verified=True,             # 모터=듀얼과 동일 Keya → 확정(조향 출력 허용)
+        canspec=KEYA_CANSPEC,          # ★ 듀얼안테나와 동일 Keya 프로토콜(250k, cmd_speed)
         gnss_primary=AGMO_V2_INS, gnss_backup=UBLOX_F9P,
         gnss_priority=("agmo", "f9p"),
         default_algo="pure_pursuit",
@@ -189,14 +189,14 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
         gnss_port="/dev/ttyS4",        # fd 실측 확정
         gnss_baud=115_200,             # 기본
         gnss_baud_alt=460_800,         # ★ TODO(HW): 460800 일 수 있음 — 실패 시 재시도
-        can_backend="socketcan",       # 표준 SocketCAN 확정
+        can_backend="socketcan",       # 표준 SocketCAN(can1) — 전송 경로만 듀얼(bridge)과 다름
         can_channel="can1",            # ★ TODO(HW): can1/can2 현장 확인
-        can_listen_only=True,          # Listen-Only 스니핑 가능
+        can_listen_only=True,          # Listen-Only 스니핑도 가능(진단용)
         gyro_zero_required=True,       # gz_zero 영점 필요(INS)
         notes="AGMO Ver2 — 싱글안테나+INS(헤딩=속도벡터+자이로 융합, 정지 시 부정확). "
-              "GNSS=/dev/ttyS4(115200|460800 현장확인). 모터=표준 SocketCAN(can1/can2, "
-              "CAN-FD·Listen-Only 지원). ★ 모터 CAN ID·baudrate 미확정 → 조향 비활성, "
-              "스니핑+GNSS 만. autokit2(정품)와 CAN/GNSS 충돌 — 정품 종료 후 사용 권장.",
+              "GNSS=/dev/ttyS4(115200|460800 현장확인). 모터=**아그모 듀얼과 동일 Keya KY170** "
+              "(250k cmd_speed) — 표준 SocketCAN(can1)으로 전송. autokit2(정품)와 CAN/GNSS "
+              "충돌 — 정품 종료 후 사용 권장.",
     ),
     "chcnav": VendorProfile(
         key="chcnav", display_name="CHCNAV",
