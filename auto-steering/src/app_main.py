@@ -82,6 +82,7 @@ class Controller:
         self._vendor_gnss = (None, None, None)   # (port, baud, baud_alt)
         self._vendor_can = (None, None, False)   # (backend, channel, listen_only)
         self._bus_backend_kind = "bridge"        # 현재 CAN 전송 백엔드(벤더 전환 시 교체)
+        self._can_unsupported = False            # ★ Ver2 등 CAN 경로 미지원(MCU-SPI) → 조용히 비활성
         self._sniff = {"running": False, "result": None}
         self._impl = None                        # 작업기(균평기) GNSS+레벨그리드 (벤더 독립, 지연생성)
 
@@ -109,23 +110,25 @@ class Controller:
                             getattr(p, "can_channel", None),
                             bool(getattr(p, "can_listen_only", False)))
         # ── 벤더별 CAN 전송 백엔드 전환(같은 ApolloCanBus 객체 유지) ──
-        #   agmo_single(Ver2)=표준 SocketCAN(can1) / 그 외=bridge(libsysmcu).
-        #   ★ 모터 프로토콜은 동일(Keya CanSpec, can_verified=True) — 전송 경로만 다름.
+        #   agmo_dual 등 = bridge(libsysmcu). agmo_single(Ver2) = CAN 미지원.
+        self._can_unsupported = (self._vendor_can[0] == "unsupported_yet"
+                                 or not getattr(p, "can_available", True))
         if not self.demo and self.bus is not None:
-            want = self._vendor_can[0] or "bridge"
             try:
-                if want == "socketcan":
-                    self.bus.switch_backend(
-                        "socketcan",
-                        channel=(self._vendor_can[1] or "can0"),
-                        bitrate=int(p.canspec.get("CAN_BITRATE", 250000)))
-                    log.warning(f"[{p.display_name}] 표준 SocketCAN({self._vendor_can[1]}) — "
-                                f"autokit2(정품) 실행 중이면 CAN/GNSS 충돌, 정품 종료 후 사용 권장.")
+                if self._can_unsupported:
+                    # ★ Ver2: SocketCAN 인터페이스 없음(실측). spidev2.0→MCU 경유라 표준 CAN 접근 불가.
+                    #   무한 reconnect 로그 도배 방지 → 버스 정지, can_state="unsupported" 1회 표시.
+                    #   GNSS(ttyS4)·레벨러 등 CAN 무관 기능은 그대로 동작.
+                    self.bus.stop()
+                    self._bus_backend_kind = "unsupported_yet"
+                    log.warning(f"[{p.display_name}] CAN 미지원 — Ver2 는 SocketCAN 인터페이스 없음"
+                                f"(MCU-SPI 경유). 모터 비활성, GNSS/레벨러는 정상. "
+                                f"(PCAN 스니핑 또는 libcpcomm binder 연동 필요)")
                 elif self._bus_backend_kind != "bridge":
                     self.bus.switch_backend("bridge", host=self._bus_host, port=self._bus_port)
-                self._bus_backend_kind = want
+                    self._bus_backend_kind = "bridge"
             except Exception as e:
-                log.warning(f"CAN 백엔드 전환 실패({want}): {e}")
+                log.warning(f"CAN 백엔드 전환 실패: {e}")
         return p.key
 
     # ── 수명주기 ──────────────────────────────────────────────
@@ -863,6 +866,12 @@ class Controller:
             # can_state 는 _loop 의 실제 버스 상태(bus.stats.state) 그대로 사용.
             st["can_backend"] = self._bus_backend_kind
             st["can_listen_only"] = bool(self._vendor_can[2])
+            # ★ Ver2 등 CAN 미지원: 모터 비활성·상태/사유 명시(무한재시도 없이 1회 표시).
+            st["motor_ready"] = bool(getattr(self.sys, "motor_verified", False)
+                                     and not self._can_unsupported)
+            if self._can_unsupported:
+                st["can_state"] = "unsupported"
+                st["note"] = "Ver2 CAN은 MCU(spidev) 경유, 미지원 (PCAN/binder 필요)"
             # 작업기 GNSS 상태(차체와 독립) — 미시작이면 ok=False
             if self._impl is not None:
                 ist = self._impl.status()

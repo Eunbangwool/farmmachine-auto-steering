@@ -1020,15 +1020,21 @@ function jogStop() {
 // 모터 회전(jog)·중앙설정·하트비트·스니핑은 그대로(전송 백엔드만 다름).
 function adaptMotorVendor() {
   if (S.vendorKey !== 'agmo_single') return;
+  // ★ Ver2(실측): SocketCAN 인터페이스 없음 → spidev2.0→MCU 경유라 표준 CAN 접근 불가.
+  //   모터 제어 미해결(개발중). 점검 화면의 jog/진단 토글을 숨기고 안내로 대체.
+  var jb = document.querySelectorAll('#detailBody .jogbtn');
+  for (var k = 0; k < jb.length; k++) jb[k].disabled = true;
   var diag = document.querySelector('#detailBody .diag');
-  if (!diag) return;
-  var rows = diag.querySelectorAll('.drow');
-  for (var i = 0; i < rows.length; i++) rows[i].style.display = 'none';
-  var note = document.createElement('div');
-  note.style.cssText = 'font-size:12px;color:var(--sub);margin:4px 0;line-height:1.5';
-  note.textContent = '전송: 표준 SocketCAN · 채널 can1 (Ver2) — 모터는 듀얼과 동일 Keya 프로토콜. '
-                   + '채널/확장ID/RX 토글은 libsysmcu(듀얼) 전용이라 해당 없음.';
-  diag.insertBefore(note, diag.firstChild);
+  if (diag) {
+    var rows = diag.querySelectorAll('.drow');
+    for (var i = 0; i < rows.length; i++) rows[i].style.display = 'none';
+    var note = document.createElement('div');
+    note.style.cssText = 'font-size:12px;color:#b9760f;margin:4px 0;line-height:1.5';
+    note.textContent = '모터 미지원 (개발중) — Ver2 는 SocketCAN 인터페이스 없음(실측). '
+                     + 'CAN 은 spidev2.0→MCU 경유라 표준 접근 불가. PCAN 스니핑 또는 libcpcomm '
+                     + 'binder 연동 필요. GNSS·레벨 기능은 정상.';
+    diag.insertBefore(note, diag.firstChild);
+  }
 }
 function wireJog() {
   Array.prototype.forEach.call(document.querySelectorAll('.jogbtn'), function (btn) {
@@ -1147,8 +1153,8 @@ function vendorList() {
   }, {
     key: "agmo_single",
     name: "아그모 싱글안테나",
-    tagline: "Ver2 · Apollo2 · 싱글+INS · Keya(듀얼동일)",
-    can_verified: true,
+    tagline: "Ver2 · Apollo2 · 싱글+INS · 모터 미지원(개발중)",
+    can_verified: false,
     gnss: "싱글안테나+INS"
   }, {
     key: "chcnav",
@@ -1434,14 +1440,12 @@ function poll() {
   // 모터 점검 화면 열려있으면 CAN 상태 갱신
   var cs = $('canStat');
   if (cs && S.vendorKey === 'agmo_single') {
-    // Ver2 = 표준 SocketCAN: 브리지(canStatus/VanMcu) 아님 → 메인 버스 상태로 표시.
-    var okSc = (S.canState === 'connected');
-    cs.textContent = okSc ? 'CAN: SocketCAN(can1) 연결됨 ✓ (모터=듀얼 동일 Keya)'
-                          : 'CAN: SocketCAN(can1) ' + (S.canState || '대기') + ' — 인터페이스/권한 확인';
-    cs.style.background = okSc ? 'var(--brand-lt)' : '#fdeede';
-    cs.style.color = okSc ? 'var(--brand-dk)' : '#b9760f';
+    // ★ Ver2(실측): SocketCAN 인터페이스 없음 → CAN 미지원(개발중). spidev2.0→MCU 경유.
+    cs.textContent = '모터 미지원 (개발중) — Ver2 CAN은 MCU(spidev) 경유';
+    cs.style.background = '#fdeede';
+    cs.style.color = '#b9760f';
     var tiS = $('txInfo');
-    if (tiS) tiS.textContent = '전송 백엔드: ' + (S.canBackend || 'socketcan') + ' · 채널 can1';
+    if (tiS) tiS.textContent = 'PCAN 스니핑 또는 libcpcomm binder 연동 필요 (GNSS·레벨은 정상)';
   } else if (cs && BR && BR.canStatus) {
     try {
       var c = JSON.parse(BR.canStatus());
