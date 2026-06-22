@@ -26,10 +26,8 @@ log = logging.getLogger("implement_gnss")
 from f9p_client import _nmea_checksum_ok, _dm_to_deg
 
 
-# ── 작업기 안테나 설치 높이(지면→안테나) — 표고 환산용 ──────────────
-#   지면표고 = GNSS표고(alt) − 안테나높이. ★ TODO(HW): 실측값을 UI 에서 입력.
-DEFAULT_IMPL_ANTENNA_HEIGHT_M = 1.5
-
+# 안테나 높이 보정은 사용하지 않는다(상대 편차에서 상쇄 → 보정 불필요·오차원 제거).
+# 편차 = 셀 평균(원시 altitude) − 기준면(영점 시점 원시 altitude).
 DEFAULT_CELL_SIZE_M = 0.5
 # ★ TODO(HW): 작업기 GNSS 보레이트 확인(9600/115200). 후보를 순차 시도.
 BAUD_CANDIDATES = (115200, 9600, 460800, 38400)
@@ -74,10 +72,12 @@ class LevelerGrid:
     스레드 안전(주행 루프와 무관하지만 폴링/수신 스레드 분리이므로 lock).
     """
     def __init__(self, cell_size_m: float = DEFAULT_CELL_SIZE_M,
-                 antenna_height_m: float = DEFAULT_IMPL_ANTENNA_HEIGHT_M,
                  start_avg_n: int = 20):
+        # ★ 안테나 높이 보정 없음(의도적): 영점(기준면) 설정 시점 표고가 0 기준이 되고
+        #   이후 모든 값은 그 기준 대비 상대 편차다. 안테나 높이는 양쪽에서 상쇄되므로
+        #   보정이 불필요하며, 잘못된 높이값이 들어가면 오히려 편차가 틀어진다.
+        #   → GNSS altitude 원시값을 그대로 사용한다.
         self.cell = float(cell_size_m)
-        self.antenna_h = float(antenna_height_m)
         self._lock = threading.Lock()
         self._cells: Dict[Tuple[int, int], dict] = {}
         self._lat0 = None
@@ -89,10 +89,6 @@ class LevelerGrid:
         self._start_avg_n = int(start_avg_n)
         self.last_fix = 0
         self.last_sample_t = 0.0
-
-    def set_antenna_height(self, h: float):
-        with self._lock:
-            self.antenna_h = float(h)
 
     def _enu(self, lat, lon):
         e = math.radians(lon - self._lon0) * 6378137.0 * self._coslat0
@@ -108,10 +104,10 @@ class LevelerGrid:
             if self._lat0 is None:
                 self._lat0, self._lon0 = lat, lon
                 self._coslat0 = math.cos(math.radians(lat))
-            ground = alt - self.antenna_h        # 지면표고 환산
+            g = alt                              # ★ GNSS altitude 원시값(안테나 높이 보정 없음)
             # 기준면(start 모드): 시작 구간 평균을 0 기준으로
             if self._ref is None and self._ref_mode == "start":
-                self._start_buf.append(ground)
+                self._start_buf.append(g)
                 if len(self._start_buf) >= self._start_avg_n:
                     self._ref = sum(self._start_buf) / len(self._start_buf)
             e, n = self._enu(lat, lon)
@@ -121,7 +117,7 @@ class LevelerGrid:
             if c is None:
                 c = {"sum": 0.0, "count": 0, "fix": int(fix)}
                 self._cells[(gx, gy)] = c
-            c["sum"] += ground
+            c["sum"] += g
             c["count"] += 1
             c["fix"] = int(fix)          # 최신 fix 상태
 
@@ -165,7 +161,6 @@ class LevelerGrid:
                 "ref_mode": self._ref_mode,
                 "cell_size_m": self.cell,
                 "antenna": "implement",          # ★ 작업기 안테나 기준 명시
-                "antenna_height_m": self.antenna_h,
                 "origin": ({"lat": self._lat0, "lon": self._lon0}
                            if self._lat0 is not None else None),
                 "cells": cells,
@@ -283,7 +278,7 @@ class ImplementGnss:
 if __name__ == "__main__":
     # 셀프테스트: 합성 GGA 주입(시리얼 없이) → 그리드/편차 검증
     logging.basicConfig(level=logging.INFO)
-    g = LevelerGrid(cell_size_m=0.5, antenna_height_m=1.0, start_avg_n=5)
+    g = LevelerGrid(cell_size_m=0.5, start_avg_n=5)
 
     def gga(lat, lon, alt, q=4, ns=20):
         body = "$GNGGA,000000,%s,N,%s,E,%d,%02d,0.8,%.3f,M,0.0,M,,"
@@ -296,7 +291,7 @@ if __name__ == "__main__":
             cs ^= ord(ch)
         return "%s*%02X" % (s, cs)
 
-    # 기준면(시작 5샘플) ~ alt 100.0 → 지면 99.0
+    # 기준면(시작 5샘플) = alt 100.0 원시값(안테나 높이 보정 없음)
     base_lat, base_lon = 37.0001, 127.0001
     for i in range(5):
         r = parse_gga_alt(gga(base_lat, base_lon, 100.0))

@@ -440,11 +440,6 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
         <button class="pill" id="lvRef">현재 위치 기준면(영점)</button>
         <button class="pill" id="lvClear" style="background:var(--off)">초기화</button>
       </div>
-      <div class="lvrow">작업기 안테나 높이(m)
-        <input id="lvAntH" type="number" step="0.05" value="1.5"
-               autocapitalize="off" autocorrect="off" spellcheck="false"/>
-        <button class="pill" id="lvAntSet">적용</button>
-      </div>
     </div>
   </div>
 
@@ -1664,11 +1659,6 @@ setTimeout(fitScreen, 150); // WebView 초기 치수 보정
   }
   function lvOpen() {
     lvLegend();
-    // 저장된 작업기 안테나 높이(실측)를 입력칸에 반영
-    try {
-      var st = JSON.parse((BR && BR.statusJson && BR.statusJson()) || '{}');
-      if (st.impl_antenna_height_m != null && $('lvAntH')) $('lvAntH').value = st.impl_antenna_height_m;
-    } catch (e) {}
     setOverlay('leveler', true); lvPoll();
     if (lvTimer) clearInterval(lvTimer);
     lvTimer = setInterval(lvPoll, 750);   // 100ms 는 과함 → 750ms
@@ -1692,11 +1682,6 @@ setTimeout(fitScreen, 150); // WebView 초기 치수 보정
   if ((b = $('lvClear'))) b.onclick = function () {
     try { if (BR && BR.clearLevelerGrid) BR.clearLevelerGrid(); } catch (e) {}
     lvRender(null); lvSetStat('그리드 초기화됨');
-  };
-  if ((b = $('lvAntSet'))) b.onclick = function () {
-    var h = parseFloat(($('lvAntH') && $('lvAntH').value) || '1.5');
-    try { if (BR && BR.setImplAntennaHeight) BR.setImplAntennaHeight(h); } catch (e) {}
-    lvSetStat('작업기 안테나 높이 ' + h + 'm 적용');
   };
 })();
 

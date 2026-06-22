@@ -89,7 +89,6 @@ class JsBridge {
     @JavascriptInterface fun getLevelerGrid(): String = SteerController.getLevelerGrid()
     @JavascriptInterface fun setLevelerReference(): String = SteerController.setLevelerReference()
     @JavascriptInterface fun clearLevelerGrid(): String = SteerController.clearLevelerGrid()
-    @JavascriptInterface fun setImplAntennaHeight(h: Double): String = SteerController.setImplAntennaHeight(h)
 
     /** 현장 진단: CAN 채널/비트레이트/확장ID 강제 전환. ch=0/1, br=250000/500000, eff=확장강제 */
     @JavascriptInterface fun setCanParams(ch: Int, br: Int, eff: Boolean): String {

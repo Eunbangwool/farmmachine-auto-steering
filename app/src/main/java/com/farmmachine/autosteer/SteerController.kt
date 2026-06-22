@@ -98,8 +98,6 @@ object SteerController {
         try { api().callAttr("set_leveler_reference").toString() } catch (e: Throwable) { "{\"ok\":false}" }
     fun clearLevelerGrid(): String =
         try { api().callAttr("clear_leveler_grid").toString() } catch (e: Throwable) { "error" }
-    fun setImplAntennaHeight(h: Double): String =
-        try { api().callAttr("set_impl_antenna_height", h).toString() } catch (e: Throwable) { "error" }
 
     /** 제조사 선택화면용 목록 JSON. */
     fun listVendors(): String =
