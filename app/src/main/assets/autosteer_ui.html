@@ -1181,6 +1181,12 @@ function initVendors() {
           BR.setVendor(el.dataset.k);
         } catch (e) {}
       }
+      // CAN 브리지 선택: agmo_single(Ver2)=cpdevice(BnMcuCanService 골격), 그 외=apollo(VanMcu).
+      if (BR && BR.selectCanBridge) {
+        try {
+          BR.selectCanBridge(el.dataset.k === 'agmo_single' ? 'cpdevice' : 'apollo');
+        } catch (e) {}
+      }
       show('main');
     };
   });

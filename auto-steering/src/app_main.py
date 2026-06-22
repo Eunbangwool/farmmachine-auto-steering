@@ -81,8 +81,8 @@ class Controller:
         # ── 벤더 하드웨어 경로 힌트(agmo_single/chcnav 등) + CAN 상태/스니핑 ──
         self._vendor_gnss = (None, None, None)   # (port, baud, baud_alt)
         self._vendor_can = (None, None, False)   # (backend, channel, listen_only)
-        self._bus_backend_kind = "bridge"        # 현재 CAN 전송 백엔드(벤더 전환 시 교체)
-        self._can_unsupported = False            # ★ Ver2 등 CAN 경로 미지원(MCU-SPI) → 조용히 비활성
+        self._bus_backend_kind = "bridge"        # Python CAN 전송 백엔드(항상 TCP 브리지)
+        self._can_bridge = "apollo"              # Kotlin 측 활성 브리지: apollo(VanMcu) / cpdevice(Ver2)
         self._sniff = {"running": False, "result": None}
         self._impl = None                        # 작업기(균평기) GNSS+레벨그리드 (벤더 독립, 지연생성)
 
@@ -109,24 +109,15 @@ class Controller:
         self._vendor_can = (getattr(p, "can_backend", None),
                             getattr(p, "can_channel", None),
                             bool(getattr(p, "can_listen_only", False)))
-        # ── 벤더별 CAN 전송 백엔드 전환(같은 ApolloCanBus 객체 유지) ──
-        #   agmo_dual 등 = bridge(libsysmcu). agmo_single(Ver2) = CAN 미지원.
-        self._can_unsupported = (self._vendor_can[0] == "unsupported_yet"
-                                 or not getattr(p, "can_available", True))
-        if not self.demo and self.bus is not None:
+        # ── CAN 전송 ──
+        #   Python 은 모든 벤더에서 동일 TCP 브리지(BridgeBackend, 13B 레코드) 사용 — 전송코드 불변.
+        #   Kotlin 측 활성 브리지만 벤더로 갈림: agmo_single=cpdevice(BnMcuCanService 골격) / 그 외=apollo.
+        #   (Kotlin 브리지 선택은 UI JsBridge.selectCanBridge 가 같은 포트로 재바인딩.)
+        self._can_bridge = "cpdevice" if p.key == "agmo_single" else "apollo"
+        if not self.demo and self.bus is not None and self._bus_backend_kind != "bridge":
             try:
-                if self._can_unsupported:
-                    # ★ Ver2: SocketCAN 인터페이스 없음(실측). spidev2.0→MCU 경유라 표준 CAN 접근 불가.
-                    #   무한 reconnect 로그 도배 방지 → 버스 정지, can_state="unsupported" 1회 표시.
-                    #   GNSS(ttyS4)·레벨러 등 CAN 무관 기능은 그대로 동작.
-                    self.bus.stop()
-                    self._bus_backend_kind = "unsupported_yet"
-                    log.warning(f"[{p.display_name}] CAN 미지원 — Ver2 는 SocketCAN 인터페이스 없음"
-                                f"(MCU-SPI 경유). 모터 비활성, GNSS/레벨러는 정상. "
-                                f"(PCAN 스니핑 또는 libcpcomm binder 연동 필요)")
-                elif self._bus_backend_kind != "bridge":
-                    self.bus.switch_backend("bridge", host=self._bus_host, port=self._bus_port)
-                    self._bus_backend_kind = "bridge"
+                self.bus.switch_backend("bridge", host=self._bus_host, port=self._bus_port)
+                self._bus_backend_kind = "bridge"
             except Exception as e:
                 log.warning(f"CAN 백엔드 전환 실패: {e}")
         return p.key
@@ -865,13 +856,12 @@ class Controller:
             st["imu_ok"] = bool(st.get("active_gnss"))
             # can_state 는 _loop 의 실제 버스 상태(bus.stats.state) 그대로 사용.
             st["can_backend"] = self._bus_backend_kind
+            st["can_bridge"] = self._can_bridge          # Kotlin 활성 브리지(apollo/cpdevice)
             st["can_listen_only"] = bool(self._vendor_can[2])
-            # ★ Ver2 등 CAN 미지원: 모터 비활성·상태/사유 명시(무한재시도 없이 1회 표시).
-            st["motor_ready"] = bool(getattr(self.sys, "motor_verified", False)
-                                     and not self._can_unsupported)
-            if self._can_unsupported:
-                st["can_state"] = "unsupported"
-                st["note"] = "Ver2 CAN은 MCU(spidev) 경유, 미지원 (PCAN/binder 필요)"
+            st["motor_ready"] = bool(getattr(self.sys, "motor_verified", False))
+            # Ver2(cpdevice 골격): binder 마샬링 TODO 라 모터 비활성 — 사유 명시.
+            if self._can_bridge == "cpdevice" and not getattr(self.sys, "motor_verified", False):
+                st["note"] = "Ver2 CpdeviceCanBridge 골격 — BnMcuCanService binder 마샬링 TODO (모터 비활성)"
             # 작업기 GNSS 상태(차체와 독립) — 미시작이면 ok=False
             if self._impl is not None:
                 ist = self._impl.status()

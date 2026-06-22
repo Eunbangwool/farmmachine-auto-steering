@@ -185,9 +185,8 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
     "agmo_single": VendorProfile(
         key="agmo_single", display_name="AGMO Ver2 (싱글안테나+INS)",
         tagline="Apollo2 · 싱글+INS · 모터 미지원(개발중)",
-        can_verified=False,            # ★ CAN 전송 경로 미해결(MCU-SPI) → 조향 출력 비활성
-        can_available=False,           # ★ Ver2 = SocketCAN 인터페이스 없음(실측) — CAN 비활성
-        canspec=KEYA_CANSPEC,          # 모터 프로토콜은 듀얼과 동일 Keya(참고용) — 전송이 막혀 미사용
+        can_verified=False,            # ★ binder 마샬링 TODO(골격) → 모터 아직 비활성
+        canspec=KEYA_CANSPEC,          # 모터 프레임=듀얼과 동일 Keya(0x06000001/0x07000001) 그대로 재사용
         gnss_primary=AGMO_V2_INS, gnss_backup=UBLOX_F9P,
         gnss_priority=("agmo", "f9p"),
         default_algo="pure_pursuit",
@@ -195,16 +194,18 @@ VENDOR_PROFILES: Dict[str, VendorProfile] = {
         gnss_port="/dev/ttyS4",        # fd 실측 확정 (GNSS 는 정상 동작)
         gnss_baud=115_200,             # 기본
         gnss_baud_alt=460_800,         # ★ TODO(HW): 460800 일 수 있음 — 실패 시 재시도
-        can_backend="unsupported_yet", # ★ 표준 SocketCAN 아님(인터페이스 부재). MCU-SPI 경유.
+        # ★ 전송: Python 은 동일 TCP 브리지(BridgeBackend, 13B 레코드). Kotlin 측만 ApolloCanBridge
+        #   대신 CpdeviceCanBridge(BnMcuCanService binder)로 교체(JsBridge.selectCanBridge).
+        #   ★ TODO(HW): BnMcuCanService onTransact 트랜잭션 코드·Parcel 마샬링 미확정 → 실제 송신은
+        #   Kotlin 골격에서 TODO 로 막힘(추측 송신 금지). 확정(Ghidra/JNI) 후 can_verified=True 로.
+        can_backend="bridge",          # Python=TCP 브리지(듀얼과 동일 계약). Kotlin=cpdevice 브리지
         can_channel=None,
         can_listen_only=False,
         gyro_zero_required=True,       # gz_zero 영점 필요(INS)
-        # ★ TODO(HW): Ver2 CAN 은 spidev2.0→MCU 경유. PCAN 스니핑 또는 libcpcomm(BnMcuCanService)
-        #   binder 연동 필요. can1/can2/baud TODO 는 이 선결 과제 이후에나 의미 있음.
-        notes="AGMO Ver2 — 싱글안테나+INS(헤딩=속도벡터+자이로 융합). GNSS=/dev/ttyS4(정상). "
-              "★ CAN: Ver2 는 SocketCAN 인터페이스 없음(실측 확정), spidev2.0→cpdevice MCU 경유. "
-              "표준 AF_CAN 접근 불가 → 모터 제어 미해결: (A) libcpcomm binder 연동 또는 "
-              "(B) PCAN 스니핑 후 구현. 현재 모터 미지원(개발중) — GNSS·레벨러는 정상.",
+        notes="AGMO Ver2 — 싱글안테나+INS. GNSS=/dev/ttyS4(정상). CAN: Ver2 는 SocketCAN 없음"
+              "(실측), spidev2.0→cpdevice MCU 경유. 전송=Kotlin CpdeviceCanBridge(BnMcuCanService "
+              "binder) 골격 — onTransact 마샬링 TODO 라 현재 모터 비활성(개발중). 모터 프레임은 "
+              "듀얼과 동일 Keya. GNSS·레벨러는 정상.",
     ),
     "chcnav": VendorProfile(
         key="chcnav", display_name="CHCNAV",
