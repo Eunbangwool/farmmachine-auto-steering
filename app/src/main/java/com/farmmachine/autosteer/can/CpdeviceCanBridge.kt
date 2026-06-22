@@ -316,7 +316,7 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
         f[1] = (word ushr 24).toByte()                // ID워드 big-endian (MSB first)
         f[2] = (word ushr 16).toByte()
         f[3] = (word ushr 8).toByte()
-        f[4] = (word and 0xFF).toByte()
+        f[4] = (word and 0xFFL).toByte()
         f[5] = dlc.coerceIn(0, 8).toByte()
         System.arraycopy(data, 0, f, 6, minOf(data.size, 8))
         return f
@@ -412,10 +412,10 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
                             val ch = buf[o].toInt() and 0xFF
                             val dlc = (buf[o + 5].toInt() and 0xFF).coerceIn(0, 8)
                             // ID워드 빅엔디안 → canId 복원(makeFrame14/makeCanSendBuffer 역). ext = word&0x04.
-                            val word = ((buf[o + 1].toLong() and 0xFF) shl 24) or
-                                       ((buf[o + 2].toLong() and 0xFF) shl 16) or
-                                       ((buf[o + 3].toLong() and 0xFF) shl 8) or
-                                        (buf[o + 4].toLong() and 0xFF)
+                            val word = ((buf[o + 1].toLong() and 0xFFL) shl 24) or
+                                       ((buf[o + 2].toLong() and 0xFFL) shl 16) or
+                                       ((buf[o + 3].toLong() and 0xFFL) shl 8) or
+                                        (buf[o + 4].toLong() and 0xFFL)
                             val canId = (if (word and 0x04L != 0L) (word ushr 3) and 0x1FFFFFFFL
                                          else (word ushr 21) and 0x7FFL).toInt()
                             val payload = buf.copyOfRange(o + 6, o + 6 + dlc)
