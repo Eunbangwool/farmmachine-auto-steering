@@ -40,8 +40,10 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
     private var binder: IBinder? = null
     private val rxQueue = LinkedBlockingQueue<Pair<Int, ByteArray>>(512)
 
-    // ★ TODO(HW): 모터가 붙은 CAN 채널 번호 — 실차 확인(0/1/2). 기본 0.
+    // ★ 채널 진단용 + TX drop 요약 로그(폭주 방지)
     private var channel: Int = 0
+    @Volatile private var txDropped = 0
+    @Volatile private var lastDropLogMs = 0L
 
     private val REC = 13
     private val HEARTBEAT = 0x7FFFFFFFL
@@ -124,8 +126,14 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
 
     private fun sendCanFrame(canId: Int, dlc: Int, data: ByteArray) {
         // ★ 안전: TX 기본 비활성(RX 검증 먼저). 모터 자동 송신 금지 — txEnabled 수동 활성 후에만.
+        //   Python 이 고주파로 send 하므로 **조용히 drop**(매 호출 로그 금지). 1초당 1회만 요약 카운트.
         if (!txEnabled) {
-            if (txCount == 0) Log.w(TAG, "TX 비활성(RX 검증 우선) — txEnabled=true 후 송신")
+            txDropped++
+            val now = System.currentTimeMillis()
+            if (now - lastDropLogMs >= 1000L) {
+                Log.i(TAG, "TX 비활성 — drop %d (1s). RX 검증 후 cpdevTxEnable(true)".format(txDropped))
+                txDropped = 0; lastDropLogMs = now
+            }
             return
         }
         val b = binder
@@ -152,49 +160,64 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
     // ── RX: registerCallback(code 1) — 우리 Binder 등록, 수신 14B 프레임을 rxQueue 로 ──────
     private val rxCallback = object : Binder() {
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-            // ★ TODO: 콜백 transact code/디스크립터 미확정 → code 무시하고 14B 만 읽음(실차검증).
+            // ★ 콜백 transact code/디스크립터 미확정 → 진입 즉시 무조건 1줄(code 무관). enforceInterface 안 함.
+            //   예외로 죽지 않게 전체 try/catch. raw Parcel·14B 둘 다 보이게 덤프.
             try {
-                val frame = data.createByteArray()
-                // ★ 실차 1단계 검증용: 들어온 14바이트를 그대로 hex 덤프(채널/canId 인코딩/콜백 code 확인).
-                if (frame != null) {
-                    val hex = frame.joinToString(" ") { "%02X".format(it) }
-                    if (frame.size >= 6) {
+                val dataSize = try { data.dataSize() } catch (_: Throwable) { -1 }
+                Log.i("CpdeviceCan-RX", "RX onTransact code=%d dataSize=%d".format(code, dataSize))
+                rxCount++
+                // (d) raw Parcel 통째 hex (포맷 무관 — 마샬링이 byteArray 가 아닐 수도 있으므로 일단 보이게)
+                try {
+                    val raw = data.marshall()
+                    val n = minOf(raw.size, 64)
+                    val rhex = (0 until n).joinToString(" ") { "%02X".format(raw[it]) }
+                    Log.i("CpdeviceCan-RX", "raw parcel %dB: %s%s".format(raw.size, rhex, if (raw.size > n) " …" else ""))
+                } catch (e: Throwable) {
+                    Log.w("CpdeviceCan-RX", "marshall 실패(바인더/fd 포함 가능): ${e.message}")
+                }
+                // 14B CAN 프레임 가정 파싱 시도(확정 포맷). 실패해도 위 raw 로 분석 가능.
+                try {
+                    val frame = data.createByteArray()
+                    if (frame != null && frame.size >= 6) {
+                        val hex = frame.joinToString(" ") { "%02X".format(it) }
                         val ch = frame[0].toInt() and 0xFF
                         val dlc = (frame[5].toInt() and 0xFF).coerceIn(0, 8)
-                        // canId big-endian 복원. low 바이트의 ext 플래그(잠정 EXT_FLAG) 제거(★ TODO 실차).
-                        val low = (frame[4].toInt() and 0xFF) and EXT_FLAG.inv()
+                        val low = (frame[4].toInt() and 0xFF) and EXT_FLAG.inv()  // ext 플래그 제거(★TODO 실차)
                         val canId = ((frame[1].toInt() and 0xFF) shl 24) or
                                     ((frame[2].toInt() and 0xFF) shl 16) or
                                     ((frame[3].toInt() and 0xFF) shl 8) or low
                         val end = minOf(6 + dlc, frame.size)
                         val payload = if (end > 6) frame.copyOfRange(6, end) else ByteArray(0)
-                        val dhex = payload.joinToString("") { "%02X".format(it) }
-                        Log.i("CpdeviceCan-RX",
-                            "code=%d ch=%d id=0x%08X dlc=%d data=%s raw14=%s".format(code, ch, canId, dlc, dhex, hex))
-                        rxQueue.offer(canId to payload); rxCount++
+                        Log.i("CpdeviceCan-RX", "  parsed ch=%d id=0x%08X dlc=%d data=%s raw14=%s"
+                            .format(ch, canId, dlc, payload.joinToString("") { "%02X".format(it) }, hex))
+                        rxQueue.offer(canId to payload)
                     } else {
-                        Log.i("CpdeviceCan-RX", "code=%d len=%d raw=%s (14B 미만)".format(code, frame.size, hex))
+                        Log.i("CpdeviceCan-RX", "  createByteArray=${if (frame == null) "null" else frame.size.toString() + "B"} (14B 아님 — raw 참조)")
                     }
-                } else {
-                    Log.i("CpdeviceCan-RX", "code=$code byteArray 없음(다른 마샬링?) — 실차 onTransact 추가분석 필요")
+                } catch (e: Throwable) {
+                    Log.w("CpdeviceCan-RX", "createByteArray 실패: ${e.message}")
                 }
-            } catch (e: Throwable) { Log.w("CpdeviceCan-RX", "onTransact 파싱 실패: ${e.message}") }
+            } catch (e: Throwable) {
+                Log.w("CpdeviceCan-RX", "onTransact 예외: ${e.message}")
+            }
             return true
         }
     }
 
     private fun registerRxCallback() {
-        val b = binder ?: return
+        val b = binder
+        Log.i(TAG, "registerCallback 시도: code=$TX_REGISTER_CALLBACK desc=\"$DESCRIPTOR\" binder=${b != null}")
+        if (b == null) { Log.w(TAG, "registerCallback 건너뜀 — binder 없음"); return }
         val p = Parcel.obtain(); val r = Parcel.obtain()
         try {
             p.writeInterfaceToken(DESCRIPTOR)
             p.writeStrongBinder(rxCallback)
-            b.transact(TX_REGISTER_CALLBACK, p, r, 0)
+            val ok = b.transact(TX_REGISTER_CALLBACK, p, r, 0)
             r.readException()
-            Log.i(TAG, "registerCallback(code 1) OK")
+            Log.i(TAG, "registerCallback(code $TX_REGISTER_CALLBACK) OK (transact=$ok) — RX onTransact 대기")
         } catch (e: Throwable) {
             lastError = "registerCallback 실패: ${e.message}"
-            Log.w(TAG, lastError)   // RX 실패해도 TX(모터 구동)는 가능 — graceful
+            Log.w(TAG, lastError)   // RX 실패해도 graceful
         } finally {
             p.recycle(); r.recycle()
         }
