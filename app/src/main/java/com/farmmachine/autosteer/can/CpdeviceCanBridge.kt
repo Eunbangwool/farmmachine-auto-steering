@@ -142,6 +142,60 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
 
     fun stopBurst() { burstStop = true }
 
+    @Volatile private var sweeping = false
+
+    /**
+     * CAN 개통(setCANBaudrate/openCan) transact code 탐색 — 실차 진단.
+     * 배경: code 16(registerCallback) 등록 후에도 RX(code 19)가 0건 → CAN 채널 미개통 추정.
+     *   autokit2 는 시동 시 setCANBaudrate 를 부르는데 우리는 안 부름. 그 code 가 미확정.
+     * 방법: RX 콜백을 먼저 등록(개통 감지용) → code 2..24(이미 아는 1/7/16/19 제외)에
+     *   (channel,baud) / (baud) 두 마샬링을 보내고, 각 시도 직후 RX 증가분을 측정.
+     *   **RX(모터 HB 0x07000001)가 처음 살아나는 code = CAN 개통 code.** 이후 TX 도 먹힘.
+     * 안전: 잘못된 code 가 서비스를 죽여도 ensureBinder 가 재연결. 백그라운드 스레드(UI 비블로킹).
+     */
+    fun openCanSweep(baud: Int = 250000): String {
+        if (sweeping) return "already-sweeping"
+        sweeping = true
+        thread(name = "cpdev-sweep") {
+            try {
+                // 1) RX 먼저 등록 — 개통되면 모터 HB 가 올라와 rxCount 가 증가해야 함.
+                if (!registerRx) { registerRx = true; registerRxCallback() }
+                Log.i(TAG, "CpDev-SWEEP: start baud=$baud ch=$channel (RX registered, watching rxCount)")
+                val skip = setOf(1, 7, 16, 19)         // 1=getMcuVersion 7=sendCanFrame 16=registerCallback 19=RX
+                for (code in 2..24) {
+                    if (code in skip) continue
+                    for (shape in 0..1) {
+                        val before = rxCount
+                        val b = ensureBinder()
+                        if (b == null) { Log.w(TAG, "CpDev-SWEEP: code=$code binder=null, reconnect later"); continue }
+                        val p = Parcel.obtain(); val r = Parcel.obtain()
+                        var ret = false; var err = "-"
+                        try {
+                            p.writeInterfaceToken(DESCRIPTOR)
+                            if (shape == 0) { p.writeInt(channel); p.writeInt(baud) }  // setCANBaudrate(int ch,int baud)
+                            else { p.writeInt(baud) }                                  // setCANBaudrate(int baud)
+                            ret = b.transact(code, p, r, 0)
+                            try { r.readException() } catch (e: Throwable) { err = "exc:${e.message}" }
+                        } catch (e: android.os.DeadObjectException) {
+                            err = "DeadObject"; binder = null
+                        } catch (e: Throwable) {
+                            err = e.javaClass.simpleName + ":" + e.message; binder = null
+                        } finally { p.recycle(); r.recycle() }
+                        Thread.sleep(500)                  // 개통되면 이 사이에 HB 가 올라옴
+                        val rxDelta = rxCount - before
+                        Log.i(TAG, "CpDev-SWEEP: code=%d shape=%d ret=%b err=%s rxDelta=%d".format(
+                            code, shape, ret, err, rxDelta))
+                        if (rxDelta > 0) Log.i(TAG, "CpDev-SWEEP: *** code=$code shape=$shape -> RX ALIVE (likely CAN-open code) ***")
+                    }
+                }
+                Log.i(TAG, "CpDev-SWEEP: done. total rxCount=$rxCount (rxDelta>0 인 code 가 개통 code)")
+            } catch (e: Throwable) {
+                Log.e(TAG, "CpDev-SWEEP ERR: ${e.message}", e)
+            } finally { sweeping = false }
+        }
+        return "sweep-started"
+    }
+
     /** Acquire BnMcuCanService binder. ServiceManager is hidden API -> reflection. Never crash. */
     private fun connectBinder() {
         try {
