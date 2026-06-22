@@ -1051,6 +1051,7 @@ function adaptMotorVendor() {
     + '<button class="pill" data-cpburst="plus" style="flex:1;min-width:120px;background:#2e7d32;color:#fff">▶ 버스트 +5 (2초)</button>'
     + '<button class="pill" data-cpburst="minus" style="flex:1;min-width:120px;background:#2e7d32;color:#fff">버스트 -5 (2초) ◀</button></div>'
     + '<button class="pill" id="cpEstop" style="background:var(--danger,#c0392b);color:#fff;margin-top:8px">■ 전체 정지(비상)</button>'
+    + '<button class="pill" id="cpRxReg" style="background:#5c6bc0;color:#fff;margin-top:8px">RX 등록 (code16) — 버스 생존 확인</button>'
     + '<div id="cpTxOut" style="font-size:11px;color:var(--sub);margin-top:8px;white-space:pre-wrap">대기</div>';
   $('detailBody').appendChild(box);
   var out = function (t) { var e = $('cpTxOut'); if (e) e.textContent = t; };
@@ -1086,6 +1087,10 @@ function adaptMotorVendor() {
   if ($('cpEstop')) $('cpEstop').onclick = function () {
     var r = '-'; try { if (BR && BR.cpdevEstop) r = BR.cpdevEstop(); } catch (e) {}
     out('전체 정지(disable 전송) → ' + r);
+  };
+  if ($('cpRxReg')) $('cpRxReg').onclick = function () {
+    var r = '-'; try { if (BR && BR.cpdevRegisterRx) r = BR.cpdevRegisterRx(true); } catch (e) {}
+    out('RX 등록(code16) → ' + r + '  (logcat CpdeviceCan-RX 에 code=19 들어오는지 확인)');
   };
 }
 function wireJog() {
