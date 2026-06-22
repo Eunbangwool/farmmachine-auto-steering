@@ -123,8 +123,23 @@ class JsBridge {
         com.farmmachine.autosteer.can.CpdeviceCanBridge.extFlag = flag
         return """{"extFlag":$flag}"""
     }
-    /** Ver2 비상정지: TX 차단 + 모터 disable 프레임 1회. */
+    /** Ver2 버스트 TX: kind(plus/minus) 를 ms 동안 50ms 재전송(워치독 회피) 후 자동 정지. */
+    @JavascriptInterface fun cpdevTxBurst(kind: String, ms: Int): String {
+        return try {
+            val sp = org.json.JSONObject(SteerController.cpdevTestFrame(kind))
+            val en = org.json.JSONObject(SteerController.cpdevTestFrame("enable"))
+            val di = org.json.JSONObject(SteerController.cpdevTestFrame("disable"))
+            if (!sp.has("id")) return SteerController.cpdevTestFrame(kind)
+            fun hx(s: String) = ByteArray(s.length / 2) { ((Character.digit(s[it*2],16) shl 4) or Character.digit(s[it*2+1],16)).toByte() }
+            com.farmmachine.autosteer.can.CpdeviceCanBridge.instance?.txBurst(
+                sp.getInt("id"), hx(sp.getString("data")), hx(en.getString("data")), hx(di.getString("data")), ms)
+            """{"kind":"$kind","burst_ms":$ms}"""
+        } catch (e: Throwable) { """{"error":"${e.message}"}""" }
+    }
+
+    /** Ver2 비상정지: 버스트 중단 + TX 차단 + 모터 disable 프레임 1회. */
     @JavascriptInterface fun cpdevEstop(): String {
+        com.farmmachine.autosteer.can.CpdeviceCanBridge.instance?.stopBurst()
         com.farmmachine.autosteer.can.CpdeviceCanBridge.txEnabled = false
         return cpdevTxTest("disable")
     }

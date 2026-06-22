@@ -1047,6 +1047,9 @@ function adaptMotorVendor() {
     + '<button class="pill" data-cptx="neutral" style="flex:1;min-width:80px">조향 0도</button>'
     + '<button class="pill" data-cptx="plus" style="flex:1;min-width:80px">미세 +5도</button>'
     + '<button class="pill" data-cptx="minus" style="flex:1;min-width:80px">미세 -5도</button></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    + '<button class="pill" data-cpburst="plus" style="flex:1;min-width:120px;background:#2e7d32;color:#fff">▶ 버스트 +5 (2초)</button>'
+    + '<button class="pill" data-cpburst="minus" style="flex:1;min-width:120px;background:#2e7d32;color:#fff">버스트 -5 (2초) ◀</button></div>'
     + '<button class="pill" id="cpEstop" style="background:var(--danger,#c0392b);color:#fff;margin-top:8px">■ 전체 정지(비상)</button>'
     + '<div id="cpTxOut" style="font-size:11px;color:var(--sub);margin-top:8px;white-space:pre-wrap">대기</div>';
   $('detailBody').appendChild(box);
@@ -1056,6 +1059,13 @@ function adaptMotorVendor() {
       var kind = b.getAttribute('data-cptx'); var r = '-';
       try { if (BR && BR.cpdevTxTest) r = BR.cpdevTxTest(kind); } catch (e) {}
       out('TX ' + kind + ' → ' + r + '  (logcat CpdeviceCan-TX 확인)');
+    };
+  });
+  Array.prototype.forEach.call(box.querySelectorAll('[data-cpburst]'), function (b) {
+    b.onclick = function () {
+      var kind = b.getAttribute('data-cpburst'); var r = '-';
+      try { if (BR && BR.cpdevTxBurst) r = BR.cpdevTxBurst(kind, 2000); } catch (e) {}
+      out('버스트 ' + kind + ' 2초 (ch=현재) → ' + r + '  (logcat BURST 확인)');
     };
   });
   Array.prototype.forEach.call(box.querySelectorAll('[data-cpch]'), function (b) {

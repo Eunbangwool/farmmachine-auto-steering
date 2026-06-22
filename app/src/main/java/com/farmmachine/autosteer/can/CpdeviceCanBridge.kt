@@ -115,6 +115,33 @@ class CpdeviceCanBridge(private val port: Int = 47100) {
     /** 수동 RX 콜백 등록(code 16) — TX 와 분리. 서비스 죽으면 다음 TX 가 재연결로 복구. */
     fun registerRxNow(): String { registerRx = true; registerRxCallback(); return lastError }
 
+    @Volatile private var burstStop = false
+
+    /** 버스트 TX: enable 1회 → ms 동안 50ms 마다 cmdData 재전송(Keya 1s 워치독 회피) → 정지(disable).
+     *  잭업 검증용. 채널 바꿔가며 어느 채널에서 모터가 도는지 확인. estop/재호출 시 중단. */
+    fun txBurst(cmdId: Int, cmdData: ByteArray, enableData: ByteArray, disableData: ByteArray, ms: Int) {
+        burstStop = true                       // 기존 버스트 중단
+        thread(name = "cpdev-burst") {
+            burstStop = false
+            try {
+                Log.i("CpdeviceCan-TX", "CpDev-TX: BURST start ch=$channel ${ms}ms")
+                txTestFrame(cmdId, enableData)
+                val end = System.currentTimeMillis() + ms.toLong()
+                while (!burstStop && System.currentTimeMillis() < end) {
+                    txTestFrame(cmdId, cmdData)
+                    Thread.sleep(50)
+                }
+            } catch (e: Throwable) {
+                Log.w("CpdeviceCan-TX", "CpDev-TX: BURST err ${e.message}")
+            } finally {
+                try { txTestFrame(cmdId, disableData) } catch (_: Throwable) {}
+                Log.i("CpdeviceCan-TX", "CpDev-TX: BURST end (disable sent)")
+            }
+        }
+    }
+
+    fun stopBurst() { burstStop = true }
+
     /** Acquire BnMcuCanService binder. ServiceManager is hidden API -> reflection. Never crash. */
     private fun connectBinder() {
         try {
