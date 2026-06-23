@@ -539,6 +539,32 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
     </div>
   </div>
 
+  <!-- ══ IMU 영점 설정 확인 ══ -->
+  <div class="modal" id="imuConfirmModal">
+    <div class="card" style="max-width:460px;width:90%">
+      <div class="wt" style="color:var(--brand)">IMU 영점 설정</div>
+      <div class="wb">기존 설정은 지워지고 새로 설정합니다.<br>진행하시겠습니까?</div>
+      <div style="display:flex;gap:10px;margin-top:8px">
+        <button class="pill" id="imuNo" style="flex:1;background:var(--off);color:#fff">아니오</button>
+        <button class="pill" id="imuYes" style="flex:1;background:var(--brand);color:#fff">예</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ GPS 중심 설정 방식 선택 ══ -->
+  <div class="modal" id="gpsCenterModal">
+    <div class="card" style="max-width:520px;width:92%">
+      <div class="wt" style="color:var(--brand)">GPS 중심 설정 방식 선택</div>
+      <div class="wb">설정 방식을 선택하여 주세요.<br>
+        <b>즉시 설정</b> : 주행 후 미세 조정이 필요할 경우<br>
+        <b>주행 후 설정</b> : 차량별 최초로 설정하거나 또는 재설정이 필요한 경우</div>
+      <div style="display:flex;gap:10px;margin-top:8px">
+        <button class="pill" id="gpsNow" style="flex:1;background:var(--off);color:#fff">즉시 설정</button>
+        <button class="pill" id="gpsAfter" style="flex:1;background:var(--brand);color:#fff">주행 후 설정</button>
+      </div>
+    </div>
+  </div>
+
   <div id="motorWarn"></div>
   <button id="estop">■ 비상정지</button>
   <div id="toast"></div>
@@ -751,7 +777,10 @@ function openDetail(key) {
     var imuLbl = v2o ? 'INS 자이로 영점 (gz_zero · 평지 정차)' : 'IMU 영점 설정';
     var hcalLbl = v2o ? '헤딩 바이어스 캘리브 (싱글+INS · 직선 20m)'
                       : '헤딩 바이어스 캘리브 (ver1 듀얼 · 직선 20m)';
-    h = row('imuzero', imuLbl, '실행') + row('gpscenter', 'GPS 중심 설정', '실행') + row('turnspeed', '배속 선회 설정', '설정') + row('hcalib', hcalLbl, '시작') + row('steercal', '조향비 자동측정 (S자/사인 주행)', '시작');
+    h = row('imuzero', imuLbl, '설정하기') + row('gpscenter', 'GPS 중심 설정', '설정하기')
+      + "<div style=\"border-top:1px solid var(--line,#ddd);margin:12px 0 6px\"></div>"
+      + "<div style=\"font-size:12px;color:var(--sub);margin:0 0 4px\">추가 보정</div>"
+      + row('hcalib', hcalLbl, '시작') + row('steercal', '조향비 자동측정 (S자/사인 주행)', '시작') + row('turnspeed', '배속 선회 설정', '설정');
   } else if (key === 'tuning') {
     h = "<div class=\"row\"><span class=\"k\">\uC81C\uC870\uC0AC</span><span class=\"val\" id=\"tnVendor\">-</span></div>\n       <div style=\"font-size:13px;color:var(--sub);margin:10px 0 6px\">\uC791\uC5C5 \uBAA8\uB4DC (CHCNAV 3-\uBAA8\uB4DC \uD29C\uB2DD)</div>\n       <div style=\"display:flex;gap:8px;flex-wrap:wrap\">\n         <button class=\"dbtn modebtn\" data-mode=\"normal\">\uC77C\uBC18(\uB85C\uD130\uB9AC/\uBC29\uC81C)</button>\n         <button class=\"dbtn modebtn\" data-mode=\"heavy\">\uACFC\uBD80\uD558(\uC7C1\uAE30/\uADE0\uD3C9)</button>\n         <button class=\"dbtn modebtn\" data-mode=\"sand\">\uC0AC\uC9C8\uD1A0</button>\n       </div>\n       <div style=\"font-size:13px;color:var(--sub);margin:14px 0 6px\">\uACBD\uB85C \uCD94\uC885 \uC54C\uACE0\uB9AC\uC998</div>\n       <div style=\"display:flex;gap:8px;flex-wrap:wrap\">\n         <button class=\"dbtn algobtn\" data-algo=\"pure_pursuit\">\uAE30\uBCF8(Pure Pursuit)</button>\n         <button class=\"dbtn algobtn\" data-algo=\"implement_ff\">\uC791\uC5C5\uAE30 \uACE1\uC120\uBCF4\uC815 (\uC7C1\uAE30/\uADE0\uD3C9)</button>\n       </div>\n       <div style=\"font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5\">\uACE1\uC120 \uC791\uC5C5 \uC2DC \uC791\uC5C5\uAE30\uAC00 \uC548\uCABD\uC73C\uB85C \uBC00\uB9AC\uB294 \uC624\uCC28\uB97C \uACE1\uB960 \uD53C\uB4DC\uD3EC\uC6CC\uB4DC\uB85C \uC120\uBCF4\uC815\uD569\uB2C8\uB2E4. \uC9C1\uC120\uC5D0\uB294 \uC601\uD5A5 \uC5C6\uC74C.</div>\n       <div id=\"tnInfo\" style=\"font-size:12px;color:var(--muted);margin-top:12px;line-height:1.6\">\uD604\uC7AC \uD29C\uB2DD \uB85C\uB529\u2026</div>";
   } else if (key === 'rtk') {
@@ -860,12 +889,9 @@ function wireDetail(key) {
           }
           toast('전방 20m 직선 자동생성+헤딩캘리브 — 데드맨 누르고 주행하면 자동 보정');
         } else if (a === 'imuzero') {
-          if (BR && BR.startImuCalib) {
-            try {
-              BR.startImuCalib();
-            } catch (e) {}
-          }
-          toast('IMU 영점 시작 — 평지 정차 후 30초 유지 (IMU 데이터 들어와야 진행)');
+          setModal('imuConfirmModal', true);   // 기존 설정 덮어쓰기 확인 후 진행
+        } else if (a === 'gpscenter') {
+          setModal('gpsCenterModal', true);     // 즉시 설정 / 주행 후 설정 방식 선택
         } else if (a === 'steercal') {
           if (BR && BR.startSteerRatioCalib) {
             try {
@@ -1443,6 +1469,21 @@ $('abReg') && ($('abReg').onclick = function () {
     setModal('nameModal', true);
     setTimeout(function () { try { $('pathNameInput').focus(); } catch (e) {} }, 120);
   }
+});
+$('imuNo') && ($('imuNo').onclick = function () { setModal('imuConfirmModal', false); });
+$('imuYes') && ($('imuYes').onclick = function () {
+  setModal('imuConfirmModal', false);
+  if (BR && BR.startImuCalib) { try { BR.startImuCalib(); } catch (e) {} }
+  toast('IMU 영점 시작 — 평지 정차 후 30초 유지 (IMU 데이터 수신 필요)');
+});
+$('gpsNow') && ($('gpsNow').onclick = function () {
+  setModal('gpsCenterModal', false);
+  if (BR && BR.motorCenter) { try { BR.motorCenter(); } catch (e) {} }
+  toast('GPS 중심 즉시 설정 — 현재 위치를 직진 기준으로 설정');
+});
+$('gpsAfter') && ($('gpsAfter').onclick = function () {
+  setModal('gpsCenterModal', false);
+  toast('주행 후 설정 — 직선 주행 중 중앙(직진) 설정 버튼으로 적용하세요');
 });
 $('nameCancel') && ($('nameCancel').onclick = function () { setModal('nameModal', false); });
 $('nameOk') && ($('nameOk').onclick = function () {
