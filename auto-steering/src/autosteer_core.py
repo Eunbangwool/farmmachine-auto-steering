@@ -1531,6 +1531,7 @@ class SteeringActuator:
         self._motor_angle_zero = 0.0      # 직진(중앙) 기준 모터 누적각(deg) — 캘리브레이션
         self._hb               = {}       # 최신 모터 하트비트(angle/rpm/current/faults)
         self._hb_seen          = False
+        self._hb_ts            = 0.0       # 마지막 하트비트 수신 시각(연결 신선도 판정용)
         self._last_raw         = None     # 직전 누적각 raw(0~65535) — wrap 언랩용
         self._motor_cont_deg   = 0.0      # 언랩된 연속 모터각(deg)
         # 실모터(Keya) 속도제어 모드: True 면 cmd_speed(SDO)로 직접 구동(무WAS).
@@ -1576,6 +1577,7 @@ class SteeringActuator:
                 if hb:
                     self._hb = hb
                     self._hb_seen = True
+                    self._hb_ts = time.time()
                     # 누적각 raw(0~65535) 언랩 → 연속 모터각(deg)
                     raw = hb.get('angle_raw', 0)
                     if self._last_raw is not None:
@@ -1614,6 +1616,11 @@ class SteeringActuator:
     def latest_heartbeat(self) -> dict:
         """최신 모터 하트비트(angle_deg/speed_rpm/current/faults). 없으면 빈 dict."""
         return dict(self._hb)
+
+    def heartbeat_fresh(self, timeout: float = 1.0) -> bool:
+        """최근 timeout(초) 내 모터 하트비트 수신 여부 = 모터 실연결(버스 생존).
+        Keya HB 는 연속 송신이므로 timeout=1s 면 분리/단선 시 곧 False 로 떨어진다."""
+        return self._hb_seen and (time.time() - self._hb_ts) <= timeout
 
     def get_measured_angle(self) -> float:
         with self._lock:

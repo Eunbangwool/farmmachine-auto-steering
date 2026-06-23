@@ -852,13 +852,18 @@ class Controller:
             gc = getattr(self, "_gnss_client", None)
             st["gnss_port"] = self._vendor_gnss[0] or st.get("gnss_port")
             st["gnss_ok"] = bool(gc is not None and getattr(gc, "_running", False))
-            # IMU: 별도 직접 신호 없음 → GNSS 수신/INS 동작 여부를 프록시로(active_gnss).
-            st["imu_ok"] = bool(st.get("active_gnss"))
+            # IMU/자세: 별도 IMU 단독 신호는 없으나 헤딩 서브시스템(헤딩 추정 + 비열화)이 실생존 신호.
+            #   (ver1=듀얼+IMU 융합 / INS 벤더=스마트안테나 내장). 헤딩 없거나 degraded 면 off.
+            hd = st.get("heading_deg")
+            st["imu_ok"] = (isinstance(hd, (int, float))) and (not st.get("heading_degraded", False))
             # can_state 는 _loop 의 실제 버스 상태(bus.stats.state) 그대로 사용.
             st["can_backend"] = self._bus_backend_kind
             st["can_bridge"] = self._can_bridge          # Kotlin 활성 브리지(apollo/cpdevice)
             st["can_listen_only"] = bool(self._vendor_can[2])
-            st["motor_ready"] = bool(getattr(self.sys, "motor_verified", False))
+            st["motor_ready"] = bool(getattr(self.sys, "motor_verified", False))  # 설정상 자율조향 허용 여부
+            # 모터 실연결 = 최근 1s 내 하트비트 수신(설정 플래그가 아닌 버스 실신호).
+            try: st["motor_hb_ok"] = bool(self.sys.actuator.heartbeat_fresh())
+            except Exception: st["motor_hb_ok"] = False
             # Ver2(cpdevice 골격): binder 마샬링 TODO 라 모터 비활성 — 사유 명시.
             if self._can_bridge == "cpdevice" and not getattr(self.sys, "motor_verified", False):
                 st["note"] = "Ver2 CpdeviceCanBridge(binder TX/RX 구현) — 채널/ext/RX코드 실차확인 후 모터 활성"

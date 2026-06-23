@@ -725,10 +725,10 @@ function openDetail(key) {
     }
   } else if (key === 'system') {
     var s = S.sys;
-    var sr = function sr(k, on) {
-      return "<div class=\"row\"><span class=\"k\">" + k + "</span><div style=\"display:flex;align-items:center\"><span class=\"statlabel " + (on ? 'on' : '') + "\">" + (on ? 'ON' : 'OFF') + "</span><div class=\"tg " + (on ? 'on' : '') + " ro\"></div></div></div>";
+    var sr = function sr(k, id, on) {
+      return "<div class=\"row\"><span class=\"k\">" + k + "</span><div id=\"" + id + "\" style=\"display:flex;align-items:center\"><span class=\"statlabel " + (on ? 'on' : '') + "\">" + (on ? 'ON' : 'OFF') + "</span><div class=\"tg " + (on ? 'on' : '') + " ro\"></div></div></div>";
     };
-    h = sr('네트워크', s.net) + sr('GPS', s.gps) + sr('RTK', s.rtk) + sr('IMU', s.imu) + sr('조향 모터', s.motor);
+    h = sr('네트워크', 'sysrow_net', s.net) + sr('GPS', 'sysrow_gps', s.gps) + sr('RTK', 'sysrow_rtk', s.rtk) + sr('IMU', 'sysrow_imu', s.imu) + sr('조향 모터', 'sysrow_motor', s.motor);
   } else if (key === 'motortest') {
     h = "<div id=\"canStat\" style=\"text-align:center;font-weight:700;font-size:14px;padding:8px;\n         border-radius:8px;background:#f1f3f5;margin-bottom:12px\">CAN \uC0C1\uD0DC \uD655\uC778 \uC911\u2026</div>\n       <div style=\"font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:14px\">\n         \uC548\uD14C\uB098 \uC5C6\uC774 <b>\uBAA8\uD130 \uD68C\uC804</b>\uC744 \uC810\uAC80\uD569\uB2C8\uB2E4. \uBC84\uD2BC\uC744 <b>\uB204\uB974\uACE0 \uC788\uB294 \uB3D9\uC548</b>\uB9CC\n         \uC800\uC18D(\xB112RPM)\uC73C\uB85C \uB3CC\uACE0, \uB5BC\uBA74 \uC989\uC2DC \uC815\uC9C0\uD569\uB2C8\uB2E4.<br>\n         \u26A0 \uBC14\uD034\xB7\uC870\uD5A5 \uC8FC\uBCC0\uC5D0 \uC0AC\uB78C/\uC7A5\uC560\uBB3C\uC774 \uC5C6\uB294\uC9C0 \uD655\uC778 \uD6C4 \uC2DC\uD5D8\uD558\uC138\uC694.</div>\n       <div style=\"display:flex;gap:14px;justify-content:center;margin:10px 0\">\n         <button class=\"jogbtn\" data-dir=\"1\" data-name=\"\uC88C\uD68C\uC804\">\u25C0 \uC88C\uD68C\uC804<br><span>\uB204\uB974\uB294 \uB3D9\uC548</span></button>\n         <button class=\"jogbtn\" data-dir=\"-1\" data-name=\"\uC6B0\uD68C\uC804\">\uC6B0\uD68C\uC804 \u25B6<br><span>\uB204\uB974\uB294 \uB3D9\uC548</span></button>\n       </div>\n       <button class=\"pill jogstop\" id=\"jogStop\">\u25A0 \uC815\uC9C0</button>\n       <div id=\"jogState\" style=\"text-align:center;color:var(--sub);font-size:12px;margin-top:12px\">\uB300\uAE30</div>\n       <div class=\"diag\">\n         <div class=\"drow\">\n           <span>\uCC44\uB110</span>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"0\">0</button>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"1\">1</button>\n           <button class=\"dbtn\" data-k=\"ch\" data-v=\"2\">2</button>\n           <span>\uC18D\uB3C4</span>\n           <button class=\"dbtn\" data-k=\"br\" data-v=\"250000\">250k</button>\n           <button class=\"dbtn\" data-k=\"br\" data-v=\"500000\">500k</button>\n           <span>\uD655\uC7A5ID</span>\n           <button class=\"dbtn\" data-k=\"eff\" data-v=\"0\">\uC790\uB3D9</button>\n           <button class=\"dbtn\" data-k=\"eff\" data-v=\"1\">\uAC15\uC81C</button>\n         </div>\n         <div class=\"drow\">\n           <span>\uC218\uC2E0(RX)</span>\n           <button class=\"dbtn\" data-k=\"rx\" data-v=\"0\">\uB054(\uBAA8\uD130\uC6B0\uC120)</button>\n           <button class=\"dbtn\" data-k=\"rx\" data-v=\"1\">\uCF2C(\uD53C\uB4DC\uBC31)</button>\n           <span style=\"font-size:10px;color:var(--sub)\">\uBAA8\uD130 \uC548 \uB3CC\uBA74 '\uB054'</span>\n         </div>\n         <div id=\"txInfo\">\uC1A1\uC2E0: -</div>\n       </div>\n       <button class=\"pill\" id=\"btnCenter\" style=\"background:var(--off);margin-top:10px\">\u2299 \uC911\uC559(\uC9C1\uC9C4) \uC124\uC815</button>\n       <div id=\"hbInfo\" style=\"text-align:center;font-size:11px;color:var(--muted);margin-top:8px\">\uD558\uD2B8\uBE44\uD2B8(\uBAA8\uD130 \uD53C\uB4DC\uBC31): \uC218\uC2E0 \uC5C6\uC74C</div>\n       <button class=\"pill\" id=\"btnSniff\" style=\"display:none;background:#37474f;color:#fff;margin-top:10px\">\uD83D\uDCE1 CAN \uC2A4\uB2C8\uD551 (5\uCD08 \uCEA1\uCC98)</button>\n       <div id=\"sniffOut\" style=\"font-size:11px;color:var(--sub);margin-top:8px;white-space:pre-wrap\"></div>";
   }
@@ -1494,6 +1494,21 @@ $('warnClose').onclick = function () {
   setModal('warn', false);
 };
 
+// 시스템 상태 패널(열려있을 때)의 on/off 를 S.sys 실값으로 라이브 갱신.
+function refreshSystemPanel() {
+  if (!$('detail') || !$('detail').classList.contains('on')) return;
+  var map = { sysrow_net: S.sys.net, sysrow_gps: S.sys.gps, sysrow_rtk: S.sys.rtk, sysrow_imu: S.sys.imu, sysrow_motor: S.sys.motor };
+  for (var id in map) {
+    var box = $(id);
+    if (!box) continue;                       // 다른 디테일 패널이면 행이 없음 → 안전
+    var on = !!map[id];
+    var lbl = box.querySelector('.statlabel');
+    var tg = box.querySelector('.tg');
+    if (lbl) { lbl.textContent = on ? 'ON' : 'OFF'; lbl.classList.toggle('on', on); }
+    if (tg) tg.classList.toggle('on', on);
+  }
+}
+
 // ───────── 상태 폴링 ─────────
 function poll() {
   if (BR) {
@@ -1515,10 +1530,15 @@ function poll() {
       if (st.algo) S.algo = st.algo;
       S.hb = st.heartbeat || null;
       S.sensorOk = !!st.active_gnss;
+      S.sys.net = (typeof navigator !== 'undefined' && 'onLine' in navigator) ? navigator.onLine : S.sys.net;
       S.sys.gps = !!st.active_gnss;
-      S.sys.rtk = st.safety !== 'RTK_LOW' && st.safety !== 'RTK_LOST' && !!st.active_gnss;
-      S.sys.imu = !!st.active_gnss;
-      S.sys.motor = st.can_available !== false && S.motorVerified;
+      S.sys.rtk = !!st.active_gnss && st.safety !== 'RTK_LOW' && st.safety !== 'RTK_LOST';
+      // IMU = 헤딩 서브시스템 실생존(백엔드 imu_ok). 폴백: 헤딩값 존재 + 비열화.
+      S.sys.imu = (typeof st.imu_ok === 'boolean') ? st.imu_ok
+                : ((typeof st.heading_deg === 'number') && !st.heading_degraded);
+      // 조향모터 = 하트비트 신선도(실연결). 폴백: HB dict 내용 유무. (설정값 motorVerified 가 아님)
+      S.sys.motor = (typeof st.motor_hb_ok === 'boolean') ? st.motor_hb_ok
+                  : (!!st.heartbeat && Object.keys(st.heartbeat || {}).length > 0);
       if (typeof st.line_no === 'number') S.line = st.line_no;
       S.activeGnss = st.active_gnss || null;
       S.headingDeg = typeof st.heading_deg === 'number' ? st.heading_deg : null;
@@ -1538,6 +1558,7 @@ function poll() {
     S.sys.gps = S.sys.imu = S.sys.rtk = true;
   }
   renderStatusbars();
+  refreshSystemPanel();   // 시스템 상태 패널 열려있으면 on/off 실시간 반영
   $('lineNo').textContent = String(S.line).padStart(2, '0');
   // 트랙터 가로 위치 = 오차 반영
   var t = $('tractorMain');
