@@ -458,10 +458,11 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
   <div class="modal" id="modeModal">
     <span class="x" id="modeX">×</span>
     <div class="mt">주행 모드 선택</div>
-    <div class="choices">
+    <div class="choices" style="flex-wrap:wrap;justify-content:center;max-width:600px">
       <div class="choice" data-mode="abline"><svg viewBox="0 0 48 40" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="10" cy="20" r="6"/><circle cx="38" cy="20" r="6"/><line x1="16" y1="20" x2="32" y2="20"/></svg>AB 직선</div>
       <div class="choice" data-mode="abcurve"><svg viewBox="0 0 48 40" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="10" cy="30" r="5"/><circle cx="38" cy="30" r="5"/><path d="M10 25C10 8 38 8 38 25"/></svg>AB 곡선</div>
-      <div class="choice" data-mode="auto"><svg viewBox="0 0 48 40" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="24" cy="26" r="8"/><circle cx="24" cy="26" r="2"/><path d="M16 12c4-4 12-4 16 0"/></svg>완전자율</div>
+      <div class="choice" data-mode="memory"><svg viewBox="0 0 48 40" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="24" cy="18" r="6"/><circle cx="24" cy="18" r="2" fill="currentColor"/><path d="M8 33c5-7 27-7 32 0" stroke-dasharray="4 3"/></svg>메모리 주행</div>
+      <div class="choice" data-mode="fullpath"><svg viewBox="0 0 48 40" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 9h30M9 17h30M9 25h30M9 33h30"/><path d="M39 9v8M9 17v8M39 25v8"/></svg>풀패스</div>
     </div>
   </div>
 
@@ -475,6 +476,18 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
     </div>
   </div>
 
+  <!-- ══ 경로 관리 (저장된 경로 목록/선택/삭제) ══ -->
+  <div class="modal" id="pathMgr">
+    <span class="back" id="pmBack">‹ 뒤로가기</span><span class="x" id="pmX">×</span>
+    <div class="mt">경로 관리</div>
+    <div style="display:flex;flex-direction:column;gap:8px;width:100%;max-width:560px;max-height:64vh;overflow:auto">
+      <div id="pmList"></div>
+      <div id="pmEmpty" style="color:#e8edf0;text-align:center;padding:24px 10px;font-size:14px;line-height:1.6">
+        저장된 경로가 없습니다.<br>'새 경로 추가'에서 AB 경로를 만들고 저장하면 여기에 표시됩니다.
+      </div>
+    </div>
+  </div>
+
   <!-- ══ 새 AB 직선 경로 (현장 A/B 마킹) ══ -->
   <div class="modal" id="abModal">
     <span class="back" id="abBack">‹ 뒤로가기</span><span class="x" id="abX">×</span>
@@ -484,6 +497,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
       <div class="row"><span class="k">B 지점</span><span class="v" id="abBv">미설정</span><button class="pill" id="abMarkB">B 찍기 (현재 위치)</button></div>
       <div class="row"><span class="k">작업 폭(m)</span><input class="nti" id="abW" value="3.0"></div>
       <div class="row"><span class="k">패스 수</span><input class="nti" id="abP" value="4"></div>
+      <div class="row"><span class="k">경로 이름(저장용)</span><input class="nti" id="abName" placeholder="예: 1번 논" autocapitalize="off"></div>
       <button class="pill" id="abBuild" style="background:var(--brand);color:#fff;margin-top:8px">경로 생성 → 주행화면</button>
       <div id="abHint" style="font-size:12px;color:var(--sub)">A 지점에서 한 번, B 지점까지 이동해 한 번 찍은 뒤 생성하세요. (A↔B ≥ 1m, 헤딩·위치 fix 필요)</div>
     </div>
@@ -1327,8 +1341,14 @@ $('modeX').onclick = function () {
 };
 Array.prototype.forEach.call(document.querySelectorAll('#modeModal .choice'), function (c) {
   return c.onclick = function () {
+    S.driveMode = c.dataset.mode || 'abline';
     setModal('modeModal', false);
-    setModal('pathModal', true);
+    if (S.driveMode === 'abline' || S.driveMode === 'abcurve') {
+      setModal('pathModal', true);   // 새 경로 / 기존 경로(경로 관리)
+    } else {
+      // 메모리 주행 / 풀패스: 경로 기록·자동계획은 코어 백엔드 미구현 → 정직하게 준비중 안내.
+      toast((S.driveMode === 'memory' ? '메모리 주행' : '풀패스') + ' — 준비중(경로 기록/자동계획 연동 필요)');
+    }
   };
 });
 $('pathX').onclick = function () {
@@ -1361,7 +1381,11 @@ $('pathNew').onclick = function () {
   setModal('abModal', true);
   refreshAb();
 };
-$('pathOld').onclick = gotoWork;
+$('pathOld').onclick = function () {
+  setModal('pathModal', false);
+  renderPathMgr();
+  setModal('pathMgr', true);
+};
 $('abX').onclick = function () {
   return setModal('abModal', false);
 };
@@ -1401,12 +1425,81 @@ $('abBuild').onclick = function () {
     r = 'ok';
   } // 브라우저 데모
   if (r === 'ok') {
+    savePathFromCurrent(w, p);   // 생성 성공 시 경로 관리에 저장(좌표 있을 때만)
     setModal('abModal', false);
     show('work');
   } else {
     toast(r === 'need-ab' ? 'A·B 두 지점을 먼저 찍으세요' : r === 'too-short' ? 'A↔B 거리가 너무 가깝습니다(≥1m)' : '경로 생성 실패: ' + r);
   }
 };
+// ───────── 경로 저장/관리 (localStorage 영속) ─────────
+function pmEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+function loadPaths() {
+  try { return JSON.parse(localStorage.getItem('autosteer_paths') || '[]') || []; }
+  catch (e) { return []; }
+}
+function savePaths(arr) {
+  try { localStorage.setItem('autosteer_paths', JSON.stringify(arr)); } catch (e) {}
+}
+function pmModeLabel(m) {
+  return m === 'abcurve' ? 'AB 곡선' : m === 'memory' ? '메모리' : m === 'fullpath' ? '풀패스' : 'AB 직선';
+}
+// AB 생성 직후 현재 A/B 좌표(abStatus)를 읽어 경로 목록에 저장. 좌표 없으면(데모/미마킹) 건너뜀.
+function savePathFromCurrent(width, passes) {
+  var a = null, b = null;
+  if (BR && BR.abStatus) {
+    try { var s = JSON.parse(BR.abStatus() || '{}'); a = s.a || null; b = s.b || null; } catch (e) {}
+  }
+  if (!a || !b) return;
+  var nm = (($('abName') && $('abName').value) || '').trim() || ('경로 ' + new Date().toLocaleString());
+  var paths = loadPaths();
+  paths.unshift({ name: nm, mode: S.driveMode || 'abline',
+    ax: a[0], ay: a[1], bx: b[0], by: b[1], width: width, passes: passes, ts: Date.now() });
+  if (paths.length > 50) paths = paths.slice(0, 50);
+  savePaths(paths);
+  toast('경로 저장됨: ' + nm);
+}
+function renderPathMgr() {
+  var paths = loadPaths();
+  var box = $('pmList'), empty = $('pmEmpty');
+  if (!box) return;
+  if (empty) empty.style.display = paths.length ? 'none' : 'block';
+  box.innerHTML = paths.map(function (p, i) {
+    return "<div style=\"background:#fff;border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px\">"
+      + "<div style=\"flex:1;min-width:0\"><div style=\"font-weight:700;font-size:15px;color:#222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">" + pmEsc(p.name) + "</div>"
+      + "<div style=\"font-size:12px;color:#789\">" + pmModeLabel(p.mode) + " · 폭 " + (p.width || '-') + "m · 패스 " + (p.passes || '-') + "</div></div>"
+      + "<button class=\"pill\" data-pmuse=\"" + i + "\" style=\"width:auto;padding:8px 14px;margin:0;background:var(--brand);color:#fff\">활성화</button>"
+      + "<button class=\"pill\" data-pmdel=\"" + i + "\" style=\"width:auto;padding:8px 12px;margin:0;background:var(--off);color:#fff\">삭제</button></div>";
+  }).join('');
+  Array.prototype.forEach.call(box.querySelectorAll('[data-pmuse]'), function (btn) {
+    btn.onclick = function () {
+      var p = loadPaths()[parseInt(btn.dataset.pmuse, 10)];
+      if (!p) return;
+      if (BR && BR.setAbLine) {
+        try { BR.setAbLine(p.ax, p.ay, p.bx, p.by, p.width || 3, p.passes || 4, 1.2); } catch (e) {}
+      }
+      S.driveMode = p.mode || 'abline';
+      setModal('pathMgr', false);
+      show('work');
+      toast('경로 적용: ' + p.name);
+    };
+  });
+  Array.prototype.forEach.call(box.querySelectorAll('[data-pmdel]'), function (btn) {
+    btn.onclick = function () {
+      var arr = loadPaths();
+      arr.splice(parseInt(btn.dataset.pmdel, 10), 1);
+      savePaths(arr);
+      renderPathMgr();
+    };
+  });
+}
+$('pmX') && ($('pmX').onclick = function () { setModal('pathMgr', false); });
+$('pmBack') && ($('pmBack').onclick = function () { setModal('pathMgr', false); setModal('pathModal', true); });
+
 $('btnEnd').onclick = function () {
   if (BR && BR.setDeadman) {
     try {
