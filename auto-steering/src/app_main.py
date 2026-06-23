@@ -85,6 +85,9 @@ class Controller:
         self._can_bridge = "apollo"              # Kotlin 측 활성 브리지: apollo(VanMcu) / cpdevice(Ver2)
         self._sniff = {"running": False, "result": None}
         self._impl = None                        # 작업기(균평기) GNSS+레벨그리드 (벤더 독립, 지연생성)
+        self._appctrl = None                     # 가변시비/섹션컨트롤 (section_control, 지연생성)
+        self._rx_pending = None                  # 처방맵(GeoJSON) — RTK 원점 확정 전 보류
+        self._rx_default = 0.0                   # 처방 구역밖 기본 살포율
 
         self._load_params()           # 저장된 차량변수 있으면 먼저 반영(휠베이스→알고리즘)
         if vendor:
@@ -254,8 +257,11 @@ class Controller:
             log.warning(f"nudge 실패: {e}"); return "error"
 
     def set_section_count(self, n):
-        """작업 섹션 수 표시값(저장만 — 추후 섹션 제어 연동)."""
-        self._sections = max(1, int(n)); return str(self._sections)
+        """작업 섹션 수. 섹션 컨트롤(section_control) 활성 시 레이아웃에도 반영."""
+        self._sections = max(1, int(n))
+        if self._appctrl is not None:
+            self._appctrl.set_layout(num_sections=self._sections)
+        return str(self._sections)
 
     def set_wheelbase(self, m):
         """휠베이스(m) 변경 + 추종기 재구성."""
@@ -787,6 +793,21 @@ class Controller:
             st["running"] = self._running
             try: st["algo"] = getattr(self.sys, "_algo", "pure_pursuit")
             except Exception: pass
+            # ── 가변시비/섹션컨트롤: 포즈 → 섹션/살포율 산출 + FMSC CAN ──
+            if self._appctrl is not None:
+                try:
+                    if self._rx_pending is not None:
+                        self._sync_rx_origin()       # RTK 원점 확정되면 처방맵 적재
+                    pos = st.get("pos")
+                    if pos:
+                        appst = self._appctrl.update(
+                            float(pos[0]), float(pos[1]),
+                            math.radians(float(st.get("heading_deg", 0.0))),
+                            float(st.get("speed_mps", 0.0)),
+                            bool(st.get("implement_down", True)), self._dt)
+                        st["application"] = appst
+                except Exception as e:
+                    st["application_error"] = str(e)
             with self._lock:
                 self._last = st
             rest = self._dt - (time.time() - t0)
@@ -840,6 +861,70 @@ class Controller:
         if self._impl is not None:
             self._impl.grid.clear()
         return "ok"
+
+    # ── 가변시비(VRA) + 섹션 컨트롤 (section_control, 시비·방제 공통) ──
+    def _ensure_appctrl(self):
+        if self._appctrl is None:
+            import section_control
+            self._appctrl = section_control.ApplicationController(
+                layout=section_control.SectionLayout(num_sections=self._sections),
+                bus=self.bus)     # 데모=bus None(송신생략) / 실차=can_verified 게이트
+        return self._appctrl
+
+    def _sync_rx_origin(self):
+        """RTK 원점이 확정되면 보류 중인 처방맵을 그 원점으로 적재(차체 로컬과 정합)."""
+        a = self._appctrl
+        if a is None or self._rx_pending is None:
+            return None
+        origin = getattr(self.sys.estimator, "_rtk_origin", None)
+        if self.demo and origin is None:
+            origin = (37.0, 127.0)        # SITL GeoConverter 기본 원점
+        if origin is None:
+            return None                    # RTK Fix 대기(아직 미적재)
+        a.set_origin(origin[0], origin[1])
+        summ = a.load_prescription(self._rx_pending, default_rate=self._rx_default)
+        self._rx_pending = None
+        log.info(f"처방맵 적재(원점 {origin}): {summ}")
+        return summ
+
+    def load_prescription(self, geojson, default_rate=0.0, mode=0, unit=0) -> str:
+        """처방맵(GeoJSON Rx) 적재. RTK 원점 확정 전이면 보류 후 자동 적재.
+           mode: 0=입제시비 1=액제방제 2=파종 / unit: 0=kg/ha 1=L/ha 2=seeds/m²."""
+        a = self._ensure_appctrl()
+        a.mode = int(mode); a.unit = int(unit)
+        self._rx_pending = geojson
+        self._rx_default = float(default_rate)
+        summ = self._sync_rx_origin()
+        if summ is None:
+            return json.dumps({"pending": True, "msg": "RTK Fix 후 자동 적재"},
+                              ensure_ascii=False)
+        return json.dumps(summ, ensure_ascii=False)
+
+    def set_implement_layout(self, width_m=None, sections=None, impl_behind=None) -> str:
+        """작업기 폭(m)·섹션수·살포지점 후방오프셋(m) 설정."""
+        a = self._ensure_appctrl()
+        a.set_layout(width_m=width_m, num_sections=sections, impl_behind=impl_behind)
+        if sections is not None:
+            self._sections = a.layout.num_sections
+        return json.dumps({"width_m": a.layout.width_m,
+                           "num_sections": a.layout.num_sections,
+                           "impl_behind": a.layout.impl_behind}, ensure_ascii=False)
+
+    def set_application_master(self, on) -> str:
+        """살포 마스터 스위치. OFF=즉시 전 섹션 OFF."""
+        self._ensure_appctrl().set_master(bool(on))
+        return "on" if on else "off"
+
+    def clear_coverage(self) -> str:
+        if self._appctrl is not None:
+            self._appctrl.clear_coverage()
+        return "ok"
+
+    def application_status(self) -> str:
+        if self._appctrl is None:
+            return json.dumps({"active": False}, ensure_ascii=False)
+        st = self._appctrl.status(); st["active"] = True
+        return json.dumps(st, ensure_ascii=False)
 
     def status(self) -> dict:
         with self._lock:
@@ -1046,6 +1131,14 @@ def get_implement_gnss_status():       return _ctrl.get_implement_gnss_status() 
 def get_leveler_grid():                return _ctrl.get_leveler_grid() if _ctrl else '{"connected":false}'
 def set_leveler_reference():           return _ctrl.set_leveler_reference() if _ctrl else '{"ok":false}'
 def clear_leveler_grid():              return _ctrl.clear_leveler_grid() if _ctrl else "no-ctrl"
+# ── 가변시비(VRA) + 섹션 컨트롤 ──
+def load_prescription(geojson, default_rate=0.0, mode=0, unit=0):
+    return _ctrl.load_prescription(geojson, default_rate, mode, unit) if _ctrl else '{"pending":true}'
+def set_implement_layout(width_m=None, sections=None, impl_behind=None):
+    return _ctrl.set_implement_layout(width_m, sections, impl_behind) if _ctrl else "{}"
+def set_application_master(on):  return _ctrl.set_application_master(on) if _ctrl else "no-ctrl"
+def clear_coverage():            return _ctrl.clear_coverage() if _ctrl else "no-ctrl"
+def application_status():        return _ctrl.application_status() if _ctrl else '{"active":false}'
 
 
 def shutdown():

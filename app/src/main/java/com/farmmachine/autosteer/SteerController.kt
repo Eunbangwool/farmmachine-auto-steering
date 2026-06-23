@@ -103,6 +103,20 @@ object SteerController {
     fun clearLevelerGrid(): String =
         try { api().callAttr("clear_leveler_grid").toString() } catch (e: Throwable) { "error" }
 
+    /** 가변시비(VRA)+섹션컨트롤. mode:0=입제시비 1=액제방제 2=파종 / unit:0=kg/ha 1=L/ha 2=seeds/m². */
+    fun loadPrescription(geojson: String, defaultRate: Double, mode: Int, unit: Int): String =
+        try { api().callAttr("load_prescription", geojson, defaultRate, mode, unit).toString() }
+        catch (e: Throwable) { "{\"pending\":true}" }
+    fun setImplementLayout(widthM: Double, sections: Int, implBehind: Double): String =
+        try { api().callAttr("set_implement_layout", widthM, sections, implBehind).toString() }
+        catch (e: Throwable) { "{}" }
+    fun setApplicationMaster(on: Boolean): String =
+        try { api().callAttr("set_application_master", on).toString() } catch (e: Throwable) { "error" }
+    fun clearCoverage(): String =
+        try { api().callAttr("clear_coverage").toString() } catch (e: Throwable) { "error" }
+    fun applicationStatus(): String =
+        try { api().callAttr("application_status").toString() } catch (e: Throwable) { "{\"active\":false}" }
+
     /** 제조사 선택화면용 목록 JSON. */
     fun listVendors(): String =
         try { api().callAttr("list_vendors").toString() } catch (e: Throwable) { "[]" }

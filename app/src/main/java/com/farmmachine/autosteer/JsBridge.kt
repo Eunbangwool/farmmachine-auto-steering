@@ -36,6 +36,13 @@ class JsBridge {
     @JavascriptInterface fun motorCenter(): String = SteerController.motorCenter()
     @JavascriptInterface fun nudge(cm: Int): String = SteerController.nudge(cm)
     @JavascriptInterface fun setSectionCount(n: Int): String = SteerController.setSectionCount(n)
+    @JavascriptInterface fun loadPrescription(geojson: String, defaultRate: Double, mode: Int, unit: Int): String =
+        SteerController.loadPrescription(geojson, defaultRate, mode, unit)
+    @JavascriptInterface fun setImplementLayout(widthM: Double, sections: Int, implBehind: Double): String =
+        SteerController.setImplementLayout(widthM, sections, implBehind)
+    @JavascriptInterface fun setApplicationMaster(on: Boolean): String = SteerController.setApplicationMaster(on)
+    @JavascriptInterface fun clearCoverage(): String = SteerController.clearCoverage()
+    @JavascriptInterface fun applicationStatus(): String = SteerController.applicationStatus()
     @JavascriptInterface fun setWheelbase(m: Double): String = SteerController.setWheelbase(m)
     /** 차량 변수(실측값) 조회/입력. */
     @JavascriptInterface fun getVehicleParams(): String = SteerController.getVehicleParams()

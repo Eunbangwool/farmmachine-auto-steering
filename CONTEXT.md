@@ -1,5 +1,21 @@
 # CONTEXT — 적용 내역 / 결정 이력
 
+## 가변시비(VRA) + 섹션 컨트롤 추가 (2026-06-23)
+
+오너 요청으로 정밀농업 살포 제어 추가. 자율조향이 차체를 몰면, 작업기 살포율·섹션을 위치 기반 제어.
+
+- **결정(오너)**: ①적용범위=**시비+방제 공통 모듈**(살포율/섹션 추상화) ②살포율 입력=**처방맵(GeoJSON Rx)**
+  ③출력=**자체(커스텀) CAN 프로토콜**(오너 제작 컨트롤러 → 우리가 규약 정의).
+- **신규**: `auto-steering/src/section_control.py` — PrescriptionMap(GeoJSON Rx)·CoverageGrid·
+  SectionController(중복/경계/헤드랜드/처방0/제외구역 OFF, 밸브 lead/lag 보정)·RateController(변화율 제한)·
+  ApplicationController(조정자) + FMSC v1 CAN. SITL 자가검증 6/6.
+- **프로토콜**: `docs/IMPLEMENT_CONTROL_PROTOCOL.md` (FMSC v1: 250k/29-bit, RATE/SECTION/STATUS_HB, Keya ID 비충돌).
+- **안전**: `IMPLEMENT_CAN_VERIFIED=False`(실 컨트롤러 미보유) → 프레임 생성·시각화는 OK, **버스 송신 차단**
+  (vendor_profiles.can_verified 동일 철학). 약관 §8 살포명령 로컬 기록 유지.
+- **연동**: app_main(`load_prescription`/`set_implement_layout`/`set_application_master`/`clear_coverage`/
+  `application_status`) + SteerController/JsBridge. status_json().application 매 틱 포함. 처방맵은 RTK 원점 확정 후 자동 적재.
+- 다음(현장/HW): 실 살포기 컨트롤러 제작 → FMSC 버스 검증 → `IMPLEMENT_CAN_VERIFIED=True`. UI 패널(처방맵 로드·섹션바·살포율 게이지)은 별도 세션.
+
 ## CHCNAV 역분석 파라미터 프로파일 적용 (2026-06-12)
 
 CHCNAV NX510 상용 시스템(SW 5.3.0.20260429)을 ADB 역분석해 확보한 **실차검증** 자동조향
