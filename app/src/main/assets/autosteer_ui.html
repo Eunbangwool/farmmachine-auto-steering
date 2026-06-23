@@ -186,6 +186,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 
 /* ───── 메인 주행 화면 ───── */
 #main .field, #work .field{position:absolute;top:98px;right:0;bottom:0;left:0;overflow:hidden;background:var(--field);}
+.mapview{position:absolute;top:0;left:0;right:0;bottom:0;display:none;background:#11151a;}  /* VWorld 실지도(키 있을 때만 표시, 없으면 SVG 폴백) */
 .field .horizon{position:absolute;top:0;left:0;right:0;height:10px;background:var(--horizon);opacity:.5;}
 .field svg{position:absolute;top:0;right:0;bottom:0;left:0;width:100%;height:100%;}
 .camera{position:absolute;top:14px;left:14px;width:42px;height:42px;border-radius:50%;
@@ -379,6 +380,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
       <div class="horizon"></div>
       <svg viewBox="0 0 1000 560" preserveAspectRatio="none" id="fieldSvgMain"></svg>
       <div class="tractor" id="tractorMain"></div>
+      <div class="mapview" id="mapMain"></div>
     </div>
     <div class="mainbtns">
       <button class="bigbtn" id="btnSettings">
@@ -398,6 +400,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
     <div class="field">
       <div class="horizon"></div>
       <svg viewBox="0 0 1000 560" preserveAspectRatio="none" id="fieldSvgWork"></svg>
+      <div class="mapview" id="mapWork"></div>
     </div>
     <div class="routebox">
       <div class="fwd">↑ 전진</div>
@@ -517,6 +520,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
   <div id="toast"></div>
 </div>
 
+<script src="ol.js"></script>
 <script>
 "use strict";
 
@@ -569,6 +573,8 @@ function show(id) {
   forceRepaint(el);   // 일부 기기: 전환은 됐는데 화면 갱신 안 되는 현상 → 컴포지터 강제 무효화
   var es = $('estop');
   if (es) es.classList.toggle('on', id === 'main' || id === 'work');
+  if (id === 'main') mapAttach('mapMain');
+  else if (id === 'work') mapAttach('mapWork');
 }
 // WebView(특히 구형 Apollo) 가 display 전환 후 리페인트를 미루는 문제 대응:
 // 동기 레이아웃 읽기 + 다음 프레임에 transform/opacity 토글로 컴포지트를 강제한다.
@@ -1617,6 +1623,78 @@ function updateTopBar() {
   }
 }
 
+// ───────── VWorld 실지도 (OpenLayers) ─────────
+// 키(BR.mapApiKey) 있고 ol.js 로드됐을 때만 활성. 없으면 SVG 필드 그대로(폴백).
+var MAP = { map: null, key: '', ready: false, vsrc: null, psrc: null, origin: null, centered: false, lastAb: 0 };
+function initMap() {
+  if (MAP.ready || typeof ol === 'undefined') return;
+  try { MAP.key = (BR && BR.mapApiKey) ? (BR.mapApiKey() || '') : ''; } catch (e) { MAP.key = ''; }
+  if (!MAP.key) return;   // 키 미설정 → 폴백(SVG)
+  try {
+    var base = 'https://api.vworld.kr/req/wmts/1.0.0/' + MAP.key;
+    var sat = new ol.layer.Tile({ source: new ol.source.XYZ({ url: base + '/Satellite/{z}/{y}/{x}.jpeg', crossOrigin: 'anonymous', maxZoom: 19 }) });
+    var hyb = new ol.layer.Tile({ source: new ol.source.XYZ({ url: base + '/Hybrid/{z}/{y}/{x}.png', crossOrigin: 'anonymous', maxZoom: 19 }) });
+    MAP.psrc = new ol.source.Vector(); var pl = new ol.layer.Vector({ source: MAP.psrc, zIndex: 50 });
+    MAP.vsrc = new ol.source.Vector(); var vl = new ol.layer.Vector({ source: MAP.vsrc, zIndex: 60 });
+    MAP.map = new ol.Map({
+      layers: [sat, hyb, pl, vl],
+      view: new ol.View({ center: ol.proj.fromLonLat([127.5, 36.5]), zoom: 17, maxZoom: 19 }),
+      controls: []
+    });
+    MAP.ready = true;
+  } catch (e) { MAP.ready = false; }
+}
+// 활성 화면(main/work) 컨테이너로 지도 이동(단일 맵 인스턴스 재타겟).
+function mapAttach(id) {
+  if (!MAP.ready) return;
+  var el = $(id); if (!el) return;
+  el.style.display = 'block';
+  try { MAP.map.setTarget(el); } catch (e) {}
+  setTimeout(function () { try { MAP.map.updateSize(); mapDrawAb(); } catch (e) {} }, 60);
+}
+function localToLonLat(x, y) {
+  if (!MAP.origin) return null;
+  var lat0 = MAP.origin[0], lon0 = MAP.origin[1], R = 6371000;
+  var lat = lat0 + (y / R) * 180 / Math.PI;
+  var lon = lon0 + (x / (R * Math.cos(lat0 * Math.PI / 180))) * 180 / Math.PI;
+  return ol.proj.fromLonLat([lon, lat]);
+}
+// AB 경로(로컬 a/b → 원점으로 지오 변환) 오버레이.
+function mapDrawAb() {
+  if (!MAP.ready || !MAP.origin || !(BR && BR.abStatus)) return;
+  try {
+    var s = JSON.parse(BR.abStatus() || '{}');
+    MAP.psrc.clear();
+    if (s.a && s.b) {
+      var pa = localToLonLat(s.a[0], s.a[1]), pb = localToLonLat(s.b[0], s.b[1]);
+      if (pa && pb) {
+        var ln = new ol.Feature({ geometry: new ol.geom.LineString([pa, pb]) });
+        ln.setStyle(new ol.style.Style({ stroke: new ol.style.Stroke({ color: '#f3c43f', width: 3 }) }));
+        MAP.psrc.addFeature(ln);
+      }
+    }
+  } catch (e) {}
+}
+// 폴링: 차량 위치(lat/lon)+헤딩 마커, 원점 갱신, AB 주기 갱신(~1s).
+function mapUpdate(st) {
+  if (!MAP.ready || !MAP.map) return;
+  if (typeof st.origin_lat === 'number' && typeof st.origin_lon === 'number') MAP.origin = [st.origin_lat, st.origin_lon];
+  var lat = (typeof st.lat === 'number') ? st.lat : null, lon = (typeof st.lon === 'number') ? st.lon : null;
+  if (lat != null && lon != null) {
+    var c = ol.proj.fromLonLat([lon, lat]);
+    MAP.vsrc.clear();
+    var f = new ol.Feature({ geometry: new ol.geom.Point(c) });
+    var hd = (typeof st.heading_deg === 'number') ? st.heading_deg : 0;
+    f.setStyle(new ol.style.Style({ image: new ol.style.RegularShape({
+      points: 3, radius: 12, rotation: hd * Math.PI / 180,
+      fill: new ol.style.Fill({ color: '#2e7d32' }), stroke: new ol.style.Stroke({ color: '#fff', width: 2 }) }) }));
+    MAP.vsrc.addFeature(f);
+    if (!MAP.centered) { MAP.map.getView().setCenter(c); MAP.centered = true; }
+  }
+  var now = Date.now();
+  if (now - MAP.lastAb > 1000) { MAP.lastAb = now; mapDrawAb(); }
+}
+
 // ───────── 상태 폴링 ─────────
 function poll() {
   if (BR) {
@@ -1651,6 +1729,7 @@ function poll() {
       S.activeGnss = st.active_gnss || null;
       S.headingDeg = typeof st.heading_deg === 'number' ? st.heading_deg : null;
       S.headingDegraded = !!st.heading_degraded;
+      mapUpdate(st);   // VWorld 지도: 차량 마커/원점/AB 오버레이
       // 미확정 벤더 배너
       var w = $('motorWarn');
       if (st.motor_verified === false) {
@@ -1989,6 +2068,7 @@ renderSetList('user'); // 설정 리스트 미리 렌더(빈 드로어 방지)
 initVendors(); // 벤더 카드 미리 렌더(빈 화면 방지)
 renderStatusbars();
 updateTopBar(); // 상단바 시계·네트워크 초기 표시
+initMap();      // VWorld 실지도 준비(키 있을 때만; 없으면 SVG 폴백)
 // 저장된 NTRIP 설정이 있으면 부팅 시 자동 접속
 (function () {
   var c = loadNtrip();

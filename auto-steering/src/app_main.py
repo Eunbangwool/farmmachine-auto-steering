@@ -860,6 +860,18 @@ class Controller:
             st["can_backend"] = self._bus_backend_kind
             st["can_bridge"] = self._can_bridge          # Kotlin 활성 브리지(apollo/cpdevice)
             st["can_listen_only"] = bool(self._vendor_can[2])
+            # 차량 지오좌표 + 로컬 원점(VWorld 실지도 마커/경로 오버레이용). 원점 미설정(첫 fix 전)이면 생략.
+            try:
+                est = self.sys.estimator
+                org = getattr(est, "_rtk_origin", None)
+                if org is not None:
+                    stt = est.get_state()
+                    ll = est.xy_to_ll(stt.x, stt.y)
+                    if ll:
+                        st["lat"], st["lon"] = ll[0], ll[1]
+                    st["origin_lat"], st["origin_lon"] = org[0], org[1]
+            except Exception:
+                pass
             st["motor_ready"] = bool(getattr(self.sys, "motor_verified", False))  # 설정상 자율조향 허용 여부
             # 모터 실연결 = 최근 1s 내 하트비트 수신(설정 플래그가 아닌 버스 실신호).
             try: st["motor_hb_ok"] = bool(self.sys.actuator.heartbeat_fresh())

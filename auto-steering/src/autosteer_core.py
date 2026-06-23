@@ -891,6 +891,16 @@ class StateEstimator:
         y = (lat - lat0) * math.pi/180 * R
         return x, y
 
+    def xy_to_ll(self, x: float, y: float):
+        """로컬 ENU(x=east, y=north, m) → (lat, lon). _ll_to_xy 의 역(동일 원점). 원점 미설정이면 None."""
+        if self._rtk_origin is None:
+            return None
+        lat0, lon0 = self._rtk_origin
+        R = 6_371_000.0
+        lat = lat0 + (y / R) * 180.0 / math.pi
+        lon = lon0 + (x / (R * math.cos(math.radians(lat0)))) * 180.0 / math.pi
+        return lat, lon
+
     def predict(self, dt: float):
         np = self.np
         x, y, th, v, w = self.x

@@ -74,6 +74,9 @@ class JsBridge {
     }
 
     /** 벤더별 CAN 브리지 선택: "cpdevice"(agmo_single) / "apollo"(그 외, 기본). 같은 TCP 포트 재바인딩. */
+    /** VWorld 실지도 API 키(BuildConfig). 빈 문자열이면 UI 가 '키 미설정' 폴백. */
+    @JavascriptInterface fun mapApiKey(): String = BuildConfig.VWORLD_API_KEY
+
     @JavascriptInterface fun selectCanBridge(kind: String): String {
         com.farmmachine.autosteer.can.CanBridgeHost.select(kind)
         return """{"bridge":"${com.farmmachine.autosteer.can.CanBridgeHost.kind}"}"""

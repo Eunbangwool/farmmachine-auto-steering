@@ -1,7 +1,18 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.chaquo.python")
+}
+
+// VWorld 실지도 API 키 — 농작이(farm-work-manager)와 동일 주입: local.properties(vworld.api.key) 또는 env(VWORLD_API_KEY).
+//   시크릿이라 저장소엔 없음. 미설정이면 빈 문자열 → UI 가 '지도 키 미설정' 안내로 폴백.
+val vworldApiKey: String = run {
+    val props = Properties()
+    val lp = rootProject.file("local.properties")
+    if (lp.exists()) lp.inputStream().use { props.load(it) }
+    props.getProperty("vworld.api.key") ?: System.getenv("VWORLD_API_KEY") ?: ""
 }
 
 android {
@@ -17,7 +28,11 @@ android {
 
         // Apollo 10 Pro ABI. Chaquopy 가 이 ABI 용 Python + numpy 를 번들.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+
+        buildConfigField("String", "VWORLD_API_KEY", "\"$vworldApiKey\"")
     }
+
+    buildFeatures { buildConfig = true }   // BuildConfig.VWORLD_API_KEY 노출
 
     // 고정 debug 키스토어로 서명 → CI 빌드마다 서명이 동일 → 덮어쓰기 설치 가능.
     // (기본값은 러너마다 새로 생성되는 ~/.android/debug.keystore 라 서명 충돌 발생)
