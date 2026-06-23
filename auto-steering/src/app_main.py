@@ -272,7 +272,7 @@ class Controller:
     # ── 차량 변수 (실측값) 입력/조회/영속화 ───────────────────────
     PARAM_KEYS = ("wheelbase", "antenna_height", "antenna_to_axle",
                   "antenna_to_impl", "hitch_to_impl", "front_track_width",
-                  "max_was_deg")
+                  "work_width", "max_was_deg")
 
     def get_params(self):
         """현재 TractorParams(차량 변수) JSON."""
@@ -281,13 +281,14 @@ class Controller:
                           ensure_ascii=False)
 
     def set_vehicle_params(self, wheelbase, antenna_height,
-                           antenna_to_axle, antenna_to_impl):
-        """UI 입력(휠베이스·안테나높이·안테나↔뒤차축·안테나↔작업기) → 즉시 반영+저장."""
+                           antenna_to_axle, antenna_to_impl, work_width=None):
+        """UI 입력(휠베이스·안테나높이·GPS↔후륜축·GPS↔작업기·작업기 폭) → 즉시 반영+저장."""
         p = self.sys.params
         for name, val in (("wheelbase", wheelbase),
                           ("antenna_height", antenna_height),
                           ("antenna_to_axle", antenna_to_axle),
-                          ("antenna_to_impl", antenna_to_impl)):
+                          ("antenna_to_impl", antenna_to_impl),
+                          ("work_width", work_width)):
             try:
                 if val is not None:
                     setattr(p, name, float(val))
@@ -1021,8 +1022,8 @@ def nudge(cm):           return _ctrl.nudge(cm) if _ctrl else "no-ctrl"
 def set_section_count(n): return _ctrl.set_section_count(n) if _ctrl else str(n)
 def set_wheelbase(m):    return _ctrl.set_wheelbase(m) if _ctrl else "no-ctrl"
 def get_params():        return _ctrl.get_params() if _ctrl else "{}"
-def set_vehicle_params(wheelbase, antenna_height, antenna_to_axle, antenna_to_impl):
-    return _ctrl.set_vehicle_params(wheelbase, antenna_height, antenna_to_axle, antenna_to_impl) if _ctrl else "{}"
+def set_vehicle_params(wheelbase, antenna_height, antenna_to_axle, antenna_to_impl, work_width=None):
+    return _ctrl.set_vehicle_params(wheelbase, antenna_height, antenna_to_axle, antenna_to_impl, work_width) if _ctrl else "{}"
 def ntrip_connect(host, port, mount, user="", pw=""):
     return _ctrl.ntrip_connect(host, port, mount, user, pw) if _ctrl else "no-ctrl"
 def ntrip_disconnect(): return _ctrl.ntrip_disconnect() if _ctrl else "no-ctrl"

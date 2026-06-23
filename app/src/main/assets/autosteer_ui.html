@@ -767,7 +767,17 @@ function openDetail(key) {
   if (key === 'user') {
     h = "<div class=\"row\"><span class=\"k\">\uC0AC\uC6A9\uC790 ID</span><span class=\"val\">Kf53QrH8wAWm0NUNSL</span></div>\n       <div class=\"row\"><span class=\"k\">\uC5B8\uC5B4</span><span class=\"val\">\uD55C\uAD6D\uC5B4 \u25BE</span></div>\n       " + toggleRow('과속 경고 알림', true) + toggleRow('주행 오차 경고 알림', true) + "\n       <div class=\"row\"><span class=\"k\">AB \uADFC\uC811 \uC54C\uB9BC</span><span class=\"val\">OFF \u25BE</span></div>\n       " + toggleRow('경로 이탈 자동 중지', false) + "\n       <div class=\"ver\"><span class=\"mk\">\u25ED</span><div>\uC790\uC728\uC8FC\uD589<br><span style=\"font-size:11px\">v0.1</span></div></div>";
   } else if (key === 'vehicle') {
-    h = "<div style=\"text-align:center;padding:8px 0\">" + TRACTOR_SVG.replace('width="48" height="54"', 'width="130" height="104"') + "</div>\n       <div class=\"row\"><span class=\"k\">\uD720\uBCA0\uC774\uC2A4 (\uC55E\u2194\uB4A4\uCC28\uCD95, m)</span><input class=\"nti\" id=\"vpWB\" value=\"2.47\" inputmode=\"decimal\"></div>\n       <div class=\"row\"><span class=\"k\">\uC548\uD14C\uB098 \uB192\uC774 (\uC9C0\uBA74, m)</span><input class=\"nti\" id=\"vpAH\" value=\"2.73\" inputmode=\"decimal\"></div>\n       <div class=\"row\"><span class=\"k\">\uC548\uD14C\uB098\u2194\uB4A4\uCC28\uCD95 (\uC804\uBC29 +, m)</span><input class=\"nti\" id=\"vpAA\" value=\"-0.50\" inputmode=\"decimal\"></div>\n       <div class=\"row\"><span class=\"k\">\uC548\uD14C\uB098\u2194\uC791\uC5C5\uAE30 (\uD6C4\uBC29 +, m)</span><input class=\"nti\" id=\"vpAI\" value=\"1.20\" inputmode=\"decimal\"></div>\n       <button class=\"pill\" id=\"vpSave\" style=\"background:var(--brand);color:#fff;margin-top:12px\">\uCC28\uB7C9 \uBCC0\uC218 \uC800\uC7A5 \xB7 \uC801\uC6A9</button>\n       <div id=\"vpHint\" style=\"font-size:12px;color:var(--sub);margin-top:10px;line-height:1.6\">\n         \u2605 <b>\uD720\uBCA0\uC774\uC2A4</b>\uC640 <b>\uC548\uD14C\uB098\u2194\uB4A4\uCC28\uCD95</b>\uC740 \uC904\uC790 \uC2E4\uCE21 \uAD8C\uC7A5. \uC800\uC7A5 \uC2DC \uC989\uC2DC \uC870\uD5A5 \uAE30\uD558\uC5D0 \uBC18\uC601\uB418\uACE0 \uB2E4\uC74C \uBD80\uD305\uC5D0\uB3C4 \uC720\uC9C0\uB429\uB2C8\uB2E4.</div>";
+    h = "<div class=\"row\"><span class=\"k\">\uCC28\uB7C9 \uC885\uB958</span><div style=\"display:flex;gap:8px\">"
+      + "<button class=\"dbtn\" data-vk=\"tractor\">\uD2B8\uB799\uD130</button>"
+      + "<button class=\"dbtn\" data-vk=\"transplanter\">\uC774\uC559\uAE30</button></div></div>"
+      + "<div style=\"text-align:center;padding:6px 0\">" + TRACTOR_SVG.replace('width=\"48\" height=\"54\"', 'width=\"110\" height=\"88\"') + "</div>"
+      + "<div class=\"row\"><span class=\"k\">\uD720 \uBCA0\uC774\uC2A4 \uAE38\uC774 (m)</span><input class=\"nti\" id=\"vpWB\" value=\"2.47\" inputmode=\"decimal\"></div>"
+      + "<div class=\"row\"><span class=\"k\">GPS-\uC791\uC5C5\uAE30 \uAC70\uB9AC (m)</span><input class=\"nti\" id=\"vpAI\" value=\"1.20\" inputmode=\"decimal\"></div>"
+      + "<div class=\"row\"><span class=\"k\">GPS-\uD6C4\uB95C \uAC70\uB9AC (\uC804\uBC29 +, m)</span><input class=\"nti\" id=\"vpAA\" value=\"-0.50\" inputmode=\"decimal\"></div>"
+      + "<div class=\"row\"><span class=\"k\">\uC791\uC5C5\uAE30 \uD3ED (m)</span><input class=\"nti\" id=\"vpWW\" value=\"3.00\" inputmode=\"decimal\"></div>"
+      + "<div class=\"row\"><span class=\"k\">GPS \uC548\uD14C\uB098 \uB192\uC774 (m)</span><input class=\"nti\" id=\"vpAH\" value=\"2.73\" inputmode=\"decimal\"></div>"
+      + "<button class=\"pill\" id=\"vpSave\" style=\"background:var(--brand);color:#fff;margin-top:12px\">\uBCC0\uACBD\uD558\uAE30</button>"
+      + "<div id=\"vpHint\" style=\"font-size:12px;color:var(--sub);margin-top:10px;line-height:1.6\">\u2605 \uD720 \uBCA0\uC774\uC2A4\u00B7GPS-\uD6C4\uB95C \uAC70\uB9AC\uB294 \uC904\uC790 \uC2E4\uCE21 \uAD8C\uC7A5. \uC791\uC5C5\uAE30 \uD3ED\uC740 AB \uD3C9\uD589 \uD328\uC2A4 \uAC04\uACA9 \uAE30\uBCF8\uAC12. \uC800\uC7A5 \uC2DC \uC989\uC2DC \uBC18\uC601\u00B7\uB2E4\uC74C \uBD80\uD305\uC5D0\uB3C4 \uC720\uC9C0.</div>";
   } else if (key === 'optim') {
     var row = function row(act, l, r) {
       return "<div class=\"optrow\" data-act=\"" + act + "\"><span>" + l + "</span><span class=\"oa\" id=\"oa_" + act + "\">" + r + "</span></div>";
@@ -850,8 +860,20 @@ function wireDetail(key) {
         set('vpAH', p.antenna_height);
         set('vpAA', p.antenna_to_axle);
         set('vpAI', p.antenna_to_impl);
+        set('vpWW', p.work_width);
       } catch (e) {}
     }
+    // 차량 종류(트랙터/이앙기) — localStorage 영속, 선택 표시.
+    var vk = (function () { try { return localStorage.getItem('autosteer_vehicle_kind') || 'tractor'; } catch (e) { return 'tractor'; } })();
+    $$('[data-vk]').forEach(function (b) {
+      if (b.dataset.vk === vk) b.classList.add('sel');
+      b.onclick = function () {
+        $$('[data-vk]').forEach(function (x) { x.classList.remove('sel'); });
+        b.classList.add('sel');
+        try { localStorage.setItem('autosteer_vehicle_kind', b.dataset.vk); } catch (e) {}
+        toast(b.dataset.vk === 'transplanter' ? '이앙기 선택' : '트랙터 선택');
+      };
+    });
     var sv = $('vpSave');
     if (sv) sv.onclick = function () {
       var g = function g(id, d) {
@@ -861,17 +883,23 @@ function wireDetail(key) {
       var wb = g('vpWB', 2.47),
         ah = g('vpAH', 2.73),
         aa = g('vpAA', -0.5),
-        ai = g('vpAI', 1.2);
+        ai = g('vpAI', 1.2),
+        ww = g('vpWW', 3.0);
       if (!(wb > 0)) {
-        toast('휠베이스는 0보다 커야 합니다');
+        toast('휠 베이스는 0보다 커야 합니다');
+        return;
+      }
+      if (!(ww > 0)) {
+        toast('작업기 폭은 0보다 커야 합니다');
         return;
       }
       if (BR && BR.setVehicleParams) {
         try {
-          BR.setVehicleParams(wb, ah, aa, ai);
+          BR.setVehicleParams(wb, ah, aa, ai, ww);
         } catch (e) {}
       }
-      toast('차량 변수 저장·적용됨 (휠베이스 ' + wb.toFixed(2) + 'm)');
+      S.abWidth = ww;   // AB 평행 패스 기본 폭에 반영
+      toast('차량 변수 저장·적용됨 (휠 베이스 ' + wb.toFixed(2) + 'm · 작업기 폭 ' + ww.toFixed(2) + 'm)');
     };
   } else if (key === 'optim') {
     $$('.optrow').forEach(function (r) {

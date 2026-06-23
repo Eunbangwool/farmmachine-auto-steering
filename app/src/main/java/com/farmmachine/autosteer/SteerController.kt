@@ -33,9 +33,9 @@ object SteerController {
     fun getVehicleParams(): String =
         try { api().callAttr("get_params").toString() } catch (e: Throwable) { "{}" }
     fun setVehicleParams(wheelbase: Double, antennaHeight: Double,
-                         antennaToAxle: Double, antennaToImpl: Double): String =
+                         antennaToAxle: Double, antennaToImpl: Double, workWidth: Double): String =
         try { api().callAttr("set_vehicle_params", wheelbase, antennaHeight,
-                             antennaToAxle, antennaToImpl).toString() } catch (e: Throwable) { "error" }
+                             antennaToAxle, antennaToImpl, workWidth).toString() } catch (e: Throwable) { "error" }
 
     /** ver1 헤딩 바이어스 캘리브(직선 ~20m). */
     fun startHeadingCalib(): String =

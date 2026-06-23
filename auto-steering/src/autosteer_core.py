@@ -100,6 +100,9 @@ class TractorParams:
     # CHCNAV 추가 파라미터 G: 전륜 폭
     front_track_width: float = 1.56     # 사진 G
 
+    # 작업기 폭(AB 평행 패스 간격 기본값). 차량정보 화면 입력.
+    work_width: float = 3.0
+
     # CHCNAV 추가 파라미터 WAS: 최대 조향각
     max_was_deg: float = 25.0           # 사진 최대 WAS
 

@@ -40,8 +40,9 @@ class JsBridge {
     /** 차량 변수(실측값) 조회/입력. */
     @JavascriptInterface fun getVehicleParams(): String = SteerController.getVehicleParams()
     @JavascriptInterface fun setVehicleParams(wheelbase: Double, antennaHeight: Double,
-                                              antennaToAxle: Double, antennaToImpl: Double): String =
-        SteerController.setVehicleParams(wheelbase, antennaHeight, antennaToAxle, antennaToImpl)
+                                              antennaToAxle: Double, antennaToImpl: Double,
+                                              workWidth: Double): String =
+        SteerController.setVehicleParams(wheelbase, antennaHeight, antennaToAxle, antennaToImpl, workWidth)
     @JavascriptInterface fun startHeadingCalib(): String = SteerController.startHeadingCalib()
     @JavascriptInterface fun startHeadingCalibDrive(): String = SteerController.startHeadingCalibDrive()
     @JavascriptInterface fun headingCalibStatus(): String = SteerController.headingCalibStatus()
