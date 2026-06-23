@@ -183,14 +183,15 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
 .sensor{display:flex;align-items:center;gap:7px;font-size:17px;font-weight:700;color:var(--sub);}
 .sensor .ic{width:22px;height:22px;opacity:.6;}
 .sensor.good{color:var(--brand);} .sensor.good .ic{opacity:1;}
+.sensor.warn{color:#d98a2b;} .sensor.warn .ic{opacity:1;}   /* 수신 미흡(주황) */
 
 /* ───── 메인 주행 화면 ───── */
 #main .field, #work .field{position:absolute;top:98px;right:0;bottom:0;left:0;overflow:hidden;background:var(--field);}
 .mapview{position:absolute;top:0;left:0;right:0;bottom:0;display:none;background:#11151a;}  /* VWorld 실지도(키 있을 때만 표시, 없으면 SVG 폴백) */
 .field .horizon{position:absolute;top:0;left:0;right:0;height:10px;background:var(--horizon);opacity:.5;}
 .field svg{position:absolute;top:0;right:0;bottom:0;left:0;width:100%;height:100%;}
-.camera{position:absolute;top:14px;left:14px;width:42px;height:42px;border-radius:50%;
-  background:rgba(40,55,55,.55);display:flex;align-items:center;justify-content:center;color:#fff;}
+.camera{position:absolute;top:14px;left:14px;width:42px;height:42px;border-radius:50%;border:none;z-index:5;
+  background:rgba(40,55,55,.55);display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;}
 .tractor{position:absolute;left:50%;top:58%;transform:translate(-50%,-50%);transition:left .25s,top .25s;}
 .mainbtns{position:absolute;left:0;right:0;bottom:26px;display:flex;gap:18px;justify-content:center;}
 .bigbtn{background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:14px;
@@ -381,11 +382,16 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
       <svg viewBox="0 0 1000 560" preserveAspectRatio="none" id="fieldSvgMain"></svg>
       <div class="tractor" id="tractorMain"></div>
       <div class="mapview" id="mapMain"></div>
+      <button class="camera" id="camMain">🎥</button>
     </div>
     <div class="mainbtns">
       <button class="bigbtn" id="btnSettings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         설정
+      </button>
+      <button class="bigbtn" id="btnRoute">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        경로관리
       </button>
       <button class="bigbtn" id="btnDrive">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v6.5M4.5 17l5-3.5M19.5 17l-5-3.5"/></svg>
@@ -401,6 +407,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
       <div class="horizon"></div>
       <svg viewBox="0 0 1000 560" preserveAspectRatio="none" id="fieldSvgWork"></svg>
       <div class="mapview" id="mapWork"></div>
+      <button class="camera" id="camWork">🎥</button>
     </div>
     <div class="routebox">
       <div class="fwd">↑ 전진</div>
@@ -465,7 +472,7 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
       <div class="choice" data-mode="abline"><svg viewBox="0 0 48 40" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="10" cy="20" r="6"/><circle cx="38" cy="20" r="6"/><line x1="16" y1="20" x2="32" y2="20"/></svg>AB 직선</div>
       <div class="choice" data-mode="abcurve"><svg viewBox="0 0 48 40" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="10" cy="30" r="5"/><circle cx="38" cy="30" r="5"/><path d="M10 25C10 8 38 8 38 25"/></svg>AB 곡선</div>
       <div class="choice" data-mode="memory"><svg viewBox="0 0 48 40" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="24" cy="18" r="6"/><circle cx="24" cy="18" r="2" fill="currentColor"/><path d="M8 33c5-7 27-7 32 0" stroke-dasharray="4 3"/></svg>메모리 주행</div>
-      <div class="choice" data-mode="fullpath"><svg viewBox="0 0 48 40" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 9h30M9 17h30M9 25h30M9 33h30"/><path d="M39 9v8M9 17v8M39 25v8"/></svg>풀패스</div>
+      <div class="choice" data-mode="fullpath"><svg viewBox="0 0 48 40" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="24" cy="20" r="8"/><circle cx="24" cy="20" r="2.5"/><path d="M16 9c5-4 11-4 16 0"/></svg>완전 자율</div>
     </div>
   </div>
 
@@ -631,9 +638,9 @@ function statusbarHTML() {
   var hot = Math.abs(S.xte) > 20;
   var arrL = S.xte < -1 ? 'hot' : '',
     arrR = S.xte > 1 ? 'hot' : '';
-  var sens = S.sensorOk ? 'good' : '';
-  var sensTxt = S.sensorOk ? '수신 양호' : '수신 대기';
-  return "\n    <div class=\"cell mode\">\n      <div class=\"k\">\u29BF \uC790\uC728\uC8FC\uD589 \uBAA8\uB4DC</div>\n      <div class=\"st " + (act ? 'act' : '') + "\">" + (act ? '활성화' : '비활성화') + "</div>\n    </div>\n    <div class=\"cell\"><div class=\"k\">\uD5E4\uB529</div><div class=\"v num\">" + (typeof S.headingDeg === 'number' ? (Math.round(S.headingDeg) + '\u00B0') : '\u2013') + "</div></div>\n    <div class=\"cell\"><div class=\"k\">\uC624\uCC28</div>\n      <div class=\"err\"><span class=\"arr " + arrL + "\">\u25C0\u25C0\u25C0</span><span class=\"e num\">" + ex + "</span><span class=\"u\">cm</span><span class=\"arr " + arrR + "\">\u25B6\u25B6\u25B6</span></div>\n    </div>\n    <div class=\"cell\"><div class=\"k\">\uD604\uC7AC \uC18D\uB3C4</div><div class=\"v num\">" + (S.speed * 3.6).toFixed(1) + "<span class=\"u\" style=\"font-size:12px\"> km/h</span></div></div>\n    <div class=\"cell\"><div class=\"k\">\uC13C\uC11C \uC0C1\uD0DC</div><div class=\"sensor " + sens + "\"><span class=\"ic\">\uD83D\uDEF0</span>" + sensTxt + "</div></div>";
+  var sens = S.sys.rtk ? 'good' : (S.sys.gps ? 'warn' : '');
+  var sensTxt = S.sys.rtk ? '수신 양호' : (S.sys.gps ? '수신 미흡' : '수신 대기');
+  return "\n    <div class=\"cell mode\">\n      <div class=\"k\">\u29BF \uC790\uC728\uC8FC\uD589 \uBAA8\uB4DC</div>\n      <div class=\"st " + (act ? 'act' : '') + "\">" + (act ? '활성화' : '비활성화') + "</div>\n    </div>\n    <div class=\"cell\"><div class=\"k\">\uC608\uC0C1 \uC885\uB8CC \uC2DC\uAC04</div><div class=\"v num\">--:--</div></div>\n    <div class=\"cell\"><div class=\"k\">\uC624\uCC28</div>\n      <div class=\"err\"><span class=\"arr " + arrL + "\">\u25C0\u25C0\u25C0</span><span class=\"e num\">" + ex + "</span><span class=\"u\">cm</span><span class=\"arr " + arrR + "\">\u25B6\u25B6\u25B6</span></div>\n    </div>\n    <div class=\"cell\"><div class=\"k\">\uD604\uC7AC \uC18D\uB3C4</div><div class=\"v num\">" + (S.speed * 3.6).toFixed(1) + "<span class=\"u\" style=\"font-size:12px\"> km/h</span></div></div>\n    <div class=\"cell\"><div class=\"k\">\uC13C\uC11C \uC0C1\uD0DC</div><div class=\"sensor " + sens + "\"><span class=\"ic\">\uD83D\uDEF0</span>" + sensTxt + "</div></div>";
 }
 function renderStatusbars() {
   $('sbMain').innerHTML = statusbarHTML();
@@ -1353,7 +1360,7 @@ Array.prototype.forEach.call(document.querySelectorAll('#modeModal .choice'), fu
       setModal('pathModal', true);   // 새 경로 / 기존 경로(경로 관리)
     } else {
       // 메모리 주행 / 풀패스: 경로 기록·자동계획은 코어 백엔드 미구현 → 정직하게 준비중 안내.
-      toast((S.driveMode === 'memory' ? '메모리 주행' : '풀패스') + ' — 준비중(경로 기록/자동계획 연동 필요)');
+      toast((S.driveMode === 'memory' ? '메모리 주행' : '완전 자율') + ' — 준비중(경로 기록/자동계획 연동 필요)');
     }
   };
 });
@@ -1452,7 +1459,7 @@ function savePaths(arr) {
   try { localStorage.setItem('autosteer_paths', JSON.stringify(arr)); } catch (e) {}
 }
 function pmModeLabel(m) {
-  return m === 'abcurve' ? 'AB 곡선' : m === 'memory' ? '메모리' : m === 'fullpath' ? '풀패스' : 'AB 직선';
+  return m === 'abcurve' ? 'AB 곡선' : m === 'memory' ? '메모리' : m === 'fullpath' ? '완전 자율' : 'AB 직선';
 }
 // AB 생성 직후 현재 A/B 좌표(abStatus)를 읽어 경로 목록에 저장. 좌표 없으면(데모/미마킹) 건너뜀.
 function savePathFromCurrent(width, passes) {
@@ -1503,6 +1510,11 @@ function renderPathMgr() {
     };
   });
 }
+$('btnRoute') && ($('btnRoute').onclick = function () { renderPathMgr(); setModal('pathMgr', true); });
+// 카메라 버튼(아그모 레이아웃 복원). 영상 피드(QCarCamera) 미연동 → 정직한 준비중 안내.
+Array.prototype.forEach.call(document.querySelectorAll('.camera'), function (b) {
+  b.onclick = function () { toast('카메라 — 준비중(영상 피드 미구현)'); };
+});
 $('pmX') && ($('pmX').onclick = function () { setModal('pathMgr', false); });
 $('pmBack') && ($('pmBack').onclick = function () { setModal('pathMgr', false); setModal('pathModal', true); });
 
