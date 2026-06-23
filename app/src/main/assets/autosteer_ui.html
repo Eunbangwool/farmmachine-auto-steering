@@ -431,6 +431,10 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><circle cx="12" cy="13" r="2"/><path d="M12 5V11M6 17l4-2.5M18 17l-4-2.5M9 3.5h6"/></svg>
         주행 (누르고 유지)
       </button>
+      <button class="startbtn" id="abReg" style="display:none;background:#fff;color:var(--brand);border:2px solid var(--brand)">
+        <span id="abRegIc" style="font-size:22px;font-weight:900">Ⓐ</span>
+        <span id="abRegLabel">A지점 등록</span>
+      </button>
     </div>
   </div>
 
@@ -522,6 +526,19 @@ body{font-family:'Noto Sans KR',system-ui,sans-serif;background:#000;color:var(-
     </div>
   </div>
 
+  <!-- ══ 경로 이름 입력 ══ -->
+  <div class="modal" id="nameModal">
+    <div class="card" style="max-width:460px;width:90%">
+      <div class="wt" style="color:var(--brand)">경로 이름 입력</div>
+      <div class="wb">경로의 이름을 20자 이내로 입력하세요. (지번 권장)<br>
+        <input class="nti" id="pathNameInput" maxlength="20" autocapitalize="off" spellcheck="false" style="width:100%;margin-top:12px"></div>
+      <div style="display:flex;gap:10px;margin-top:8px">
+        <button class="pill" id="nameCancel" style="flex:1;background:var(--off);color:#fff">취소</button>
+        <button class="pill" id="nameOk" style="flex:1;background:var(--brand);color:#fff">저장</button>
+      </div>
+    </div>
+  </div>
+
   <div id="motorWarn"></div>
   <button id="estop">■ 비상정지</button>
   <div id="toast"></div>
@@ -581,7 +598,20 @@ function show(id) {
   var es = $('estop');
   if (es) es.classList.toggle('on', id === 'main' || id === 'work');
   if (id === 'main') mapAttach('mapMain');
-  else if (id === 'work') mapAttach('mapWork');
+  else if (id === 'work') { mapAttach('mapWork'); updateAbReg(); }
+}
+// 작업화면 우하단 A/B 등록 상태버튼(아그모 인필드 흐름): markA→markB→save→ready.
+function updateAbReg() {
+  var br = $('abReg'), bs = $('btnStart');
+  if (!br) return;
+  var st = S.abState || 'ready';
+  if (st === 'ready') { br.style.display = 'none'; if (bs) bs.style.display = ''; return; }
+  if (bs) bs.style.display = 'none';
+  br.style.display = '';
+  var map = { markA: ['A지점 등록', 'Ⓐ'], markB: ['B지점 등록', 'Ⓑ'], save: ['경로 저장', '💾'] };
+  var m = map[st] || map.markA;
+  if ($('abRegLabel')) $('abRegLabel').textContent = m[0];
+  if ($('abRegIc')) $('abRegIc').textContent = m[1];
 }
 // WebView(특히 구형 Apollo) 가 display 전환 후 리페인트를 미루는 문제 대응:
 // 동기 레이아웃 읽기 + 다음 프레임에 transform/opacity 토글로 컴포지트를 강제한다.
@@ -1391,9 +1421,37 @@ function refreshAb() {
 }
 $('pathNew').onclick = function () {
   setModal('pathModal', false);
-  setModal('abModal', true);
-  refreshAb();
+  S.abState = 'markA';      // 작업화면에서 A→B 인필드 등록 시작
+  show('work');
+  toast('첫 열의 시작점에서 A지점을 등록하세요');
 };
+// A/B 등록 상태버튼 클릭: markA→B→save→이름입력→ready.
+$('abReg') && ($('abReg').onclick = function () {
+  var st = S.abState || 'markA';
+  if (st === 'markA') {
+    if (BR && BR.markAb) { try { BR.markAb('a'); } catch (e) {} }
+    refreshAb(); S.abState = 'markB'; updateAbReg();
+    toast('A지점 등록됨 — B지점까지 이동 후 등록');
+  } else if (st === 'markB') {
+    if (BR && BR.markAb) { try { BR.markAb('b'); } catch (e) {} }
+    var w = S.abWidth || 3, p = S.abPasses || 4, r = 'ok';
+    if (BR && BR.buildAb) { try { r = BR.buildAb(w, p, 1.2); } catch (e) { r = 'error'; } }
+    if (r === 'ok') { S.abState = 'save'; updateAbReg(); toast('AB 경로 생성됨 — 저장하세요'); }
+    else toast(r === 'too-short' ? 'A↔B 거리가 너무 가깝습니다(10m 권장)' : (r === 'need-ab' ? 'A·B를 먼저 등록하세요' : '경로 생성 실패: ' + r));
+  } else if (st === 'save') {
+    if ($('pathNameInput')) $('pathNameInput').value = '';
+    setModal('nameModal', true);
+    setTimeout(function () { try { $('pathNameInput').focus(); } catch (e) {} }, 120);
+  }
+});
+$('nameCancel') && ($('nameCancel').onclick = function () { setModal('nameModal', false); });
+$('nameOk') && ($('nameOk').onclick = function () {
+  var nm = (($('pathNameInput') && $('pathNameInput').value) || '').trim();
+  savePathFromCurrent(S.abWidth || 3, S.abPasses || 4, nm);
+  setModal('nameModal', false);
+  S.abState = 'ready'; updateAbReg();
+  toast('경로가 저장되었습니다');
+});
 $('pathOld').onclick = function () {
   setModal('pathModal', false);
   renderPathMgr();
@@ -1462,13 +1520,13 @@ function pmModeLabel(m) {
   return m === 'abcurve' ? 'AB 곡선' : m === 'memory' ? '메모리' : m === 'fullpath' ? '완전 자율' : 'AB 직선';
 }
 // AB 생성 직후 현재 A/B 좌표(abStatus)를 읽어 경로 목록에 저장. 좌표 없으면(데모/미마킹) 건너뜀.
-function savePathFromCurrent(width, passes) {
+function savePathFromCurrent(width, passes, name) {
   var a = null, b = null;
   if (BR && BR.abStatus) {
     try { var s = JSON.parse(BR.abStatus() || '{}'); a = s.a || null; b = s.b || null; } catch (e) {}
   }
   if (!a || !b) return;
-  var nm = (($('abName') && $('abName').value) || '').trim() || ('경로 ' + new Date().toLocaleString());
+  var nm = (name || ($('abName') && $('abName').value) || '').trim() || ('경로 ' + new Date().toLocaleString());
   var paths = loadPaths();
   paths.unshift({ name: nm, mode: S.driveMode || 'abline',
     ax: a[0], ay: a[1], bx: b[0], by: b[1], width: width, passes: passes, ts: Date.now() });
@@ -1496,6 +1554,7 @@ function renderPathMgr() {
         try { BR.setAbLine(p.ax, p.ay, p.bx, p.by, p.width || 3, p.passes || 4, 1.2); } catch (e) {}
       }
       S.driveMode = p.mode || 'abline';
+      S.abState = 'ready';   // 저장된 경로 적용 = 바로 주행 가능 상태
       setModal('pathMgr', false);
       show('work');
       toast('경로 적용: ' + p.name);
