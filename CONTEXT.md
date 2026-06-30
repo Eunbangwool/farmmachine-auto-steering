@@ -1,5 +1,23 @@
 # CONTEXT — 적용 내역 / 결정 이력
 
+## VRS Z축 동적오차 방어 — GNSS 레벨러 고도 안정화 (2026-06-30)
+
+VRS(네트워크 RTK) 약점(기지국 원거리 시 Z 오차·Fix 풀림)을 HW 추가 없이 SW 필터/퓨전으로 방어.
+목표 블레이드 Z 동적오차 1~2cm. 전제: 3주파 Multi-GNSS(BeiDou/Galileo) + 안테나 내장 고정밀 IMU.
+
+- **신규**: `rtk-leveling/src/z_stabilizer.py`(leveler_core 미수정 add-on) + `rtk-leveling/Z_STABILIZER.md`.
+- 4대 메커니즘:
+  1) `GnssQualityMonitor` — 고도각 15° 마스크 + GSV 구성위성수(BeiDou/Galileo ≥30) + GST σ_alt
+     → **적응형 측정분산 R_z**(품질 저하 시 자동 팽창 → IMU 우위 전환).
+  2) `VerticalEKF[z,vz,b_a]` — IMU 수직가속 예측 + 틸트 삼각보정(blade_tip_z 재사용) + GNSS 갱신.
+     끊김 시 **RTK Bridge 데드레코닝 + ZUPT**(vz≈0 구속)로 10~20s cm급 유지(SITL: 15s 드리프트 0cm).
+  3) 대역분리 2차 Butterworth — 입력 2.5Hz(디젤 진동 제거) / 출력 0.35Hz(1Hz GNSS 잡음 평활).
+  4) 품질 적응형 데드밴드/게인(채터링 방지) → 기존 LevelingController·proportional_valve 입력.
+- 페일세이프 FSM: TRACK→BRIDGE→HOLD→STOP(단계적 안전정지, 갑작스런 밸브 차단 금지).
+- SITL 5/5 통과(Fix 추종 Z RMS 0.82cm). ★현장 보정: IMU 부호/축, q_v, zupt_*, GST 미출력 수신기.
+- 다음: ENUConverter.to_enu()[2] 연결로 leveler_core control_step 에 통합(별도), 실차 IMU 캘리브.
+
+
 ## CHCNAV §8 레이저레벨러 로직 → 비례밸브 제어 이식 (2026-06-30)
 
 `CHCNAV_PARAM_PROFILE.md §8`(libGNSSBladeControl .so 정적분석 복원)을 레벨러 비례밸브 경로로 이식.
