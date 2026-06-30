@@ -1,5 +1,20 @@
 # CONTEXT — 적용 내역 / 결정 이력
 
+## CHCNAV §8 레이저레벨러 로직 → 비례밸브 제어 이식 (2026-06-30)
+
+`CHCNAV_PARAM_PROFILE.md §8`(libGNSSBladeControl .so 정적분석 복원)을 레벨러 비례밸브 경로로 이식.
+
+- **출처**: §8 복원 사실만(PWM 10~96%, 다단계 데드존 0.0001~0.07m, 차속<최소→HOLD, PID,
+  칼만+이동평균, IC100Paras.txt 4파라미터). 소스 비복제 — 자체 구현 + 출처 주석(clean-room).
+- **신규**: `rtk-leveling/src/proportional_valve.py` — leveler_core **미수정 add-on**
+  (direct_can_output 선례). 코어에 "미구현"이던 `LevelerOutput` **방식 C(비례밸브 직결)** 를 채움.
+  `ChcnavBladeProfile`·`ProportionalValveController`(PID+다단계데드존→PWM 듀티)·`SignalFilter`
+  (칼만+MA)·`IC100Calibration`(4파라미터 로드/저장)·`ProportionalValveOutput`(듀티→CAN). SITL 7/7.
+- **기존 경로 보존**: 레이저커넥터 UP/DOWN/HOLD(`LevelingController`)는 그대로. 비례밸브 HW 쓸 때만 방식 C 선택.
+- **벤더 격리 주의**: CHCNAV 레벨러 분석은 오너 자체 레벨러 구현의 검증 레퍼런스로만 사용(조향 멀티벤더와 무관).
+- 다음(현장/HW): PID 게인·min_speed·kalman_r 실차 튜닝, IC100Paras.txt 실측 캘리브, 비례밸브 CAN ID 확정.
+
+
 ## 가변시비(VRA) + 섹션 컨트롤 추가 (2026-06-23)
 
 오너 요청으로 정밀농업 살포 제어 추가. 자율조향이 차체를 몰면, 작업기 살포율·섹션을 위치 기반 제어.
