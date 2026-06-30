@@ -32,3 +32,6 @@ decompiled/
 screenshots/
 **/screenshots/
 reference-shots/
+
+# 레벨러 자체테스트 산출물
+rtk-leveling/src/tractor_profiles.json

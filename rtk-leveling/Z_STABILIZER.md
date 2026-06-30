@@ -154,9 +154,26 @@
 
 ---
 
+## 통합 (leveler_core, opt-in)
+
+`LevelerSystem.attach_z_stabilizer()` 한 줄로 부착 — 미부착 시 기존 동작 그대로(하위호환).
+```python
+sys = LevelerSystem(params, output)          # 기존 그대로
+sys.attach_z_stabilizer()                    # ← Z 안정화 계층 부착(opt-in)
+sys.set_auto(True)
+# 루프(20Hz):
+sys.on_gnss(nmea_line, now)                  # GGA/GSV/GST 자동 전달
+sys.on_imu(roll, pitch, ax, ay, az, now)     # accel 주면 수직퓨전 사용
+st = sys.control_step(now)                   # st["z_state"]/["z_sigma_cm"]/["deadband_cm"]…
+```
+부착 시 `control_step` 가: ① 안정화 blade_z 로 제어 ② **RTK 품질 게이팅 권한을 z_stab FSM 로**
+(끊김 시 안전모니터의 RTK_LOST 를 오버라이드해 브리지 제어 유지, ESTOP/MANUAL/LIMIT 은 유지)
+③ 품질 적응형 데드밴드 적용 ④ HOLD/STOP 시 밸브 NEUTRAL.
+
 ## 검증 (SITL, `python z_stabilizer.py`)
 1. 고도각 마스크가 저고도 위성 제외 + 구성별 집계 ✓
 2. Fix 추종: 6Hz 디젤진동 + ±1.5cm 잡음 속 **Z RMS 0.82cm** ✓
 3. 틸트 30° 삼각보정 반영 ✓
 4. VRS 끊김 → BRIDGE(드리프트 0cm/15s) → HOLD → Fix복귀 TRACK ✓
 5. STOP 시 control_enabled=False·gain=0 ✓
+6. leveler_core 통합 — 안정화 Z 가 컨트롤러 구동, 끊김 시 safety=SAFE 오버라이드(브리지 유지), 한계 후 NEUTRAL ✓

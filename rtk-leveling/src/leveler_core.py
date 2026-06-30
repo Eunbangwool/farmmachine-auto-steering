@@ -955,6 +955,8 @@ class LevelerSystem:
         self._cur_dir     = Direction.NEUTRAL
         self._now         = time.time()
         self._cmd_active  = False   # 적응형 코스팅용
+        self.z_stab       = None    # Z축 안정화 계층(opt-in, attach_z_stabilizer)
+        self._last_step_t = self._now
 
     # ── 측량 ────────────────────────────────────────────
     def add_survey(self, fix: GnssFix, raw_roll: float = 0.0,
@@ -977,6 +979,8 @@ class LevelerSystem:
 
     # ── 센서 입력 ───────────────────────────────────────
     def on_gnss(self, nmea_line: str, now: float = None) -> Optional[BladeState]:
+        if self.z_stab is not None:
+            self.z_stab.on_gnss(nmea_line, now)    # GGA/GSV/GST 모두 전달(품질·EKF)
         fix = self.parser.parse_gga(nmea_line)
         if fix is None:
             return None
@@ -992,8 +996,24 @@ class LevelerSystem:
         self._blade = self.estimator.update_gnss(fix, now)
         return self._blade
 
-    def on_imu(self, raw_roll: float, raw_pitch: float):
+    def on_imu(self, raw_roll: float, raw_pitch: float,
+               ax: float = None, ay: float = None, az: float = None,
+               now: float = None):
+        """IMU 입력. accel(ax,ay,az, m/s²) 제공 시 z_stab 수직퓨전에 사용(opt-in)."""
         self.estimator.update_imu(raw_roll, raw_pitch)
+        if self.z_stab is not None and az is not None:
+            r, p = self.params.correct_imu(raw_roll, raw_pitch)
+            self.z_stab.on_imu(ax or 0.0, ay or 0.0, az, r, p, now)
+
+    def attach_z_stabilizer(self, cfg=None):
+        """Z축 안정화 계층(z_stabilizer) 부착(opt-in). 부착하면 control_step 이
+        안정화 blade_z + RTK Bridge 페일세이프 게이트 + 품질 적응형 데드밴드를 사용한다.
+        미부착이면 기존 동작 그대로(완전 하위호환). 같은 ENU 원점 공유."""
+        from z_stabilizer import ZStabilizer
+        self.z_stab = ZStabilizer(
+            self.params, cfg,
+            enu_to_up=lambda la, lo, al: self.enu.to_enu(la, lo, al)[2])
+        return self.z_stab
 
     def set_auto(self, on: bool):
         self.safety.set_auto(on)
@@ -1009,21 +1029,56 @@ class LevelerSystem:
     def control_step(self, now: float = None) -> dict:
         now = now if now is not None else time.time()
         self._now = now
+
+        # ── Z 안정화 계층(opt-in): EKF/FSM 진행 + 안정화 blade_z·게이트 산출 ──
+        z_est = None
+        if self.z_stab is not None:
+            dt = now - self._last_step_t
+            dt = dt if 1e-4 < dt < 0.5 else (1.0 / self.z_stab.cfg.ctrl_rate_hz)
+            z_est = self.z_stab.step(dt, now)
+        self._last_step_t = now
+
         blade = self._blade
-        blade_z_cm = blade.blade_z * 100 if (blade and blade.valid) else 0.0
-        vz = blade.vz if (blade and blade.valid) else 0.0
+        if z_est is not None and blade is not None and blade.valid:
+            blade_z_cm = z_est.blade_z_m * 100         # 안정화 Z 사용
+            vz = z_est.vz_cms
+        else:
+            blade_z_cm = blade.blade_z * 100 if (blade and blade.valid) else 0.0
+            vz = blade.vz if (blade and blade.valid) else 0.0
 
         safety = self.safety.check(blade_z_cm, now=now)
+        # z_stab 부착 시 RTK 품질 게이팅은 z_stab FSM 권한(브리지 중 제어 허용).
+        #   ESTOP/MANUAL/LIMIT 등 하드 안전사유는 그대로 유지.
+        if (z_est is not None and z_est.control_enabled and
+                safety in (LevelerSafety.RTK_LOW, LevelerSafety.RTK_LOST)):
+            safety = LevelerSafety.SAFE
 
-        # 안전하지 않으면 중립 (단, 한계는 반대방향 허용 가능 — 여기선 보수적 HOLD)
-        if not self.safety.is_safe:
+        if safety != LevelerSafety.SAFE:
             self._send(self._safety_mode(safety), Direction.NEUTRAL, 0)
-            return self._status(blade, 0.0, Direction.NEUTRAL, safety, on_grade=False)
+            st = self._status(blade, 0.0, Direction.NEUTRAL, safety, on_grade=False)
+            if z_est is not None:
+                self._augment_z_status(st, z_est)
+            return st
 
-        # 목표고
+        # z_stab 페일세이프: 제어 비허용(HOLD/STOP) → 밸브 중립(블레이드 현재고 유지)
+        if z_est is not None and not z_est.control_enabled:
+            self._send(LevelerCanProtocol.MODE_HOLD, Direction.NEUTRAL, 0)
+            st = self._status(blade, 0.0, Direction.NEUTRAL, safety, on_grade=True)
+            self._augment_z_status(st, z_est)
+            return st
+
+        # 위치(x,y) 미확보 시 평면조회 불가 → HOLD
+        if blade is None or not blade.valid:
+            self._send(LevelerCanProtocol.MODE_HOLD, Direction.NEUTRAL, 0)
+            return self._status(blade, 0.0, Direction.NEUTRAL, safety)
+
+        # 품질 적응형 데드밴드(채터링 방지) 반영
+        if z_est is not None:
+            self.controller.tune.on_grade_cm = z_est.deadband_cm
+            self.controller.tune.exit_cm = max(z_est.deadband_cm * 1.7,
+                                               z_est.deadband_cm + 1.0)
+
         target_z_cm = self.target.plane.z_at(blade.x, blade.y) * 100
-
-        # 제어
         direction, pulse_ms = self.controller.compute(
             blade_z_cm, target_z_cm, vz, now)
         error = blade_z_cm - target_z_cm
@@ -1035,9 +1090,23 @@ class LevelerSystem:
             self.controller.params.coast_cm = updated_coast
 
         self._send(LevelerCanProtocol.MODE_AUTO, direction, pulse_ms)
-        return self._status(blade, error, direction, safety,
-                            on_grade=self.controller.is_on_grade,
-                            target_z_cm=target_z_cm, pulse_ms=pulse_ms)
+        st = self._status(blade, error, direction, safety,
+                          on_grade=self.controller.is_on_grade,
+                          target_z_cm=target_z_cm, pulse_ms=pulse_ms)
+        if z_est is not None:
+            self._augment_z_status(st, z_est)
+        return st
+
+    def _augment_z_status(self, st: dict, z_est) -> None:
+        """status 에 Z 안정화 계층 상태 부가."""
+        st["blade_z_cm"] = z_est.blade_z_m * 100      # 안정화 값으로 갱신
+        st["z_state"] = z_est.state.name
+        st["z_control_enabled"] = z_est.control_enabled
+        st["z_sigma_cm"] = round(z_est.sigma_z_cm, 2)
+        st["deadband_cm"] = z_est.deadband_cm
+        st["gain_scale"] = round(z_est.gain_scale, 2)
+        st["bridge_remaining_s"] = round(z_est.bridge_remaining_s, 1)
+        st["sats_above_mask"] = z_est.quality.sats_above_mask
 
     def _safety_mode(self, s: LevelerSafety) -> int:
         if s == LevelerSafety.ESTOP:

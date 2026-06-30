@@ -595,8 +595,62 @@ if __name__ == "__main__":
     assert not e2.control_enabled and e2.gain_scale == 0.0
     print(f"  ✓ STOP 시 control_enabled=False, gain=0 (유압 중립 권고)")
 
+    # ── 6. leveler_core 통합 (attach_z_stabilizer) ───────────
+    print("\n▶ 6. leveler_core 통합 — 안정화 Z 구동 + 브리지 안전 오버라이드")
+    from leveler_core import LevelerSystem, MockHydraulics
+    p2 = LevelerParams(antenna_height_above_blade=2.5, antenna_to_blade_horizontal=1.2,
+                       blade_max_up_cm=300, blade_max_down_cm=-300)
+    mock = MockHydraulics(p2, start_blade_cm=0.0)
+    sysL = LevelerSystem(p2, mock)
+    zs6 = sysL.attach_z_stabilizer(ZStabilizerConfig(bridge_max_s=8.0))
+    sysL.set_auto(True)
+    t = 0.0
+    st = {}
+    for i in range(80):                          # Fix 확립
+        t += DT
+        sysL.on_imu(0.0, 0.0, ax=0, ay=0, az=G0, now=t)
+        if i % 20 == 0:
+            for g in (gsv_gp, gsv_gb, gsv_ga):
+                sysL.on_gnss(g, now=t)
+            sysL.on_gnss(_gga(37.5, 127.0, 50.0, q=4, sats=30), now=t)
+        mock.tick(now=t, dt=DT)
+        st = sysL.control_step(now=t)
+    assert st.get("z_state") == "TRACK" and st.get("z_control_enabled")
+    assert "z_sigma_cm" in st and st["safety"] == "SAFE"
+    # 목표를 현재고 8cm 아래로 → 안정화 Z 가 컨트롤러를 DOWN 구동해야
+    sysL.target.set_flat(st["blade_z_cm"] / 100.0 - 0.08)
+    for i in range(10):
+        t += DT
+        sysL.on_imu(0, 0, ax=0, ay=0, az=G0, now=t)
+        sysL.on_gnss(_gga(37.5, 127.0, 50.0, q=4, sats=30), now=t)
+        mock.tick(now=t, dt=DT)
+        st = sysL.control_step(now=t)
+    assert st["direction"] == "DOWN", st["direction"]   # 안정화 Z 가 제어 구동
+    print(f"  ✓ TRACK + 안정화 Z 로 컨트롤러 구동(dir={st['direction']}, σ={st['z_sigma_cm']}cm)")
+    # VRS 끊김 → 안전모니터 RTK_LOST 를 z_stab 가 오버라이드(브리지 제어 유지)
+    bridged = False
+    for i in range(int(8 / DT)):
+        t += DT
+        sysL.on_imu(0, 0, ax=0, ay=0, az=G0, now=t)
+        mock.tick(now=t, dt=DT)
+        st = sysL.control_step(now=t)
+        if st.get("z_state") == "BRIDGE":
+            bridged = True
+            assert st["z_control_enabled"] and st["safety"] == "SAFE"  # 오버라이드 확인
+    assert bridged, "브리지 미진입(통합)"
+    print(f"  ✓ VRS 끊김 → BRIDGE 중 safety=SAFE 오버라이드(밸브 제어 유지)")
+    # 브리지 한계 초과 → HOLD/STOP, 밸브 중립
+    for i in range(int(12 / DT)):
+        t += DT
+        sysL.on_imu(0, 0, ax=0, ay=0, az=G0, now=t)
+        mock.tick(now=t, dt=DT)
+        st = sysL.control_step(now=t)
+    assert st["z_state"] in ("HOLD", "STOP") and st["direction"] == "NEUTRAL"
+    assert not st["z_control_enabled"]
+    print(f"  ✓ 한계 초과 → {st['z_state']}, 밸브 NEUTRAL(블레이드 유지)")
+
     print("\n" + "=" * 72)
-    print("z_stabilizer 자가검증 5/5 통과.")
+    print("z_stabilizer 자가검증 6/6 통과.")
     print("  실배포: ZStabilizer(params, enu_to_up=lambda la,lo,al: enu.to_enu(la,lo,al)[2])")
     print("  → ZEstimate.blade_z_m/control_enabled/deadband_cm/gain_scale 를")
     print("  LevelingController·proportional_valve 입력으로 연결.")

@@ -15,7 +15,15 @@ VRS(네트워크 RTK) 약점(기지국 원거리 시 Z 오차·Fix 풀림)을 HW
   4) 품질 적응형 데드밴드/게인(채터링 방지) → 기존 LevelingController·proportional_valve 입력.
 - 페일세이프 FSM: TRACK→BRIDGE→HOLD→STOP(단계적 안전정지, 갑작스런 밸브 차단 금지).
 - SITL 5/5 통과(Fix 추종 Z RMS 0.82cm). ★현장 보정: IMU 부호/축, q_v, zupt_*, GST 미출력 수신기.
-- 다음: ENUConverter.to_enu()[2] 연결로 leveler_core control_step 에 통합(별도), 실차 IMU 캘리브.
+
+### leveler_core 정식 통합 (opt-in, 2026-06-30 후속)
+- `LevelerSystem.attach_z_stabilizer()` 로 부착 — 미부착 시 기존 동작 그대로(완전 하위호환, leveler_core
+  자체테스트 통과). 같은 ENU 원점 공유(`enu.to_enu()[2]`).
+- `on_gnss` 가 GGA/GSV/GST 를 z_stab 로 전달, `on_imu(roll,pitch,ax,ay,az)` 로 수직퓨전.
+- `control_step`: ①안정화 blade_z 로 제어 ②**RTK 품질 게이팅 권한을 z_stab FSM 로 이양**
+  (끊김 시 LevelerSafetyMonitor 의 RTK_LOST 를 오버라이드 → 브리지 제어 유지. ESTOP/MANUAL/LIMIT 유지)
+  ③품질 적응형 데드밴드 ④HOLD/STOP 시 밸브 NEUTRAL. status 에 z_state/z_sigma_cm/deadband_cm 등 부가.
+- z_stabilizer 자가검증 6/6(통합 테스트 포함). 다음: 실차 IMU 부호·축/q_v/zupt 캘리브, 비례밸브 경로 gain_scale 연동.
 
 
 ## CHCNAV §8 레이저레벨러 로직 → 비례밸브 제어 이식 (2026-06-30)
